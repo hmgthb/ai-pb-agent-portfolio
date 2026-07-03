@@ -1,0 +1,7 @@
+# Claude Code / 하네스 관련 (저장소 제외)
+.claude/
+CLAUDE.md
+HANDOFF.md
+
+# macOS
+.DS_Store
