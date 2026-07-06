@@ -1,13 +1,16 @@
 services:
   backend:
-    image: python:3.11-slim
-    working_dir: /app
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    working_dir: /repo
     volumes:
-      - ./backend:/app
+      - .:/repo
     ports:
       - "8000:8000"
-    command: sh -c "pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
     environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      DART_MCP_PYTHON: python3
       DATABASE_URL: postgresql://app:app@postgres:5432/app
       REDIS_URL: redis://redis:6379/0
     depends_on:
