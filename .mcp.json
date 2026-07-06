@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "dart": {
+      "type": "stdio",
+      "command": "backend/.venv/bin/python",
+      "args": [
+        "backend/mcp_servers/dart_server.py"
+      ],
+      "env": {}
+    }
+  }
+}

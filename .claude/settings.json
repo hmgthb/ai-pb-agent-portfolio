@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__dart__dart_search",
+      "mcp__dart__dart_fetch",
+      "mcp__dart__dart_parse"
+    ]
+  }
+}

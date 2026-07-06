@@ -1,7 +1,15 @@
-# Claude Code / 하네스 관련 (저장소 제외)
-.claude/
-CLAUDE.md
+# Claude Code / 하네스 로컬 설정 (저장소 제외)
+# CLAUDE.md와 .claude/agents/*.md는 제품 런타임 시스템 프롬프트·서브에이전트 정의라 커밋 대상
+.claude/settings.local.json
 HANDOFF.md
 
 # macOS
 .DS_Store
+
+# 환경변수 (비밀키 커밋 금지, .env.example만 커밋)
+.env
+
+# 백엔드 (Python)
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
