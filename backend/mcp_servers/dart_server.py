@@ -23,6 +23,9 @@ API_KEY = os.environ["DART_API_KEY"]
 mcp = FastMCP("dart")
 
 TARGET_ACCOUNTS = ["매출액", "영업이익"]
+# 손익계산서는 회사마다 IS(손익계산서)/CIS(포괄손익계산서)로 신고 방식이 다르고,
+# 계정명도 "영업이익(손실)"처럼 접미사가 붙는 경우가 있어 접두어 매칭이 필요하다.
+INCOME_STATEMENT_DIVS = ("IS", "CIS")
 
 
 def _get_corp_code(stock_code: str) -> tuple[str, str]:
@@ -42,31 +45,60 @@ def _get_corp_code(stock_code: str) -> tuple[str, str]:
     raise ValueError(f"stock_code {stock_code} not found in corpCode.xml")
 
 
-@mcp.tool()
-def dart_search(stock_code: str, days: int = 90) -> list[dict]:
-    """종목코드(6자리)로 최근 공시 목록을 검색한다. 예: 삼성전자 -> "005930".
+MAX_SEARCH_PAGES = 10  # page_count(100건)x10 = 최대 1000건 — 그 이상 필요하면 days를 줄여서 다시 검색
 
+
+@mcp.tool()
+def dart_search(
+    stock_code: str,
+    days: int = 90,
+    pblntf_ty: Literal["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"] | None = None,
+) -> list[dict]:
+    """종목코드(6자리)로 공시 목록을 검색한다. 예: 삼성전자 -> "005930".
+
+    사업보고서·분기보고서 등 정기공시의 출처를 찾을 때는 pblntf_ty="A"(정기공시)로
+    좁혀서 검색해라 — 공시가 잦은 종목은 필터 없이는 페이지를 아무리 넘겨도
+    옛 정기공시가 최근 공시들에 묻혀서 안 나올 수 있다.
+    (A=정기공시 B=주요사항보고 C=발행공시 D=지분공시 E=기타공시 F=외부감사관련
+     G=펀드공시 H=자산유동화 I=거래소공시 J=공정위공시)
+
+    기간 내 전체 페이지를 모아서 반환한다.
     반환된 각 항목의 rcept_no를 dart_fetch에 넘기면 원문을 가져올 수 있다.
     """
     corp_code, corp_name = _get_corp_code(stock_code)
 
     end = date.today()
     start = end - timedelta(days=days)
-    resp = requests.get(
-        "https://opendart.fss.or.kr/api/list.json",
-        params={
+    items: list[dict] = []
+    page_no = 1
+
+    while True:
+        params = {
             "crtfc_key": API_KEY,
             "corp_code": corp_code,
             "bgn_de": start.strftime("%Y%m%d"),
             "end_de": end.strftime("%Y%m%d"),
-            "page_count": 10,
-        },
-        timeout=30,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    if data["status"] != "000":
-        raise RuntimeError(f"DART API error {data['status']}: {data['message']}")
+            "page_count": 100,  # DART API 최대치
+            "page_no": page_no,
+        }
+        if pblntf_ty:
+            params["pblntf_ty"] = pblntf_ty
+        resp = requests.get(
+            "https://opendart.fss.or.kr/api/list.json",
+            params=params,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data["status"] == "013":  # 조회된 데이터 없음
+            break
+        if data["status"] != "000":
+            raise RuntimeError(f"DART API error {data['status']}: {data['message']}")
+
+        items.extend(data.get("list", []))
+        if page_no >= data.get("total_page", 1) or page_no >= MAX_SEARCH_PAGES:
+            break
+        page_no += 1
 
     return [
         {
@@ -77,7 +109,7 @@ def dart_search(stock_code: str, days: int = 90) -> list[dict]:
             "corp_name": corp_name,
             "corp_code": corp_code,
         }
-        for d in data.get("list", [])
+        for d in items
     ]
 
 
@@ -135,14 +167,13 @@ def dart_parse(
     if data["status"] != "000":
         raise RuntimeError(f"DART API error {data['status']}: {data['message']}")
 
-    figures = {
-        item["account_nm"]: {
-            "당기": item["thstrm_amount"],
-            "전기": item["frmtrm_amount"],
-        }
-        for item in data["list"]
-        if item["sj_div"] == "IS" and item["account_nm"] in TARGET_ACCOUNTS
-    }
+    figures: dict[str, dict[str, str]] = {}
+    for item in data["list"]:
+        if item["sj_div"] not in INCOME_STATEMENT_DIVS:
+            continue
+        matched = next((t for t in TARGET_ACCOUNTS if item["account_nm"].startswith(t)), None)
+        if matched and matched not in figures:
+            figures[matched] = {"당기": item["thstrm_amount"], "전기": item["frmtrm_amount"]}
 
     return {
         "corp_name": corp_name,
