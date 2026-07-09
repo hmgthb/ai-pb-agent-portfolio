@@ -73,7 +73,16 @@ async def research_stream(stock_code: str = Query(...)):
                 "법인명을 반드시 적어줘야 a4가 종목코드만 보고 회사명을 잘못 추측하지 않는다.\n\n"
                 "**법인명이 네 예상과 달라도:** a1이 확인한 법인명을 그대로 따르고, 종목코드는 "
                 "사용자가 입력한 그대로 유지해라 — 네가 예상한 회사를 찾겠다고 다른 종목코드로 "
-                "바꿔치기하지 마라."
+                "바꿔치기하지 마라.\n\n"
+                "a2·a4 결과를 모두 받은 후 마지막으로 종합할 때는(이 단계에 '3단계' 같은 "
+                "번호나 이 지시문 자체를 리포트 제목으로 쓰지 마라): 재무제표 표나 뉴스 목록은 "
+                "이미 화면에 별도 카드로 그대로 표시되므로 절대 다시 나열하지 마라 — 표, 불릿 "
+                "목록, 링크 재인용 금지. 그 수치와 뉴스가 실제로 무엇을 의미하는지만 짧은 "
+                "산문(prose)으로 분석해라: 매출·영업이익 흐름을 어떻게 해석해야 하는지, 뉴스가 "
+                "그 실적과 어떤 관계가 있는지, 주의해서 볼 지점은 무엇인지.\n\n"
+                "**최종 종합 답변은 분석 본문으로 바로 시작해라.** \"두 결과 모두 받았습니다\", "
+                "\"종합 분석입니다\" 같은 자기서술·인사말·전환 문장을 앞에 붙이지 마라. 법인명을 "
+                "제목(헤딩)으로 반복해서 쓰지도 마라 — 화면에 이미 별도로 표시된다."
             ),
         )
         prompt = (
@@ -82,6 +91,9 @@ async def research_stream(stock_code: str = Query(...)):
         tool_names: dict[str, str] = {}
         agent_of_tool_use_id: dict[str, str] = {}
         agent_errors: set[str] = set()
+        # dart_fetch는 viewer_url만 주고 접수일(rcept_dt)은 안 준다 — dart_search 결과에서
+        # rcept_no -> rcept_dt를 미리 모아뒀다가 dart_fetch 성공 시 붙여서 출처로 내보낸다.
+        rcept_dt_by_no: dict[str, str] = {}
         # dart_parse 실패는 CFS 없음 등 정상적인 재시도 흐름이라 출처와 무관하다 —
         # 출처(원문 링크) 자체를 찾는 도구가 실패했을 때만 카드에 미확인 배지를 붙인다.
         CITATION_TOOLS = {"mcp__dart__dart_search", "mcp__dart__dart_fetch"}
@@ -147,6 +159,19 @@ async def research_stream(stock_code: str = Query(...)):
                         yield _sse("card", {"type": "financials", "agent": agent, **parsed})
                     elif name == "mcp__news__news_search":
                         yield _sse("card", {"type": "news", "agent": agent, "items": parsed})
+                    elif name == "mcp__dart__dart_search":
+                        for item in parsed:
+                            rcept_dt_by_no[item["rcept_no"]] = item["rcept_dt"]
+                    elif name == "mcp__dart__dart_fetch":
+                        yield _sse(
+                            "source",
+                            {
+                                "agent": agent,
+                                "rcept_no": parsed["rcept_no"],
+                                "viewer_url": parsed["viewer_url"],
+                                "rcept_dt": rcept_dt_by_no.get(parsed["rcept_no"]),
+                            },
+                        )
             elif isinstance(message, ResultMessage):
                 yield _sse("done", {"unsourced_agents": sorted(agent_errors)})
 
