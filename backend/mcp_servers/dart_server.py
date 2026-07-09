@@ -22,10 +22,21 @@ load_dotenv()
 API_KEY = os.environ["DART_API_KEY"]
 mcp = FastMCP("dart")
 
-TARGET_ACCOUNTS = ["매출액", "영업이익"]
 # 손익계산서는 회사마다 IS(손익계산서)/CIS(포괄손익계산서)로 신고 방식이 다르고,
-# 계정명도 "영업이익(손실)"처럼 접미사가 붙는 경우가 있어 접두어 매칭이 필요하다.
+# 계정명도 회사·업종마다 표기가 제각각이다(예: "영업이익(손실)"처럼 흑자·적자를 한 계정명으로
+# 같이 쓰거나, 매출액이 "영업수익"·"수익(매출액)"처럼 다르게 신고됨 — NAVER는 "영업수익",
+# 파크시스템스는 "수익(매출액)"). 적자 기업은 아예 "영업손실"·"당기순손실"처럼 흑자 때와
+# 다른 계정명을 쓰기도 한다(예: 파두). 접두어 매칭만으로는 이런 변형을 다 못 잡으므로
+# 매출액 계열은 "포함(contains)" 매칭으로 넓게 잡는다.
 INCOME_STATEMENT_DIVS = ("IS", "CIS")
+
+
+def _match_account(account_nm: str) -> str | None:
+    if "매출액" in account_nm or account_nm.startswith("영업수익"):
+        return "매출액"
+    if account_nm.startswith("영업이익") or account_nm.startswith("영업손실"):
+        return "영업이익"
+    return None
 
 
 def _get_corp_code(stock_code: str) -> tuple[str, str]:
@@ -171,7 +182,7 @@ def dart_parse(
     for item in data["list"]:
         if item["sj_div"] not in INCOME_STATEMENT_DIVS:
             continue
-        matched = next((t for t in TARGET_ACCOUNTS if item["account_nm"].startswith(t)), None)
+        matched = _match_account(item["account_nm"])
         if matched and matched not in figures:
             figures[matched] = {"당기": item["thstrm_amount"], "전기": item["frmtrm_amount"]}
 

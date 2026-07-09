@@ -61,8 +61,19 @@ async def research_stream(stock_code: str = Query(...)):
         options = ClaudeAgentOptions(
             cwd=str(REPO_ROOT),
             system_prompt=(
-                "너는 메인 오케스트레이터(O)다. 종목의 재무 핵심수치가 필요하면 a2에게, "
-                "관련 뉴스가 필요하면 a4에게 위임해라. 한 메시지에서 두 서브에이전트를 동시에(병렬로) 위임해라."
+                "너는 메인 오케스트레이터(O)다. 종목코드가 실제로 어느 법인인지 절대 네 지식만으로 "
+                "단정하지 마라 — 그룹 계열사는 이름이 비슷해도 종목코드마다 별개 법인이라 추측이 "
+                "쉽게 틀린다(예: 086520 에코프로 ≠ 247540 에코프로비엠).\n\n"
+                "**1단계 — 법인 확인(항상 먼저, 필수):** 다른 무엇도 하기 전에 a1에게 위임해서 "
+                "\"종목코드 {코드}의 법인명을 DART로 확인해줘\"라고만 요청해라. a1이 실제 DART "
+                "조회로 반환한 corp_name을 받을 때까지 a2·a4에게는 위임하지 마라.\n\n"
+                "**2단계 — 병렬 위임:** a1이 확인해준 법인명을 받은 후에만, 그 법인명을 위임 "
+                "메시지에 명시해서 a2(재무 핵심수치)·a4(관련 뉴스)에게 **한 메시지에서 동시에(병렬로)** "
+                "위임해라. a4는 뉴스 검색 도구만 있고 DART 조회 도구가 없으므로, 위임 메시지에 "
+                "법인명을 반드시 적어줘야 a4가 종목코드만 보고 회사명을 잘못 추측하지 않는다.\n\n"
+                "**법인명이 네 예상과 달라도:** a1이 확인한 법인명을 그대로 따르고, 종목코드는 "
+                "사용자가 입력한 그대로 유지해라 — 네가 예상한 회사를 찾겠다고 다른 종목코드로 "
+                "바꿔치기하지 마라."
             ),
         )
         prompt = (
@@ -70,7 +81,18 @@ async def research_stream(stock_code: str = Query(...)):
         )
         tool_names: dict[str, str] = {}
         agent_of_tool_use_id: dict[str, str] = {}
-        PARALLEL_GROUP = "a2+a4"
+        agent_errors: set[str] = set()
+        # dart_parse 실패는 CFS 없음 등 정상적인 재시도 흐름이라 출처와 무관하다 —
+        # 출처(원문 링크) 자체를 찾는 도구가 실패했을 때만 카드에 미확인 배지를 붙인다.
+        CITATION_TOOLS = {"mcp__dart__dart_search", "mcp__dart__dart_fetch"}
+        # a1은 법인 확인을 위해 항상 혼자(순차) 위임되고, a2·a4는 항상 함께(병렬) 위임된다 —
+        # 이 앱의 서브에이전트 구성이 고정돼 있어 정적으로 매핑한다. SDK 스트림에서는 같이
+        # 위임된 도구호출도 서로 다른 AssistantMessage로 쪼개져 오므로, "한 메시지 안에 몇 개
+        # 있는지"로 동적 판별은 불가능하다.
+        PARALLEL_AGENTS = {"a2", "a4"}
+
+        def _group_for(subagent: str) -> str | None:
+            return "a2+a4" if subagent in PARALLEL_AGENTS else None
 
         async for message in query(prompt=prompt, options=options):
             if isinstance(message, AssistantMessage):
@@ -85,26 +107,35 @@ async def research_stream(stock_code: str = Query(...)):
                             agent_of_tool_use_id[block.id] = subagent
                             yield _sse(
                                 "progress",
-                                {"agent": subagent, "step": "delegated", "status": "started", "parallel_group": PARALLEL_GROUP},
+                                {"agent": subagent, "step": "delegated", "status": "started", "parallel_group": _group_for(subagent)},
                             )
                         else:
                             yield _sse(
                                 "progress",
-                                {"agent": agent, "step": block.name, "status": "running", "parallel_group": PARALLEL_GROUP},
+                                {"agent": agent, "step": block.name, "status": "running", "parallel_group": _group_for(agent)},
                             )
             elif isinstance(message, UserMessage):
                 agent = agent_of_tool_use_id.get(message.parent_tool_use_id, "O")
+                group_name = _group_for(agent)
                 content = message.content if isinstance(message.content, list) else []
                 for block in content:
-                    if not (isinstance(block, ToolResultBlock) and not block.is_error):
+                    if not isinstance(block, ToolResultBlock):
                         continue
                     name = tool_names.get(block.tool_use_id)
                     # "Agent" 도구의 결과는 완료가 아니라 비동기 디스패치 ack일 뿐이라 진행 이벤트로 안 남긴다.
                     if name is None or name == "Agent":
                         continue
+                    if block.is_error:
+                        if name in CITATION_TOOLS:
+                            agent_errors.add(agent)
+                        yield _sse(
+                            "progress",
+                            {"agent": agent, "step": name, "status": "failed", "parallel_group": group_name},
+                        )
+                        continue
                     yield _sse(
                         "progress",
-                        {"agent": agent, "step": name, "status": "completed", "parallel_group": PARALLEL_GROUP},
+                        {"agent": agent, "step": name, "status": "completed", "parallel_group": group_name},
                     )
                     try:
                         parsed = _parse_tool_result(block.content)
@@ -117,6 +148,6 @@ async def research_stream(stock_code: str = Query(...)):
                     elif name == "mcp__news__news_search":
                         yield _sse("card", {"type": "news", "agent": agent, "items": parsed})
             elif isinstance(message, ResultMessage):
-                yield _sse("done", {})
+                yield _sse("done", {"unsourced_agents": sorted(agent_errors)})
 
     return StreamingResponse(event_gen(), media_type="text/event-stream")

@@ -3,6 +3,7 @@
 - news_search: 종목명/키워드로 최근 뉴스 목록 검색
 """
 
+import html
 import os
 
 import requests
@@ -36,8 +37,8 @@ def news_search(query: str, display: int = 10) -> list[dict]:
 
     return [
         {
-            "title": item["title"].replace("<b>", "").replace("</b>", ""),
-            "description": item["description"].replace("<b>", "").replace("</b>", ""),
+            "title": html.unescape(item["title"].replace("<b>", "").replace("</b>", "")),
+            "description": html.unescape(item["description"].replace("<b>", "").replace("</b>", "")),
             "link": item["originallink"] or item["link"],
             "pub_date": item["pubDate"],
         }
