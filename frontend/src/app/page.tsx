@@ -1,8 +1,6 @@
 'use client';
 
-import { useRef, useState, type ComponentProps } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { useRef, useState } from 'react';
 
 type FinancialsCard = {
   type: 'financials';
@@ -38,6 +36,48 @@ type SourceEvent = {
   viewer_url: string;
   rcept_dt: string | null;
 };
+
+type NoteSource =
+  | { type: 'dart'; rcept_no: string; viewer_url: string; rcept_dt: string | null }
+  | { type: 'news'; url: string; title: string; pub_date: string };
+type NoteSentence = { text: string; source: NoteSource | null; is_heading: boolean };
+type NoteEvent = {
+  id: number;
+  status: NoteStatus;
+  corp_name: string;
+  sentences: NoteSentence[];
+  violations: string[];
+};
+type NoteStatus = 'draft' | 'review' | 'deliberation' | 'published';
+type AuditEntry = {
+  event_type: string;
+  actor: string | null;
+  ts: string;
+  detail: Record<string, unknown>;
+};
+type NoteDetail = {
+  id: number;
+  stock_code: string;
+  corp_name: string;
+  status: NoteStatus;
+  content_md: string;
+  sentences: NoteSentence[];
+  violations: string[];
+  reviewer: string | null;
+  deliberator: string | null;
+  publisher: string | null;
+  audit_log: AuditEntry[];
+};
+
+const STATUS_LABEL: Record<NoteStatus, string> = {
+  draft: '초안',
+  review: '검토',
+  deliberation: '심의',
+  published: '발행완료',
+};
+
+const NOTE_WATERMARK =
+  '⚠ AI 초안 · 미검증 — 사람의 검토·심의·승인 없이는 발행되지 않습니다.';
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
@@ -90,100 +130,6 @@ function operatingMarginRow(
   };
 }
 
-const markdownComponents = {
-  h1: (props: ComponentProps<'h1'>) => (
-    <h1 style={{ fontSize: 20, marginTop: 20, marginBottom: 8 }} {...props} />
-  ),
-  h2: (props: ComponentProps<'h2'>) => (
-    <h2 style={{ fontSize: 17, marginTop: 20, marginBottom: 8 }} {...props} />
-  ),
-  h3: (props: ComponentProps<'h3'>) => (
-    <h3 style={{ fontSize: 15, marginTop: 16, marginBottom: 6 }} {...props} />
-  ),
-  p: (props: ComponentProps<'p'>) => (
-    <p style={{ margin: '8px 0', lineHeight: 1.6 }} {...props} />
-  ),
-  a: (props: ComponentProps<'a'>) => (
-    <a
-      target="_blank"
-      rel="noreferrer"
-      style={{ color: '#2563eb' }}
-      {...props}
-    />
-  ),
-  hr: () => (
-    <hr
-      style={{ border: 'none', borderTop: '1px solid #ddd', margin: '16px 0' }}
-    />
-  ),
-  blockquote: (props: ComponentProps<'blockquote'>) => (
-    <blockquote
-      style={{
-        borderLeft: '3px solid #ddd',
-        margin: '8px 0',
-        padding: '2px 12px',
-        color: '#555',
-      }}
-      {...props}
-    />
-  ),
-  table: (props: ComponentProps<'table'>) => (
-    <table
-      style={{ borderCollapse: 'collapse', width: '100%', margin: '8px 0' }}
-      {...props}
-    />
-  ),
-  th: (props: ComponentProps<'th'>) => (
-    <th
-      style={{
-        border: '1px solid #ddd',
-        padding: '4px 8px',
-        background: '#f5f5f5',
-      }}
-      {...props}
-    />
-  ),
-  td: (props: ComponentProps<'td'>) => (
-    <td style={{ border: '1px solid #ddd', padding: '4px 8px' }} {...props} />
-  ),
-  ul: (props: ComponentProps<'ul'>) => (
-    <ul style={{ paddingLeft: 20, margin: '8px 0' }} {...props} />
-  ),
-  ol: (props: ComponentProps<'ol'>) => (
-    <ol style={{ paddingLeft: 20, margin: '8px 0' }} {...props} />
-  ),
-};
-
-// O에게 재무제표 표·뉴스 목록을 다시 나열하지 말라고 프롬프트로 지시해도 매번
-// 지켜지진 않는다(LLM 출력이라 비결정적) — 위의 재무제표·관련 뉴스 카드와 중복되지
-// 않도록, 그런 제목의 섹션과 마크다운 표는 렌더링 전에 결정론적으로 걸러낸다.
-function stripDuplicateSections(md: string): string {
-  let lines = md.split('\n');
-
-  // 서두 잡담("두 결과 모두 받았습니다..." 등) 제거: 첫 헤딩(법인명+종합 분석 제목)
-  // 앞에 나오는 줄은 버린다. 헤딩 자체도 버리는데, 그 제목은 화면에서 별도로 그리기
-  // 때문이다. 헤딩이 아예 없으면(프롬프트로 이미 서두를 금지했다) 손대지 않는다.
-  const firstHeadingIdx = lines.findIndex((l) => /^#{1,6}\s/.test(l));
-  if (firstHeadingIdx > 0) lines = lines.slice(firstHeadingIdx);
-  if (/^#{1,6}\s/.test(lines[0] ?? '')) lines = lines.slice(1);
-
-  const out: string[] = [];
-  let skipping = false;
-  for (const line of lines) {
-    const heading = /^#{1,6}\s*(.+)/.exec(line);
-    if (heading) {
-      skipping = /뉴스|핵심\s*수치|재무제표/.test(heading[1]);
-      if (skipping) continue;
-    }
-    if (skipping || /^\|.*\|\s*$/.test(line)) continue;
-    out.push(line);
-  }
-  return out
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
 function extractCorpName(a1Text: string): string | null {
   const idx = a1Text.lastIndexOf('=');
   if (idx === -1) return null;
@@ -224,10 +170,62 @@ export default function Home() {
   const [unsourcedAgents, setUnsourcedAgents] = useState<string[]>([]);
   const [sources, setSources] = useState<Record<string, SourceEvent>>({});
   const [inputError, setInputError] = useState<string | null>(null);
+  const [note, setNote] = useState<NoteEvent | null>(null);
+  const [noteDetail, setNoteDetail] = useState<NoteDetail | null>(null);
+  const [actorName, setActorName] = useState('');
+  const [noteActionError, setNoteActionError] = useState<string | null>(null);
+  const [noteActionLoading, setNoteActionLoading] = useState(false);
+  const [showAudit, setShowAudit] = useState(false);
   const esRef = useRef<EventSource | null>(null);
   // 재무 카드가 하나라도 왔는지 추적 — done 시점에 하나도 없으면 존재하지 않는
   // 종목코드로 판단한다. state는 이벤트 핸들러 클로저 안에서 stale할 수 있어 ref로 둔다.
   const gotFinancialsRef = useRef(false);
+  // 서브에이전트 위임이 한 번이라도 일어났는지 추적. 재무 카드가 없어도, a1 위임 자체가
+  // 없었다면 그건 "존재하지 않는 종목코드"가 아니라 O가 시작도 못 한 것이다(크레딧 부족
+  // 등 시스템 오류) — 이 구분이 없으면 API 오류를 전부 "잘못된 종목코드"로 잘못 안내한다.
+  const delegatedRef = useRef(false);
+  // 위 시스템 오류일 때 사용자에게 원인을 그대로 보여주기 위해 O의 마지막 텍스트를 잡아둔다.
+  const lastOTextRef = useRef('');
+
+  async function refreshNote(id: number) {
+    try {
+      const res = await fetch(`${API_BASE}/api/notes/${id}`);
+      if (res.ok) setNoteDetail(await res.json());
+    } catch {
+      // 네트워크 에러는 조용히 무시 — SSE로 이미 받은 초안 스냅샷으로도 화면은 뜬다.
+    }
+  }
+
+  async function doNoteAction(id: number, action: 'review' | 'deliberate' | 'publish') {
+    if (!actorName.trim()) {
+      setNoteActionError('처리자 이름을 입력해주세요.');
+      return;
+    }
+    setNoteActionError(null);
+    setNoteActionLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/notes/${id}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actor: actorName.trim() }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        const violations: string[] | undefined = body?.detail?.violations;
+        const message: string | undefined =
+          body?.detail?.message ?? (typeof body?.detail === 'string' ? body.detail : undefined);
+        setNoteActionError(
+          violations?.length
+            ? `게이트 위반: ${violations.join(' / ')}`
+            : (message ?? '처리에 실패했습니다.'),
+        );
+        return;
+      }
+      await refreshNote(id);
+    } finally {
+      setNoteActionLoading(false);
+    }
+  }
 
   function run() {
     if (!/^\d{6}$/.test(stockCode)) {
@@ -242,7 +240,12 @@ export default function Home() {
     setTexts([]);
     setUnsourcedAgents([]);
     setSources({});
+    setNote(null);
+    setNoteDetail(null);
+    setNoteActionError(null);
     gotFinancialsRef.current = false;
+    delegatedRef.current = false;
+    lastOTextRef.current = '';
     setLoading(true);
 
     const es = new EventSource(
@@ -257,6 +260,7 @@ export default function Home() {
         `[${data.agent}]${data.parallel_group ? ' ⇉' : ''} ${data.step} — ${data.status}`,
       ]);
       if (data.step === 'delegated' && data.status === 'started') {
+        delegatedRef.current = true;
         setAgentStatus((prev) => ({ ...prev, [data.agent]: 'running' }));
       }
       // a1은 법인명 확인만 하고 카드를 만들지 않는 에이전트라 'card' 이벤트로는
@@ -266,7 +270,9 @@ export default function Home() {
       }
     });
     es.addEventListener('text', (e) => {
-      setTexts((prev) => [...prev, JSON.parse(e.data)]);
+      const data: TextEvent = JSON.parse(e.data);
+      if (data.agent === 'O') lastOTextRef.current = data.text;
+      setTexts((prev) => [...prev, data]);
     });
     es.addEventListener('source', (e) => {
       const data: SourceEvent = JSON.parse(e.data);
@@ -309,12 +315,21 @@ export default function Home() {
       // "서브에이전트 완료" 이벤트를 주지 않고, Agent 도구 결과는 디스패치 ack일 뿐이다.
       setAgentStatus((prev) => ({ ...prev, [data.agent]: 'done' }));
     });
+    es.addEventListener('note', (e) => {
+      const data: NoteEvent = JSON.parse(e.data);
+      setNote(data);
+      void refreshNote(data.id);
+    });
     es.addEventListener('done', (e) => {
       const data: { unsourced_agents?: string[] } = JSON.parse(e.data);
       setUnsourcedAgents(data.unsourced_agents ?? []);
       if (!gotFinancialsRef.current) {
+        // a1 위임 자체가 없었다면 종목코드 문제가 아니라 O가 시작도 못 한 것이다
+        // (예: API 크레딧 부족) — 이 경우엔 종목코드를 탓하지 말고 실제 원인을 보여준다.
         setInputError(
-          '해당 종목코드의 재무 데이터를 찾을 수 없습니다. 실제 6자리 종목코드를 입력해주세요.',
+          delegatedRef.current
+            ? '해당 종목코드의 재무 데이터를 찾을 수 없습니다. 실제 6자리 종목코드를 입력해주세요.'
+            : `에이전트 처리 중 오류가 발생했습니다${lastOTextRef.current ? `: ${lastOTextRef.current}` : ''}`,
         );
       }
       setLoading(false);
@@ -325,12 +340,6 @@ export default function Home() {
       es.close();
     };
   }
-
-  // 스트리밍 중에는 O의 중간 진행 안내 텍스트까지 "종합 리포트"로 잡히므로,
-  // done 이벤트로 스트림이 끝난 뒤에만(최종 종합 분석만) 노출한다.
-  const finalReport = loading
-    ? undefined
-    : [...texts].reverse().find((t) => t.agent === 'O');
 
   const a1Text = [...texts].reverse().find((t) => t.agent === 'a1');
   const corpName = a1Text && extractCorpName(a1Text.text);
@@ -602,7 +611,7 @@ export default function Home() {
         );
       })}
 
-      {finalReport && (
+      {(noteDetail ?? note) && (
         <div
           style={{
             border: '1px solid #ccc',
@@ -611,17 +620,122 @@ export default function Home() {
             marginTop: 16,
           }}
         >
-          <h2>종합 리포트</h2>
-          <hr style={cardDividerStyle} />
-          <h4>{corpName ?? stockCode} 종합 분석</h4>
-          <div style={{ overflowX: 'auto', fontSize: 14 }}>
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={markdownComponents}
-            >
-              {stripDuplicateSections(finalReport.text)}
-            </ReactMarkdown>
+          <div
+            style={{
+              background: '#fef3c7',
+              border: '1px solid #f59e0b',
+              borderRadius: 6,
+              padding: '8px 12px',
+              fontSize: 12,
+              color: '#92400e',
+              fontWeight: 600,
+              marginBottom: 12,
+            }}
+          >
+            {NOTE_WATERMARK}
           </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <h2 style={{ margin: 0 }}>실적·공시 노트 초안</h2>
+            <span
+              style={{
+                fontSize: 12,
+                padding: '2px 8px',
+                borderRadius: 12,
+                background: '#eee',
+              }}
+            >
+              {STATUS_LABEL[(noteDetail ?? note)!.status]}
+            </span>
+          </div>
+          <hr style={cardDividerStyle} />
+
+          {(noteDetail?.sentences ?? note?.sentences ?? []).map((s, i) =>
+            s.is_heading ? (
+              <h3 key={i} style={{ fontSize: 15, marginTop: 16, marginBottom: 4 }}>
+                {s.text}
+              </h3>
+            ) : (
+              <p key={i} style={{ margin: '8px 0', lineHeight: 1.6, fontSize: 14 }}>
+                {s.text}{' '}
+                {s.source ? (
+                  <a
+                    href={s.source.type === 'dart' ? s.source.viewer_url : s.source.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={
+                      s.source.type === 'dart'
+                        ? `공시 원문 · 접수 ${s.source.rcept_dt ?? '미상'}`
+                        : `뉴스 원문 · ${s.source.pub_date ?? ''}`
+                    }
+                    style={{ fontSize: 11, color: '#2563eb', whiteSpace: 'nowrap' }}
+                  >
+                    [출처]
+                  </a>
+                ) : (
+                  <span style={{ fontSize: 11, color: '#b45309', fontWeight: 600 }}>
+                    [UNSOURCED]
+                  </span>
+                )}
+              </p>
+            ),
+          )}
+
+          {(noteDetail?.violations ?? note?.violations ?? []).length > 0 && (
+            <p style={{ fontSize: 12, color: '#b45309', marginTop: 8 }}>
+              ⚠ 게이트 미통과 사유: {(noteDetail?.violations ?? note?.violations ?? []).join(' / ')}
+            </p>
+          )}
+
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 16, flexWrap: 'wrap' }}>
+            <input
+              value={actorName}
+              onChange={(e) => setActorName(e.target.value)}
+              placeholder="처리자 이름"
+              style={{ fontSize: 12 }}
+            />
+            {noteDetail?.status === 'draft' && (
+              <button onClick={() => doNoteAction(noteDetail.id, 'review')} disabled={noteActionLoading}>
+                검토 시작
+              </button>
+            )}
+            {noteDetail?.status === 'review' && (
+              <button onClick={() => doNoteAction(noteDetail.id, 'deliberate')} disabled={noteActionLoading}>
+                심의 요청
+              </button>
+            )}
+            {noteDetail?.status === 'deliberation' && (
+              <button onClick={() => doNoteAction(noteDetail.id, 'publish')} disabled={noteActionLoading}>
+                발행
+              </button>
+            )}
+            {noteDetail?.status === 'published' && (
+              <span style={{ fontSize: 12, color: '#16a34a' }}>
+                ✓ 발행 완료 ({noteDetail.publisher})
+              </span>
+            )}
+          </div>
+          {noteActionError && (
+            <p style={{ color: '#dc2626', fontSize: 12, marginTop: 8 }}>⚠ {noteActionError}</p>
+          )}
+
+          {noteDetail && noteDetail.audit_log.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <button onClick={() => setShowAudit((v) => !v)} style={{ fontSize: 12 }}>
+                {showAudit ? '▾' : '▸'} 감사 로그 ({noteDetail.audit_log.length})
+              </button>
+              {showAudit && (
+                <ul style={{ fontSize: 12, color: '#666' }}>
+                  {noteDetail.audit_log.map((a, i) => (
+                    <li key={i}>
+                      [{new Date(a.ts).toLocaleString('ko-KR')}] {a.event_type}
+                      {a.actor ? ` — ${a.actor}` : ''}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

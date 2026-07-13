@@ -60,3 +60,12 @@
 Agent SDK/Claude Code의 정확한 패키지명·설치 커맨드·서브에이전트 정의 스키마·훅/권한 콜백
 API명은 여기 적힌 대로 확정된 것이 아니다. 실제 구현 시 공식 문서 또는 Claude Code에게
 직접 확인하고, 확실하지 않으면 코드/문서에 "확인 필요"로 남긴다.
+
+**검증됨 (2026-07-13, `claude-agent-sdk==0.2.110` 실물 확인 — 4주 차 구현에 실사용):**
+`query(prompt, options)` / `ClaudeAgentOptions(system_prompt, cwd, hooks, can_use_tool,
+include_partial_messages, ...)` / 훅 배선 `hooks={"PreToolUse": [HookMatcher(hooks=[fn])], ...}` /
+권한 콜백 `can_use_tool(tool_name, tool_input, context)` → `PermissionResultAllow()`/`PermissionResultDeny(message=)`
+(단 `can_use_tool` 사용 시 prompt를 문자열이 아닌 **AsyncIterable**로 줘야 함) /
+서브에이전트는 `.claude/agents/*.md`(frontmatter `name`·`description`·`model`, 선택 `tools`) /
+메시지 타입 `AssistantMessage`·`UserMessage`·`ToolUseBlock`·`ToolResultBlock`·`TextBlock`·`ResultMessage` /
+토큰 스트리밍은 `include_partial_messages=True` + `StreamEvent`(`.event`=원시 Anthropic 스트림 이벤트).
