@@ -114,7 +114,7 @@ curl -s http://localhost:8000/api/briefs/latest
 
 ### 자체 점검 (크레딧·네트워크 불필요)
 ```bash
-for t in compliance brief krx streaming tool_result a5_input brief_attribution; do
+for t in compliance brief krx streaming tool_result a5_input brief_attribution citations; do
   backend/.venv/bin/python -m backend.test_$t
 done
 ```

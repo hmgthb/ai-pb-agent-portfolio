@@ -574,17 +574,16 @@ def _customer_to_dict(row) -> dict:
     }
 
 
-def _citation_stats(note_rows) -> tuple[int, int]:
-    """(출처 붙은 문장 수, 제목이 아닌 전체 문장 수). 제목 줄은 분모에서 뺀다."""
-    sourced = total = 0
+def _citation_stats(note_rows) -> tuple[int, int, int]:
+    """(출처 붙은 문장, 분모=사실 주장 문장, 해석 문장). 정의는 citations가 단일 출처다 —
+    대시보드 AI 신뢰도 카드와 게이트가 같은 규칙을 보게 하려면 여기서 다시 세면 안 된다."""
+    sourced = claims = interpretations = 0
     for row in note_rows:
-        for s in json.loads(row["sentences_json"]):
-            if s.get("is_heading"):
-                continue
-            total += 1
-            if s.get("source"):
-                sourced += 1
-    return sourced, total
+        s, c, i = citations.citation_stats(json.loads(row["sentences_json"]))
+        sourced += s
+        claims += c
+        interpretations += i
+    return sourced, claims, interpretations
 
 
 @app.get("/api/customers")
@@ -654,16 +653,20 @@ async def reject_session(session_id: int, body: SessionDecisionBody):
 async def dashboard_summary():
     notes = await db.list_notes()
     sessions = await db.list_sessions()
-    sourced, total = _citation_stats(notes)
+    sourced, total, interpretations = _citation_stats(notes)
     published = [n for n in notes if n["status"] == "published"]
     pending_notes = [n for n in notes if n["status"] != "published"]
     pending_sessions = [s for s in sessions if s["status"] == db.SESSION_PENDING]
     blocks = await db.gate_blocks_daily(7)
     return {
-        # 출처 부착률 — 분모가 0이면 비율을 만들지 않고 None으로 둔다(0%로 오해되지 않게).
+        # 출처 부착률 — 분모는 **사실 주장 문장만**이다. 해석·전망 문장은 규칙상 각주를
+        # 붙이지 않으므로(a5.md) 분모에 넣으면 모델의 문체 변덕이 품질로 오독된다.
+        # 분모가 0이면 비율을 만들지 않고 None으로 둔다(0%로 오해되지 않게).
         "citation_rate": round(sourced / total * 100, 1) if total else None,
         "citation_sourced": sourced,
         "citation_total": total,
+        # 분모에서 뺀 만큼은 감추지 않고 같이 노출한다.
+        "citation_interpretation": interpretations,
         "notes_total": len(notes),
         "notes_published": len(published),
         "notes_pending": len(pending_notes),

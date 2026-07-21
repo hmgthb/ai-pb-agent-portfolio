@@ -543,7 +543,7 @@ export default function DashboardPage() {
               </div>
               <div className="trust">
                 <div>
-                  <div className="t-label">출처 부착률 <span style={{ color: 'var(--muted)' }}>· 문장 단위</span></div>
+                  <div className="t-label">출처 부착률 <span style={{ color: 'var(--muted)' }}>· 사실 주장 문장</span></div>
                   <div className="t-sub">
                     <span className="t-value">
                       {data.summary.citation_rate === null ? '—' : <>{data.summary.citation_rate}<span className="unit">%</span></>}
@@ -556,7 +556,8 @@ export default function DashboardPage() {
                   <div className="meter-scale"><span>0</span><span>목표 ≥90%</span></div>
                   <div className="t-cap">
                     {data.summary.citation_total
-                      ? `전체 ${data.summary.citation_total}문장 중 ${data.summary.citation_sourced}문장에 출처 각주가 실제 공시·뉴스와 매칭됨`
+                      ? `사실 주장 ${data.summary.citation_total}문장 중 ${data.summary.citation_sourced}문장에 출처 각주가 실제 공시·뉴스와 매칭됨` +
+                        ` · 해석·전망 ${data.summary.citation_interpretation}문장은 각주 대상이 아니라 분모에서 제외`
                       : '아직 생성된 노트 문장이 없습니다.'}
                   </div>
                 </div>

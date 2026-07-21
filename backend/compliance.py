@@ -11,7 +11,9 @@ CLAUDE.md 컴플라이언스 게이트 항목:
 
 import re
 
-WATERMARK = "⚠ AI 초안 · 미검증 — 사람의 검토·심의·승인 없이는 발행되지 않습니다."
+from backend import citations
+
+WATERMARK ="⚠ AI 초안 · 미검증 — 사람의 검토·심의·승인 없이는 발행되지 않습니다."
 BRIEF_NOTICE = "ℹ 내부 참고용 — 투자권유·광고가 아닙니다."
 
 # CLAUDE.md "기능별 필수 고지문구" 표를 코드로 옮긴 것. 사용자가 끌 수 없고, LLM 출력에
@@ -89,7 +91,9 @@ def check_note(content_md: str, sentences: list[dict], feature: str = "F3") -> l
             f"시세 정보 포함('{quoted[0]}') — 지연시세 고지 누락 (실시간이 아님을 명시해야 함)"
         )
 
-    unsourced = [s for s in sentences if not s["is_heading"] and s["source"] is None]
+    # 소제목뿐 아니라 고지문구·구분선도 뺀다 — 우리가 강제로 붙인 워터마크가
+    # "출처 없는 문장"으로 세어져 스스로 발행을 막던 문제가 있었다(citations 참고).
+    unsourced = [s for s in sentences if citations.is_body(s) and s["source"] is None]
     if unsourced:
         preview = unsourced[0]["text"][:40]
         violations.append(

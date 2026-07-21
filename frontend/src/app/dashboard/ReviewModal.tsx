@@ -11,7 +11,7 @@ import { useState } from 'react';
 import { apiPost, errorMessage, fmtKRW, hhmm, detailStr } from './api';
 import {
   ACTOR, MY_PB, PILL, RISK, WATERMARK,
-  type Customer, type NoteDetail, type NoteSource, type QueueChat, type Role,
+  type Customer, type NoteDetail, type NoteSentence, type NoteSource, type QueueChat, type Role,
 } from './types';
 
 type Result = { ok?: string; blocked?: string };
@@ -33,16 +33,28 @@ function SourceBadge({ src }: { src: NoteSource | null }) {
   );
 }
 
-function SentenceRows({ sentences }: { sentences: { text: string; source: NoteSource | null }[] }) {
+function SentenceRows({ sentences }: { sentences: NoteSentence[] }) {
   return (
     <div className="srows">
-      {sentences.map((s, i) => (
-        <div className="srow" key={i}>
-          <span className="stext">{s.text}</span>
-          <span className="spacer" style={{ flex: 1 }} />
-          <SourceBadge src={s.source} />
-        </div>
-      ))}
+      {sentences.map((s, i) => {
+        // 옛 노트는 sources 없이 source만 있다 — 둘 다 읽는다.
+        const srcs = s.sources ?? (s.source ? [s.source] : []);
+        return (
+          <div className="srow" key={i}>
+            <span className="stext">{s.text}</span>
+            <span className="spacer" style={{ flex: 1 }} />
+            {srcs.length ? (
+              srcs.map((src, j) => <SourceBadge key={j} src={src} />)
+            ) : s.kind === 'interpretation' ? (
+              // 각주가 없는 게 규칙대로인 문장. UNSOURCED로 칠하면 검토자가 위반으로
+              // 오해한다 — 다만 판단은 사람이 하도록 큐에는 그대로 올라간다.
+              <span className="sbadge itp" title="해석·전망 문장은 출처 각주 대상이 아닙니다">해석</span>
+            ) : (
+              <SourceBadge src={null} />
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -128,7 +140,8 @@ export function NoteModal({
     .map(([k, v]) => `${k} ${v || '—'}`)
     .join(' · ');
 
-  const body = current.sentences.filter((s) => !s.is_heading);
+  // 소제목과 고지문구·구분선은 검토 대상 문장이 아니다(백엔드 게이트와 같은 기준).
+  const body = current.sentences.filter((s) => !s.is_heading && s.kind !== 'boilerplate');
 
   return (
     <>

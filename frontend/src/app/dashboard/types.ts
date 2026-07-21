@@ -50,10 +50,19 @@ export type NoteSource =
   | { type: 'dart'; rcept_no: string; viewer_url: string; rcept_dt: string | null }
   | { type: 'news'; url: string; title: string; pub_date: string };
 
+/** 백엔드 citations.py의 문장 범주.
+ *  heading=소제목 · boilerplate=고지문구·구분선 · claim=사실 주장 · interpretation=해석·전망.
+ *  출처 부착률의 분모는 claim뿐이다 — 해석 문장은 규칙상 각주를 붙이지 않는다. */
+export type SentenceKind = 'heading' | 'boilerplate' | 'claim' | 'interpretation';
+
 export type NoteSentence = {
   text: string;
+  /** sources의 첫 건. 옛 노트(kind 이전)는 이것만 있다 */
   source: NoteSource | null;
+  /** 한 문장이 여러 건을 인용할 수 있다 — 전부 보여야 한다(가드레일 3) */
+  sources?: NoteSource[];
   is_heading: boolean;
+  kind?: SentenceKind;
 };
 
 export type AuditRow = {
@@ -83,7 +92,10 @@ export type Summary = {
   /** 분모가 0이면 백엔드가 null을 준다 — 0%로 표시하면 안 된다 */
   citation_rate: number | null;
   citation_sourced: number;
+  /** 분모 = 사실 주장 문장만 (해석·소제목·고지문구 제외) */
   citation_total: number;
+  /** 분모에서 뺀 해석·전망 문장 수 — 감추지 않고 같이 노출한다 */
+  citation_interpretation: number;
   notes_total: number;
   notes_published: number;
   notes_pending: number;
