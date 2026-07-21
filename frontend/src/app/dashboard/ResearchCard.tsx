@@ -28,6 +28,18 @@ const LABEL: Record<Agent, string> = {
 type ProgressEvent = { agent: Agent | 'O'; step: string; status: string };
 type NoteEvent = { id: number; corp_name: string; violations: string[] };
 
+/** 3시나리오(공시 없음·파싱 실패·뉴스 없음)를 화면이 구분해 말하기 위한 백엔드 판정.
+ *  `reasons`는 사람이 읽을 문장이고, 나머지는 빈 상태 렌더링용 플래그다. */
+type Outcome = {
+  note_created: boolean;
+  has_financials: boolean;
+  news_count: number;
+  disclosure_count: number;
+  failed_tools: string[];
+  reasons: string[];
+};
+type DoneEvent = { unsourced_agents: string[]; outcome: Outcome | null };
+
 type Financials = {
   corp_name: string;
   bsns_year: string;
@@ -68,6 +80,10 @@ export default function ResearchCard({ onNoteCreated }: { onNoteCreated: () => v
   const [noteText, setNoteText] = useState('');
   const [msg, setMsg] = useState('');
   const [started, setStarted] = useState(false);
+  // 실행이 끝난 뒤에만 빈 상태를 말한다 — 진행 중에 "뉴스 0건"을 띄우면 아직 안 온 것을
+  // 없다고 단정하게 된다.
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const [failed, setFailed] = useState('');
   const esRef = useRef<EventSource | null>(null);
 
   // 페이지를 떠날 때 스트림을 닫는다 — 안 닫으면 백엔드 쪽 에이전트 실행이 계속 돈다.
@@ -114,11 +130,16 @@ export default function ResearchCard({ onNoteCreated }: { onNoteCreated: () => v
     setFinancials(null);
     setNews([]);
     setSources([]);
+    setOutcome(null);
+    setFailed('');
     setMsg('에이전트를 실행하고 있습니다 — 완료까지 1~2분 걸립니다.');
 
     const es = new EventSource(streamUrl(code.trim()));
     esRef.current = es;
     let noteArrived = false;
+    // done을 받고 우리가 닫으면 EventSource가 onerror를 한 번 부른다 — 그건 실패가 아니다.
+    let closedCleanly = false;
+    let runErrored = false;
 
     es.addEventListener('progress', (e) => handleProgress(JSON.parse((e as MessageEvent).data)));
 
@@ -152,18 +173,48 @@ export default function ResearchCard({ onNoteCreated }: { onNoteCreated: () => v
       onNoteCreated();
     });
 
-    es.addEventListener('done', () => {
+    // 백엔드가 예외를 삼키지 않고 흘려보낸다 — 스트림이 조용히 끊기던 것과 구분된다.
+    // 이벤트명이 'error'가 아닌 이유: EventSource의 연결 오류 핸들러와 이름이 겹친다.
+    es.addEventListener('run_error', (e) => {
+      const d: { message: string } = JSON.parse((e as MessageEvent).data);
+      runErrored = true;
+      setFailed(d.message);
+    });
+
+    es.addEventListener('done', (e) => {
+      closedCleanly = true;
       es.close();
       setRunning(false);
-      if (!noteArrived) {
-        setMsg('에이전트 실행은 끝났지만 노트가 생성되지 않았습니다 — 진행 단계에서 실패 지점을 확인하세요.');
+      const d: DoneEvent = JSON.parse((e as MessageEvent).data);
+      setOutcome(d.outcome);
+      // 스트림이 끝났으면 아무 단계도 더 이상 돌고 있지 않다. 'run'인 채로 두면 아직
+      // 도는 것처럼 보인다. 데이터가 비었는지는 아래 카드가 말하므로 칩은 진행만 나타낸다.
+      // 단 예외로 중단된 실행은 완료가 아니다 — ✓로 바꾸면 성공했다고 거짓말하게 된다.
+      const settled: StepState = runErrored ? 'fail' : 'done';
+      setSteps((prev) =>
+        Object.fromEntries(
+          Object.entries(prev).map(([k, v]) => [k, v === 'run' ? settled : v]),
+        ) as Steps,
+      );
+      // 오류 배너가 이미 이유를 말하고 있으면 안내문을 겹쳐 띄우지 않는다.
+      if (!noteArrived && !runErrored) {
+        setMsg(
+          d.outcome?.reasons.length
+            ? '노트가 생성되지 않았습니다 — 아래 사유를 확인하세요.'
+            : '에이전트 실행은 끝났지만 노트가 생성되지 않았습니다 — 진행 단계에서 실패 지점을 확인하세요.',
+        );
       }
+      if (runErrored) setMsg('');
     });
 
     es.onerror = () => {
       es.close();
       setRunning(false);
-      if (!noteArrived) setMsg('스트림이 끊겼습니다. 백엔드 로그를 확인하세요.');
+      // done까지 정상 수신한 뒤 닫히면서 나는 onerror는 실패가 아니다.
+      if (!noteArrived && !closedCleanly) {
+        setFailed('스트림이 끊겼습니다 (백엔드에 연결할 수 없거나 실행 중 중단됨).');
+        setMsg('');
+      }
     };
   }
 
@@ -220,9 +271,26 @@ export default function ResearchCard({ onNoteCreated }: { onNoteCreated: () => v
         </div>
       )}
 
-      {/* 부분결과 — 에이전트가 끝나는 대로 하나씩 등장한다 (W3 점진 렌더) */}
-      {(financials || news.length > 0) && (
+      {/* 부분결과 — 에이전트가 끝나는 대로 하나씩 등장한다 (W3 점진 렌더).
+          실행이 끝난 뒤에는 확보하지 못한 항목도 빈 카드로 남겨 "왜 없는지"를 말한다. */}
+      {(financials || news.length > 0 || outcome) && (
         <div className="gen-cards">
+          {!financials && outcome && (
+            <div className="gen-card empty">
+              <div className="gen-card-head">
+                <span className="chip note">a2 재무 핵심수치</span>
+                <span className="bcode">확보 못 함</span>
+              </div>
+              <div className="empty-body">
+                {outcome.failed_tools.includes('mcp__dart__dart_parse')
+                  ? '재무제표 파싱에 실패했습니다. 연결재무제표(CFS)를 제출하지 않는 법인이거나, 해당 사업연도 보고서가 아직 없을 수 있습니다.'
+                  : '재무 핵심수치를 확보하지 못했습니다.'}
+                {outcome.disclosure_count === 0 &&
+                  !outcome.failed_tools.includes('mcp__dart__dart_search') &&
+                  ' 최근 공시도 0건입니다 — 조회는 정상 동작했습니다.'}
+              </div>
+            </div>
+          )}
           {financials && (
             <div className="gen-card">
               <div className="gen-card-head">
@@ -258,6 +326,19 @@ export default function ResearchCard({ onNoteCreated }: { onNoteCreated: () => v
               ))}
             </div>
           )}
+          {news.length === 0 && outcome && (
+            <div className="gen-card empty">
+              <div className="gen-card-head">
+                <span className="chip chat">a4 뉴스</span>
+                <span className="bcode">0건</span>
+              </div>
+              <div className="empty-body">
+                {outcome.failed_tools.includes('mcp__news__news_search')
+                  ? '뉴스 조회에 실패했습니다 (뉴스 API 오류).'
+                  : '관련 뉴스가 없습니다 — 조회는 정상 동작했고 결과가 0건입니다.'}
+              </div>
+            </div>
+          )}
           {news.length > 0 && (
             <div className="gen-card">
               <div className="gen-card-head">
@@ -285,6 +366,22 @@ export default function ResearchCard({ onNoteCreated }: { onNoteCreated: () => v
             a5 초안 작성 중 {running && <span className="gen-caret">▌</span>}
           </div>
           {noteText}
+        </div>
+      )}
+
+      {failed && <div className="vbox" style={{ marginTop: 10 }}>⛔ {failed}</div>}
+
+      {/* 노트가 나왔더라도 부분적으로 빠진 게 있으면 숨기지 않고 알린다 */}
+      {outcome && outcome.reasons.length > 0 && (
+        <div className="gen-reasons" role="status">
+          <div className="gen-reasons-label">
+            {outcome.note_created ? '확보하지 못한 데이터' : '노트를 만들지 못한 이유'}
+          </div>
+          <ul>
+            {outcome.reasons.map((r, i) => (
+              <li key={i}>{r}</li>
+            ))}
+          </ul>
         </div>
       )}
 

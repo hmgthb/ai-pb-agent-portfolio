@@ -62,11 +62,15 @@ def test_figures_are_readable_but_unconverted():
 
 
 def test_partial_data_does_not_crash():
-    """공시만 있고 뉴스가 없는 날(또는 그 반대)에도 조립은 성공해야 한다."""
+    """공시만 있고 뉴스가 없는 날(또는 그 반대)에도 조립은 성공해야 한다.
+
+    데이터 섹션(`# A2 —` / `# A4 —`)이 있는지로 본다 — 없는 항목은 "확보하지 못한
+    데이터"에서 이름으로 언급되므로(W6), 단순 문자열 포함으로 재면 그걸 데이터로 오인한다.
+    """
     only_news = _a5_input("삼성전자", "005930", None, NEWS, {})
-    assert "A4" in only_news and "A2" not in only_news
+    assert "# A4 —" in only_news and "# A2 —" not in only_news
     only_fin = _a5_input("삼성전자", "005930", FINANCIALS, [], DART_SOURCES)
-    assert "A2" in only_fin and "A4" not in only_fin
+    assert "# A2 —" in only_fin and "# A4 —" not in only_fin
 
 
 def test_missing_amount_is_not_fabricated():

@@ -466,6 +466,22 @@
      검토자가 위반으로 오해하므로 중립색으로 분리한다. */
   .sbadge.itp { color: var(--muted); background: color-mix(in srgb, var(--muted) 10%, transparent); }
 
+  /* 3시나리오 빈 상태(W6) — 데이터를 못 구한 항목도 카드로 남긴다. 카드가 아예 사라지면
+     "아직 안 왔다"와 "없다"를 구분할 수 없다. 실패가 아니라 결과이므로 경고색은 쓰지 않는다. */
+  .gen-card.empty { border-style: dashed; background: transparent; }
+  .gen-card.empty .empty-body { font-size: 12.5px; line-height: 1.65; color: var(--muted); padding: 2px 0; }
+
+  .gen-reasons {
+    margin-top: 10px; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: 10px; background: var(--page);
+  }
+  .gen-reasons-label {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+    color: var(--muted); text-transform: uppercase; margin-bottom: 6px;
+  }
+  .gen-reasons ul { margin: 0; padding-left: 16px; }
+  .gen-reasons li { font-size: 12.5px; line-height: 1.7; color: var(--ink-2); }
+
   .gen-note {
     margin-top: 12px; padding: 12px 14px;
     background: var(--page); border: 1px solid var(--border); border-radius: 10px;
