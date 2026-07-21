@@ -1,7 +1,8 @@
 # Claude Code / 하네스 로컬 설정 (저장소 제외)
 # CLAUDE.md와 .claude/agents/*.md는 제품 런타임 시스템 프롬프트·서브에이전트 정의라 커밋 대상
+# HANDOFF.md도 커밋 대상 — "다음 세션은 이 문서부터"라고 선언하는 문서가 레포에 없으면
+# 그 역할을 못 하고, 미커밋 상태로 통째 유실되는 사고가 이미 한 번 있었다(HANDOFF §3-2)
 .claude/settings.local.json
-HANDOFF.md
 
 # macOS
 .DS_Store
