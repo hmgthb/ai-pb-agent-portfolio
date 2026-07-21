@@ -1,0 +1,266 @@
+'use client';
+
+/** 검토 모달 — 노트는 검토→심의→발행(게이트 재검사), 상담은 담당 PB 승인/반려.
+ *
+ *  상태 전이는 전부 백엔드가 원천이다(감사로그·게이트 재검사 포함). 화면은 결과를 받아
+ *  다시 그릴 뿐, 여기서 상태를 임의로 바꾸지 않는다 — 시안은 목업이라 로컬에서 바꿨지만
+ *  실화면에서 그렇게 하면 DB와 화면이 갈라진다.
+ */
+
+import { useState } from 'react';
+import { apiPost, errorMessage, fmtKRW, hhmm, detailStr } from './api';
+import {
+  ACTOR, MY_PB, PILL, RISK, WATERMARK,
+  type Customer, type NoteDetail, type NoteSource, type QueueChat, type Role,
+} from './types';
+
+type Result = { ok?: string; blocked?: string };
+
+/* ── 문장 출처 배지 ───────────────────────────────────────── */
+function SourceBadge({ src }: { src: NoteSource | null }) {
+  if (!src) return <span className="sbadge un">UNSOURCED</span>;
+  if (src.type === 'dart') {
+    return (
+      <span className="sbadge src" title={`rcpNo ${src.rcept_no}`}>
+        공시 {src.rcept_dt ?? '접수일 미상'}
+      </span>
+    );
+  }
+  return (
+    <span className="sbadge src" title={src.url}>
+      뉴스 {(src.pub_date || '').slice(0, 10) || '시점 미상'}
+    </span>
+  );
+}
+
+function SentenceRows({ sentences }: { sentences: { text: string; source: NoteSource | null }[] }) {
+  return (
+    <div className="srows">
+      {sentences.map((s, i) => (
+        <div className="srow" key={i}>
+          <span className="stext">{s.text}</span>
+          <span className="spacer" style={{ flex: 1 }} />
+          <SourceBadge src={s.source} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── 노트 모달 ────────────────────────────────────────────── */
+type Action = { label: string; ok: boolean; deny?: string; danger?: boolean; run: () => Promise<Result> };
+
+function ActionsRow({ acts, onDone }: { acts: Action[]; onDone: (r: Result) => void }) {
+  const [busy, setBusy] = useState(false);
+  if (!acts.length) return null;
+  return (
+    <div className="m-actions">
+      {acts.map((a, i) => (
+        <span key={i} style={{ display: 'contents' }}>
+          <button
+            className={`btn ${a.danger ? 'danger' : 'primary'}`}
+            disabled={!a.ok || busy}
+            onClick={async () => {
+              setBusy(true);
+              onDone(await a.run());
+              setBusy(false);
+            }}
+          >
+            {a.label}
+          </button>
+          {!a.ok && <span className="hint">🔒 {a.deny}</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+export function NoteModal({
+  note, role, onClose, onChanged, toast,
+}: {
+  note: NoteDetail;
+  role: Role;
+  onClose: () => void;
+  onChanged: () => Promise<NoteDetail | null>;
+  toast: (m: string) => void;
+}) {
+  // 발행되면 이 노트는 큐에서 빠지므로 부모의 목록에서 사라진다 — 결과 메시지를 계속
+  // 보여주려면 모달이 자기 사본을 들고 있어야 한다. 다른 노트를 열면 부모가 key로
+  // 리마운트하므로 prop→state 동기화 effect는 필요 없다.
+  const [current, setCurrent] = useState(note);
+  const [res, setRes] = useState<Result>({});
+
+  const actor = ACTOR[role];
+  const [label, cls] = PILL[current.status] ?? [current.status, ''];
+
+  const act = async (action: string): Promise<Result> => {
+    const r = await apiPost(`/api/notes/${current.id}/${action}`, { actor });
+    if (!r.ok) return { blocked: errorMessage(r.body) };
+    if (action === 'publish') {
+      toast('발행 완료 — 감사로그에 기록되었습니다');
+      return { ok: '게이트 통과 — 발행되었습니다.' };
+    }
+    return {};
+  };
+
+  const actions: Action[] =
+    current.status === 'draft'
+      ? [{
+          label: '검토 시작 (내가 담당)', ok: role === 'admin',
+          deny: '검토 시작은 관리자(작성부서 대행) 권한입니다',
+          run: () => act('review'),
+        }]
+      : current.status === 'review'
+      ? [{
+          label: '검토 완료 → 심의 요청', ok: role === 'admin',
+          deny: '심의 요청은 검토자(작성부서) 권한입니다',
+          run: () => act('deliberate'),
+        }]
+      : current.status === 'deliberation'
+      ? [{
+          label: '발행', ok: role === 'comp',
+          deny: '발행은 준법 권한 필요',
+          run: () => act('publish'),
+        }]
+      : [];
+
+  const people = ([['검토자', current.reviewer], ['심의자', current.deliberator], ['발행자', current.publisher]] as const)
+    .map(([k, v]) => `${k} ${v || '—'}`)
+    .join(' · ');
+
+  const body = current.sentences.filter((s) => !s.is_heading);
+
+  return (
+    <>
+      <div className="m-head">
+        <h3>{current.corp_name}({current.stock_code}) 실적·공시 노트</h3>
+        <span className={`pill ${cls}`}>{label}</span>
+        <button className="m-close" aria-label="닫기" onClick={onClose}>×</button>
+      </div>
+      <div className="m-meta">노트 #{current.id} · {people}</div>
+      <div className="wm">{WATERMARK}</div>
+      {res.blocked && <div className="vbox">⛔ {res.blocked}</div>}
+      {res.ok && <div className="okbox">✓ {res.ok}</div>}
+      <SentenceRows sentences={body} />
+      <ActionsRow
+        acts={actions}
+        onDone={async (r) => {
+          setRes(r);
+          const fresh = await onChanged();
+          if (fresh) setCurrent(fresh);
+        }}
+      />
+      <div className="m-audit">
+        <div className="alabel">감사로그 (append-only)</div>
+        {current.audit_log.map((a, i) => (
+          <div className="aitem" key={i}>
+            <span className="ats">{hhmm(a.ts)}</span>
+            <span className="aev">{a.event_type}</span>
+            <span className="adet">
+              {[a.actor && `actor: ${a.actor}`, detailStr(a.detail)].filter(Boolean).join(' · ')}
+            </span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/* ── 상담 모달 ────────────────────────────────────────────── */
+/** 답변 초안은 아직 F1(대화형)이 없어 목업이다 — 고객 계좌 데이터만 실제 값을 쓴다.
+ *  화면에도 "목업" 배지로 표시해 실데이터와 섞이지 않게 한다. */
+function chatDraft(c: Customer) {
+  return [
+    {
+      text: `고객님 계좌의 현재 국내주식 비중은 ${c.alloc['국내주식'] ?? 0}%로, 등록된 투자성향(${RISK[c.risk]})을 기준으로 검토했습니다.`,
+      source: null,
+      badge: <span className="sbadge acct" title={c.acct}>계좌 데이터</span>,
+    },
+    {
+      text: '본 답변은 정보 제공 목적이며 투자권유가 아닙니다 — 구체적 매매 판단은 담당 PB와의 상담으로 확정하시기 바랍니다.',
+      source: null,
+      badge: <span className="sbadge ntc">필수 고지</span>,
+    },
+  ];
+}
+
+export function ChatModal({
+  item, customer, role, onClose, onChanged, toast,
+}: {
+  item: QueueChat;
+  customer: Customer;
+  role: Role;
+  onClose: () => void;
+  onChanged: () => void;
+  toast: (m: string) => void;
+}) {
+  const [res, setRes] = useState<Result>({});
+  const [status, setStatus] = useState(item.status);
+  const mine = role === 'pb' && customer.pb === MY_PB;
+  const deny = role === 'comp' ? '상담 승인은 담당 PB 권한입니다' : '담당 PB만 승인·반려할 수 있습니다';
+  const [label, cls] = PILL[status] ?? [status, ''];
+
+  const decide = async (action: 'approve' | 'reject'): Promise<Result> => {
+    const r = await apiPost(`/api/sessions/${item.id}/${action}`, { actor: MY_PB });
+    if (!r.ok) return { blocked: errorMessage(r.body) };
+    setStatus(action === 'approve' ? 'done' : 'rejected');
+    if (action === 'approve') {
+      toast(`전송 완료 — ${customer.name} 고객에게 발송되었습니다`);
+      return { ok: '승인됨 — 고객에게 전송되었습니다.' };
+    }
+    toast('반려됨 — 재작성 큐로 돌아갑니다');
+    return { blocked: '반려됨 — AI가 재작성 후 다시 승인 대기로 올라옵니다.' };
+  };
+
+  const actions: Action[] =
+    status === 'pending'
+      ? [
+          { label: '승인하고 고객에게 전송', ok: mine, deny, run: () => decide('approve') },
+          { label: '반려 (재작성 요청)', ok: mine, deny, danger: true, run: () => decide('reject') },
+        ]
+      : [];
+
+  return (
+    <>
+      <div className="m-head">
+        <h3>상담 답변 검토 — {customer.name}</h3>
+        <span className={`pill ${cls}`}>{label}</span>
+        <button className="m-close" aria-label="닫기" onClick={onClose}>×</button>
+      </div>
+      <div className="m-meta">
+        {customer.acct} · {customer.age}세 · {RISK[customer.risk]} · 잔고 ₩{fmtKRW(customer.balance)} · 담당 {customer.pb}
+        {customer.flag && (
+          <> · <span className="flag">▲ {customer.flagReasons.map((r) => r.text).join(' · ')}</span></>
+        )}
+      </div>
+      <div className="wm">{WATERMARK} 승인 전에는 고객에게 전송되지 않습니다.</div>
+      {res.blocked && <div className="vbox">⛔ {res.blocked}</div>}
+      {res.ok && <div className="okbox">✓ {res.ok}</div>}
+      <div className="bubble q">
+        <div className="blabel">고객 질문</div>
+        {item.question}
+      </div>
+      <div className="bubble">
+        <div className="blabel">
+          AI 답변 초안 <span className="src mock" style={{ marginLeft: 6 }}>목업 · F1 미구현</span>
+        </div>
+        <div className="srows">
+          {chatDraft(customer).map((s, i) => (
+            <div className="srow" key={i}>
+              <span className="stext">{s.text}</span>
+              <span className="spacer" style={{ flex: 1 }} />
+              {s.badge}
+            </div>
+          ))}
+        </div>
+      </div>
+      <ActionsRow
+        acts={actions}
+        onDone={(r) => {
+          setRes(r);
+          onChanged();
+        }}
+      />
+    </>
+  );
+}

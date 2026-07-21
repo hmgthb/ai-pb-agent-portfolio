@@ -20,7 +20,7 @@ from claude_agent_sdk import (
 )
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from backend import brief, citations, compliance, db
@@ -48,14 +48,6 @@ app.add_middleware(
 @app.get("/health")
 def health():
     return {"status": "ok", "message": "hello"}
-
-
-@app.get("/dashboard")
-def dashboard_page():
-    """관리자/PB 콘솔. 시안 파일을 그대로 서빙한다 — 복사본을 두지 않으므로 시안과 실제
-    화면이 갈라지지 않고, 같은 오리진이라 CORS도 타지 않는다.
-    # ponytail: Next.js /dashboard로 포팅하기 전까지의 배선. 포팅 시 이 라우트는 지운다."""
-    return FileResponse(REPO_ROOT / "docs" / "design" / "pb-admin-dashboard.html")
 
 
 def _sse(event: str, data: dict) -> str:
