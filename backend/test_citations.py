@@ -104,6 +104,43 @@ def test_ambiguous_sentence_defaults_to_claim():
     assert citation_stats(s) == (0, 1, 0)  # 미인용으로 분모에 남는다
 
 
+def test_hedge_endings_are_interpretation():
+    """라이브 eval에서 사실 주장으로 오분류돼 부착률을 끌어내리던 판단유보 어미들.
+    전부 각주 없는 게 규칙대로이므로 분모에서 빠져야 한다(§1-3 후속)."""
+    hedges = [
+        "이 자료만으로는 판단할 근거가 없다.",
+        "등락 원인을 직접 인과로 연결하기에는 근거가 부족하다.",
+        "실제 생산·비용에 미치는 영향도 위 데이터로는 확인되지 않는다.",
+        "실적 판단을 유보하는 것이 바람직하다.",
+        "방향성 측면에서 서로 맞닿아 있는 것으로 볼 여지가 있다.",
+        "사안별로 다르게 전개될 가능성이 있다.",
+        "앞으로 어떻게 확산되는지가 이어서 확인해야 할 대목이다.",
+    ]
+    for h in hedges:
+        s = _parse(h)
+        assert s[0]["kind"] == "interpretation", h
+
+
+def test_bare_negation_stays_claim():
+    """'없다'만으로 해석 처리하면 '매출이 없다'류 사실 주장까지 삼킨다 — 넣지 않았다."""
+    s = _parse("해당 분기 배당은 없다.")
+    assert s[0]["kind"] == "claim", s
+
+
+def test_self_disclaimer_is_boilerplate():
+    """a5가 접두 기호를 바꿔 단 자기 고지문구도 boilerplate로 잡는다.
+    '*'로 시작해 예전엔 '출처 없는 문장'으로 게이트에 올라갔다(실측 버그)."""
+    for line in [
+        "*본 노트는 AI가 작성한 초안이며 미검증 상태입니다.*",
+        "※ 본 문서는 AI가 생성한 초안이며 미검증 상태입니다.",
+        "본 노트는 AI가 작성한 초안입니다. 내부 참고용입니다.",
+    ]:
+        s = _parse(line)
+        assert all(x["kind"] == "boilerplate" for x in s), (line, s)
+        assert unsourced_count(s) == 0
+        assert citation_stats(s) == (0, 0, 0)
+
+
 def test_legacy_rows_without_kind():
     """DB에 이미 저장된 옛 문장(kind 없음)도 사실 주장으로 세어 하위호환한다."""
     legacy = [{"text": "매출액은 300조원이다.", "source": {"type": "dart"}, "is_heading": False}]
