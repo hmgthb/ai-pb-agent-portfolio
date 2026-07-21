@@ -27,6 +27,9 @@ services:
     command: sh -c "npm install && npm run dev -- -H 0.0.0.0 --webpack"
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      # /dashboard 프록시는 Next 서버가 컨테이너 네트워크에서 호출하므로 서비스명을 쓴다
+      # (브라우저에서 쓰는 위 주소와 달라야 한다).
+      BACKEND_ORIGIN: http://backend:8000
 
   postgres:
     image: pgvector/pgvector:pg16
