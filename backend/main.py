@@ -787,6 +787,38 @@ def _corp_name_of(code: str, quotes: dict, disclosures: dict) -> str:
     return rows[0].get("corp_name", code) if rows else code
 
 
+def _code_from_delegation(agent_input: dict, stock_codes: list[str]) -> str | None:
+    """위임문에서 종목코드를 뽑는다 — **정확히 하나**일 때만 인정한다.
+
+    예전에는 "처음 나온 코드"를 집었다. O가 위임문에 앞 종목을 함께 언급하면
+    (예: "005930과 마찬가지로 000660의 공시를…") 조용히 남의 종목으로 귀속된다.
+    라이브에서 이 오귀속이 관측된 적은 없지만, 틀려도 티가 안 나는 종류라
+    모호하면 버린다 — 엉뚱한 종목 브리프에 남의 데이터를 싣느니 비는 편이 낫다."""
+    text = json.dumps(agent_input, ensure_ascii=False)
+    found = [code for code in stock_codes if code in text]
+    return found[0] if len(found) == 1 else None
+
+
+def _attribute_news(
+    pending: list[tuple[str, str | None, list]],
+    quotes: dict[str, dict],
+    stock_codes: list[str],
+) -> dict[str, list]:
+    """뉴스 검색 결과를 종목에 귀속시킨다.
+
+    news_search 결과에는 종목 정보가 없고 입력도 검색어(법인명)뿐이라, krx_quote가 준
+    법인명↔종목코드 대응으로 되짚는다. 법인명을 못 맞추면 위임문 기반 폴백을 쓰고,
+    그것도 모호하면 버린다(가드레일 3 — 출처가 불확실한 데이터를 얹지 않는다)."""
+    name_to_code = {q["corp_name"]: code for code, q in quotes.items() if q.get("corp_name")}
+    news: dict[str, list] = {}
+    for query_text, fallback_code, parsed in pending:
+        matched = [code for corp_name, code in name_to_code.items() if corp_name in query_text]
+        code = matched[0] if len(matched) == 1 else fallback_code
+        if code in stock_codes:
+            news.setdefault(code, []).extend(parsed)
+    return news
+
+
 async def _collect_brief_data(stock_codes: list[str]) -> tuple[dict, dict, dict]:
     """에이전트를 돌려 종목별 (시세, 공시, 뉴스)를 모은다.
 
@@ -809,11 +841,17 @@ async def _collect_brief_data(stock_codes: list[str]) -> tuple[dict, dict, dict]
 
     quotes: dict[str, dict] = {}
     disclosures: dict[str, list[dict]] = {}
-    news: dict[str, list[dict]] = {}
+
     tool_names: dict[str, str] = {}
-    # a4 위임 메시지에 어떤 종목이 들어 있었는지로, 그 서브에이전트의 뉴스 결과를 귀속시킨다.
+    # 도구 입력 자체가 가장 확실한 귀속 근거다 — dart_search는 stock_code를, news_search는
+    # 검색어를 입력으로 받는다. 위임 메시지를 읽어 추측하던 걸 이걸로 대체했다.
+    tool_inputs: dict[str, dict] = {}
+    # a4 위임 메시지에 실린 종목 — 뉴스 귀속의 폴백으로만 쓴다.
     code_of_agent_call: dict[str, str] = {}
     agent_of_tool_use_id: dict[str, str] = {}
+    # 뉴스는 검색어를 법인명과 대조해 귀속하는데, 법인명은 krx_quote 결과에서 오고 그게
+    # 뉴스보다 늦게 도착할 수 있다 — 스트림이 끝난 뒤 한꺼번에 푼다.
+    pending_news: list[tuple[str, str | None, list]] = []
 
     async for message in query(prompt=_prompt_stream(prompt), options=options):
         if isinstance(message, AssistantMessage):
@@ -821,13 +859,12 @@ async def _collect_brief_data(stock_codes: list[str]) -> tuple[dict, dict, dict]
                 if not isinstance(block, ToolUseBlock):
                     continue
                 tool_names[block.id] = block.name
+                tool_inputs[block.id] = block.input
                 if block.name == "Agent":
                     agent_of_tool_use_id[block.id] = block.input.get("subagent_type")
-                    text = json.dumps(block.input, ensure_ascii=False)
-                    for code in stock_codes:
-                        if code in text:
-                            code_of_agent_call[block.id] = code
-                            break
+                    code = _code_from_delegation(block.input, stock_codes)
+                    if code:
+                        code_of_agent_call[block.id] = code
         elif isinstance(message, UserMessage):
             parent = message.parent_tool_use_id
             content = message.content if isinstance(message.content, list) else []
@@ -848,15 +885,16 @@ async def _collect_brief_data(stock_codes: list[str]) -> tuple[dict, dict, dict]
                 # corp_code만 준다) 위임 메시지에 실린 종목으로 귀속시킨다.
                 if name == "mcp__krx__krx_quote":
                     quotes[parsed["stock_code"]] = parsed
-                    continue
-                code = code_of_agent_call.get(parent)
-                if not code:
-                    continue
-                if name == "mcp__dart__dart_search":
-                    disclosures.setdefault(code, []).extend(parsed)
+                elif name == "mcp__dart__dart_search":
+                    # 도구 입력에 종목코드가 그대로 있다 — 위임문을 볼 필요가 없다.
+                    code = (tool_inputs.get(blk.tool_use_id) or {}).get("stock_code")
+                    if code in stock_codes:
+                        disclosures.setdefault(code, []).extend(parsed)
                 elif name == "mcp__news__news_search":
-                    news.setdefault(code, []).extend(parsed)
+                    query_text = (tool_inputs.get(blk.tool_use_id) or {}).get("query") or ""
+                    pending_news.append((query_text, code_of_agent_call.get(parent), parsed))
 
+    news = _attribute_news(pending_news, quotes, stock_codes)
     return quotes, disclosures, news
 
 
