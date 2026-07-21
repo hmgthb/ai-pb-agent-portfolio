@@ -64,8 +64,14 @@ def dart_search(
     stock_code: str,
     days: int = 90,
     pblntf_ty: Literal["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"] | None = None,
+    limit: int = 30,
 ) -> list[dict]:
-    """종목코드(6자리)로 공시 목록을 검색한다. 예: 삼성전자 -> "005930".
+    """종목코드(6자리)로 공시 목록을 **접수일 최신순 최대 limit건** 검색한다. 예: "005930".
+
+    한 종목의 공시는 하루에도 수백 건이 쌓일 수 있다(임원·주요주주 소유상황보고가 대량
+    제출되는 날 등 — 실제로 삼성전자가 하루 382건). 전부 반환하면 도구 결과가 토큰 한도를
+    넘어 호출한 쪽이 데이터를 아예 못 받으므로 기본 30건으로 자른다. 더 많이 필요하면
+    limit을 올리기보다 pblntf_ty로 종류를 좁히거나 days를 줄여라.
 
     사업보고서·분기보고서 등 정기공시의 출처를 찾을 때는 pblntf_ty="A"(정기공시)로
     좁혀서 검색해라 — 공시가 잦은 종목은 필터 없이는 페이지를 아무리 넘겨도
@@ -91,6 +97,9 @@ def dart_search(
             "end_de": end.strftime("%Y%m%d"),
             "page_count": 100,  # DART API 최대치
             "page_no": page_no,
+            # 최신순을 API에 명시해서, limit으로 앞에서 자른 것이 곧 "가장 최근"이 되게 한다.
+            "sort": "date",
+            "sort_mth": "desc",
         }
         if pblntf_ty:
             params["pblntf_ty"] = pblntf_ty
@@ -107,9 +116,16 @@ def dart_search(
             raise RuntimeError(f"DART API error {data['status']}: {data['message']}")
 
         items.extend(data.get("list", []))
-        if page_no >= data.get("total_page", 1) or page_no >= MAX_SEARCH_PAGES:
+        # 필요한 만큼 모였으면 남은 페이지는 받지 않는다 — 잘라 버릴 데이터를 더 받을 이유가 없다.
+        if (
+            len(items) >= limit
+            or page_no >= data.get("total_page", 1)
+            or page_no >= MAX_SEARCH_PAGES
+        ):
             break
         page_no += 1
+
+    items = items[:limit]
 
     return [
         {

@@ -101,6 +101,19 @@ def _text_delta(event: dict) -> str | None:
     return delta.get("text")
 
 
+# is_error가 False여도 실패인 결과가 있다: 도구 출력이 토큰 한도를 넘으면 SDK가 에러 문자열을
+# 정상 결과처럼 돌려준다. 이걸 성공으로 세면 진행 타임라인에 completed로 찍혀 실패가 가려진다
+# (실제로 a1의 dart_search에서 발생 — 삼성전자 공시 382건/59K자).
+_SOFT_FAIL_MARKERS = ("exceeds maximum allowed tokens",)
+
+
+def _tool_failed(block) -> bool:
+    if block.is_error:
+        return True
+    text = block.content if isinstance(block.content, str) else str(block.content)
+    return any(marker in text for marker in _SOFT_FAIL_MARKERS)
+
+
 def _extract_corp_name(a1_text: str | None) -> str | None:
     """a1이 "종목코드 X = 법인명 Y" 형태로 반환한 텍스트에서 법인명만 뽑는다."""
     if not a1_text:
@@ -196,9 +209,10 @@ async def research_stream(stock_code: str = Query(...)):
                 "텍스트를 요약하거나 손대지 말고 **원문 그대로(URL·수치 포함)** 그대로 옮겨 적어라 "
                 "— a5는 그 URL/접수번호로 출처 각주를 달기 때문에, 네가 다듬거나 요약하면 각주가 "
                 "깨진다.\n\n"
-                "**최종 답변:** a5의 노트 초안을 받은 후, 사용자에게 보내는 마지막 답변은 노트 "
-                "본문이나 재무제표·뉴스 목록을 다시 나열하지 마라 — 전부 화면에 별도로 표시된다. "
-                "\"노트 초안이 준비되어 검토 대기 중입니다\" 정도의 한 줄 안내만 해라."
+                "**최종 답변:** 노트 본문이나 재무제표·뉴스 목록을 다시 나열하지 마라 — 전부 "
+                "화면에 별도로 표시된다. \"노트 초안 작성을 요청했습니다\" 정도의 한 줄 안내만 해라. "
+                "a5가 무엇을 썼는지 네가 추측해서 옮기지 마라 — 노트 본문은 a5의 산출물을 "
+                "백엔드가 직접 받아 처리한다."
             ),
         )
         prompt = (
@@ -271,7 +285,7 @@ async def research_stream(stock_code: str = Query(...)):
                     # "Agent" 도구의 결과는 완료가 아니라 비동기 디스패치 ack일 뿐이라 진행 이벤트로 안 남긴다.
                     if name is None or name == "Agent":
                         continue
-                    if block.is_error:
+                    if _tool_failed(block):
                         if name in CITATION_TOOLS:
                             agent_errors.add(agent)
                         yield _sse(
@@ -697,7 +711,7 @@ async def _collect_brief_data(stock_codes: list[str]) -> tuple[dict, dict, dict]
             parent = message.parent_tool_use_id
             content = message.content if isinstance(message.content, list) else []
             for blk in content:
-                if not isinstance(blk, ToolResultBlock) or blk.is_error:
+                if not isinstance(blk, ToolResultBlock) or _tool_failed(blk):
                     continue
                 name = tool_names.get(blk.tool_use_id)
                 if name is None or name == "Agent":

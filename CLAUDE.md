@@ -69,3 +69,23 @@ include_partial_messages, ...)` / 훅 배선 `hooks={"PreToolUse": [HookMatcher(
 서브에이전트는 `.claude/agents/*.md`(frontmatter `name`·`description`·`model`, 선택 `tools`) /
 메시지 타입 `AssistantMessage`·`UserMessage`·`ToolUseBlock`·`ToolResultBlock`·`TextBlock`·`ResultMessage` /
 토큰 스트리밍은 `include_partial_messages=True` + `StreamEvent`(`.event`=원시 Anthropic 스트림 이벤트).
+
+**⚠️ 서브에이전트 위임은 비동기다 (2026-07-21 실측, 라이브 확인):**
+`Agent` 도구는 즉시 반환한다 — 결과가 `"Async agent launched successfully. agentId: ..."`이고,
+서브에이전트는 그 뒤 백그라운드에서 돈다. **메인 에이전트가 턴을 끝내면 `query()` 스트림이
+닫히고 아직 안 끝난 서브에이전트는 잘린다.**
+
+- 도구를 호출하는 서브에이전트(a1·a2·a4)는 도구 결과가 스트림에 빨리 들어와 대체로 살아남는다.
+- **도구 없이 텍스트만 만드는 마지막 단계(a5)는 항상 잘린다** — 노트가 생성되지 않는다.
+- 서브에이전트 메시지에는 `parent_tool_use_id`가 붙어 오므로 귀속 자체는 정상 동작한다.
+- **프롬프트로 "기다려라"라고 지시하면 안 된다.** 실측 결과 메인 에이전트는 기다리지 않고
+  **다른 에이전트 데이터로 문장을 지어내 a5가 쓴 것처럼 인용했다**(가드레일 3 위반).
+  지시를 강화할수록 날조 압력만 커진다.
+- 해결 방향(미결): ① `AgentDefinition.background=False`가 동기 실행을 만드는지 확인,
+  ② 안 되면 최종 작성 단계를 위임하지 말고 **백엔드가 별도 `query()`로 직접 실행**.
+
+**도구 결과가 토큰 한도를 넘으면 실패가 성공처럼 보인다 (2026-07-21 실측):**
+출력이 크면 `is_error=False`인 채로 `"Error: result (N characters) exceeds maximum allowed
+tokens. Output has been saved to ..."` 문자열이 돌아온다. 그대로 세면 진행 타임라인에
+`completed`로 찍혀 원인을 못 찾는다 — `backend/main.py`의 `_tool_failed()`로 걸러낸다.
+**자체 MCP 도구는 반환량에 상한을 두어라**(`dart_search`는 하루 382건까지 나온 적이 있다).
