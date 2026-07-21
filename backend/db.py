@@ -38,6 +38,18 @@ CREATE TABLE IF NOT EXISTS audit_log (
     detail JSONB NOT NULL DEFAULT '{}'
 );
 
+-- F2 모닝 브리프. 노트(검토→심의→발행)와 달리 내부 참고용이라 승인 흐름이 없고,
+-- 배치 실행마다 한 행씩 쌓인다.
+CREATE TABLE IF NOT EXISTS briefs (
+    id SERIAL PRIMARY KEY,
+    brief_date DATE NOT NULL,
+    content_md TEXT NOT NULL,
+    items_json JSONB NOT NULL,
+    sentences_json JSONB NOT NULL,
+    violations_json JSONB NOT NULL DEFAULT '[]',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- 대시보드(관리자/PB 콘솔)용. 고객·상담은 대고객 AI PB 프로토타입의 목업 데이터이며
 -- 시드는 backend/scripts/seed_pb.py가 넣는다 — 여기서는 스키마만 보장한다.
 CREATE TABLE IF NOT EXISTS pb_customers (
@@ -156,6 +168,25 @@ async def get_audit_log(note_id: int) -> list[asyncpg.Record]:
     return await pool().fetch(
         "SELECT * FROM audit_log WHERE note_id = $1 ORDER BY id", note_id
     )
+
+
+async def create_brief(
+    brief_date, content_md: str, items: list[dict], sentences: list[dict], violations: list[str]
+) -> int:
+    row = await pool().fetchrow(
+        """INSERT INTO briefs (brief_date, content_md, items_json, sentences_json, violations_json)
+           VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb) RETURNING id""",
+        brief_date,
+        content_md,
+        json.dumps(items, ensure_ascii=False),
+        json.dumps(sentences, ensure_ascii=False),
+        json.dumps(violations, ensure_ascii=False),
+    )
+    return row["id"]
+
+
+async def latest_brief() -> asyncpg.Record | None:
+    return await pool().fetchrow("SELECT * FROM briefs ORDER BY id DESC LIMIT 1")
 
 
 # --- 대시보드 조회 --------------------------------------------------------

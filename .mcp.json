@@ -15,6 +15,14 @@
         "backend/mcp_servers/news_server.py"
       ],
       "env": {}
+    },
+    "krx": {
+      "type": "stdio",
+      "command": "${DART_MCP_PYTHON:-backend/.venv/bin/python}",
+      "args": [
+        "backend/mcp_servers/krx_server.py"
+      ],
+      "env": {}
     }
   }
 }

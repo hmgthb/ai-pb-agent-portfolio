@@ -135,6 +135,38 @@
   .notice .dot { color: var(--warning); }
   .notice strong { color: var(--ink); font-weight: 600; }
 
+  /* ── 기능 레일 (H1: 5기능이 한 플랫폼 위에 있다는 인상) ── */
+  .rail { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .rail .f {
+    flex: 1 1 150px; min-width: 0;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 9px 12px 10px;
+  }
+  .rail .f .fname { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+  .rail .f .fsub { font-size: 11px; color: var(--muted); margin-top: 1px; }
+  .rail .f .fstate {
+    display: inline-block; margin-top: 6px; font-size: 10.5px; font-weight: 600;
+    padding: 1px 7px; border-radius: 10px;
+  }
+  /* 동작하는 기능만 강조하고 나머지는 로드맵으로 낮춘다 — 안 되는 걸 되는 것처럼 보이지 않게. */
+  .rail .f.on { border-color: var(--accent); }
+  .rail .f.on .fstate { background: var(--accent); color: #fff; }
+  .rail .f.off { opacity: 0.62; }
+  .rail .f.off .fstate { background: var(--grid); color: var(--muted); }
+
+  /* ── 오늘의 브리프 (F2) ───────────────────── */
+  .brief-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .bcard { border: 1px solid var(--border); border-radius: 10px; padding: 12px 13px; min-width: 0; }
+  .bcard .bh { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
+  .bcard .bname { font-size: 13.5px; font-weight: 600; }
+  .bcard .bcode { font-size: 11px; color: var(--muted); }
+  .bcard .bquote { font-size: 12.5px; margin: 4px 0 8px; }
+  .bcard .bline { font-size: 12px; color: var(--ink-2); padding: 4px 0; border-top: 1px solid var(--grid); display: flex; gap: 6px; }
+  .bcard .bline a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--muted); }
+  .bcard .bline a:hover { color: var(--accent); }
+  .bcard .btag { font-size: 10px; font-weight: 600; color: var(--muted); flex-shrink: 0; padding-top: 1px; }
+  .bcard .bempty { font-size: 12px; color: var(--muted); padding: 6px 0; }
+
   /* ── 카테고리 탭 (고객 관리 / AI 평가) ────── */
   .cats { display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 1px solid var(--grid); }
   .cat {
@@ -446,6 +478,8 @@
     <span><strong>내부 참고용</strong> — 투자권유·광고가 아닙니다. AI 산출물은 전부 <strong>초안·미검증</strong>이며, 발행·고객 전달은 사람의 검토·심의·승인 후에만 가능합니다.</span>
   </div>
 
+  <nav class="rail" id="feature-rail" aria-label="기능 레일"></nav>
+
   <nav class="cats" aria-label="대시보드 카테고리">
     <button class="cat" data-view="cust" aria-pressed="true">고객 관리<span class="cat-sub">지금 처리할 일 · 고객 현황</span></button>
     <button class="cat" data-view="ai" aria-pressed="false">AI 평가<span class="cat-sub">신뢰도 · 컴플라이언스 · 활동 감사</span></button>
@@ -465,6 +499,17 @@
         <div id="ch-trend"></div>
       </section>
     </div>
+
+    <section class="card" aria-labelledby="b-title" id="brief-card">
+      <div class="card-head">
+        <h2 id="b-title">오늘의 브리프</h2>
+        <span class="hint">전일 공시 · 밤사이 뉴스 · 지연시세 — 새 에이전트 없이 a1·a4 재사용</span>
+        <span class="hint" id="brief-asof" style="color:var(--muted)"></span>
+        <span class="src live">DB 실데이터</span>
+      </div>
+      <div class="brief-grid" id="brief-grid"></div>
+      <div class="hint" id="brief-msg" style="margin-top:10px"></div>
+    </section>
 
     <section class="card" aria-labelledby="g-title" id="research-card">
       <div class="card-head">
@@ -1441,6 +1486,86 @@ function applySummary(s) {
   $('#tr-gate').textContent = s.gate_blocks_7d;
 }
 
+/* ── 기능 레일 (H1) ─────────────────────────────────────────
+   5기능이 한 플랫폼 위에 있다는 그림. 실제로 동작하는 것만 켜서 보여준다 —
+   로드맵을 동작하는 것처럼 칠하지 않는다. */
+const FEATURES = [
+  { id: 'F1', name: '대화형 종목 Q&A', sub: '멀티턴 · 라우팅', on: false },
+  { id: 'F2', name: '모닝 브리프', sub: '공시 · 뉴스 · 지연시세', on: true },
+  { id: 'F3', name: '실적·공시 노트', sub: '팬아웃 · 출처 · 사람 발행', on: true },
+  { id: 'F4', name: '피어·섹터 비교', sub: '동종 비교', on: false },
+  { id: 'F5', name: '규정 Q&A', sub: '컴플라이언스 RAG', on: false },
+];
+
+function renderRail() {
+  $('#feature-rail').innerHTML = FEATURES.map((f) => `
+    <div class="f ${f.on ? 'on' : 'off'}">
+      <div class="fname">${f.id} ${esc(f.name)}</div>
+      <div class="fsub">${esc(f.sub)}</div>
+      <span class="fstate">${f.on ? '동작' : '로드맵'}</span>
+    </div>`).join('');
+}
+
+/* ── 오늘의 브리프 (F2) ─────────────────────────────────── */
+const BRIEF_SIM = {
+  brief_date: '2026-07-21',
+  items: [{
+    stock_code: '005930', corp_name: '삼성전자',
+    quote: { close: '244000', change_pct: '-4.31', as_of: '20260720' },
+    disclosures: [{ report_nm: '주요사항보고서(자기주식처분결정)', rcept_dt: '20260713', viewer_url: '#' }],
+    news: [{ title: '메모리 업황 회복 기대', link: '#', pub_date: '2026-07-20' }],
+  }],
+};
+
+const fmtDate = (s) => (s || '').replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+
+function briefCardHTML(it) {
+  const q = it.quote;
+  const down = q && String(q.change_pct).startsWith('-');
+  const rows = [
+    ...(it.disclosures || []).map((d) => ({
+      tag: '공시', text: d.report_nm.trim(), href: d.viewer_url,
+      meta: fmtDate(d.rcept_dt),
+    })),
+    ...(it.news || []).map((n) => ({
+      tag: '뉴스', text: n.title, href: n.link, meta: (n.pub_date || '').slice(0, 16),
+    })),
+  ];
+  return `<div class="bcard">
+    <div class="bh"><span class="bname">${esc(it.corp_name)}</span><span class="bcode">${it.stock_code}</span></div>
+    ${q ? `<div class="bquote"><strong>${Number(q.close).toLocaleString()}원</strong>
+      <span class="delta ${down ? 'down' : 'up'}">${down ? '▼' : '▲'}${q.change_pct}%</span>
+      <span class="bcode">· ${fmtDate(q.as_of)} 지연시세</span></div>`
+      : '<div class="bempty">시세 조회 결과 없음</div>'}
+    ${rows.length ? rows.map((r) => `<div class="bline"><span class="btag">${r.tag}</span>
+        <span style="min-width:0"><a href="${esc(r.href || '#')}" target="_blank" rel="noreferrer">${esc(r.text)}</a>
+        <span class="bcode"> ${r.meta}</span></span></div>`).join('')
+      : '<div class="bempty">전일 공시·밤사이 뉴스 없음</div>'}
+  </div>`;
+}
+
+function renderBrief(brief) {
+  $('#brief-grid').innerHTML = (brief.items || []).map(briefCardHTML).join('');
+  $('#brief-asof').textContent = brief.brief_date ? `${brief.brief_date} 생성` : '';
+  const v = brief.violations || [];
+  $('#brief-msg').innerHTML = v.length
+    ? `<span style="color:var(--critical)">⛔ 컴플라이언스 게이트 미통과 — ${esc(v.join(' / '))}</span>`
+    : '';
+}
+
+async function hydrateBrief() {
+  try {
+    renderBrief(await api('/api/briefs/latest'));
+  } catch {
+    // 404(아직 브리프 없음) 포함 — 빈 화면 대신 상태를 말해준다.
+    $('#brief-grid').innerHTML = '';
+    $('#brief-msg').textContent =
+      '아직 생성된 브리프가 없습니다. POST /api/briefs/run 으로 배치를 실행하세요.';
+  }
+}
+
 applyRole('admin');
-hydrate();
+renderRail();
+renderBrief(BRIEF_SIM);
+hydrate().then(() => { if (LIVE) hydrateBrief(); });
 </script>

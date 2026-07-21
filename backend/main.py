@@ -1,6 +1,7 @@
 import json
 import re
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 
 from claude_agent_sdk import (
@@ -22,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from backend import citations, compliance, db
+from backend import brief, citations, compliance, db
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -113,7 +114,7 @@ def _extract_corp_name(a1_text: str | None) -> str | None:
 
 # --- 컴플라이언스 게이트 배선: 훅은 SDK가 제공하는 배선 지점일 뿐이고, 판정 규칙 자체는
 # backend/compliance.py에 직접 작성한다 (CLAUDE.md 원칙).
-ALLOWED_TOOL_PREFIXES = ("mcp__dart__", "mcp__news__")
+ALLOWED_TOOL_PREFIXES = ("mcp__dart__", "mcp__news__", "mcp__krx__")
 
 
 def _tool_allowed(tool_name: str) -> bool:
@@ -317,8 +318,8 @@ async def research_stream(stock_code: str = Query(...)):
                         for rcept_no, url in dart_viewer_url_by_no.items()
                     }
                     sentences = citations.parse_sentences(raw_note, dart_sources, news_sources)
-                    content_md = compliance.apply_watermark(raw_note)
-                    violations = compliance.check_note(content_md, sentences)
+                    content_md = compliance.apply_notice(raw_note, "F3")
+                    violations = compliance.check_note(content_md, sentences, "F3")
                     note_id = await db.create_note(stock_code, corp_name, content_md, sentences, violations)
                     await db.append_audit(
                         "note_created",
@@ -412,7 +413,7 @@ async def start_deliberation(note_id: int, body: ActorBody):
 async def publish_note(note_id: int, body: ActorBody):
     row = await _require_status(note_id, "deliberation")
     sentences = json.loads(row["sentences_json"])
-    violations = compliance.check_note(row["content_md"], sentences)
+    violations = compliance.check_note(row["content_md"], sentences, "F3")
     if violations:
         await db.append_audit("publish_blocked", note_id, body.actor, {"violations": violations})
         raise HTTPException(
@@ -606,3 +607,168 @@ async def dashboard_audit(limit: int = Query(30, ge=1, le=200)):
         }
         for r in await db.recent_audit(limit)
     ]
+
+
+# --- F2 모닝 브리프 --------------------------------------------------------
+# 새 에이전트 0개: 이미 있는 a1(공시)·a4(뉴스)를 그대로 재사용하고, 시세는 O가 krx MCP
+# 도구로 직접 조회한다. 에이전트가 쓴 산문이 아니라 **도구 결과**에서 구조화 데이터를
+# 뽑아 backend가 카드로 조립하므로(brief.assemble) 출처가 구조적으로 보장된다.
+
+DEMO_WATCHLIST = ["005930", "000660", "005380"]
+
+# 대형주는 며칠치만 봐도 공시가 수십 건 쌓인다(삼성전자 5일 = 81건). 브리프는 훑어보는
+# 화면이라 종목당 최신 몇 건으로 자른다 — 전체 목록이 필요하면 F3 노트로 간다.
+MAX_DISCLOSURES_PER_STOCK = 5
+MAX_NEWS_PER_STOCK = 3
+
+
+def _recent(rows: list[dict], key: str, limit: int) -> list[dict]:
+    """최신순 상위 N건. 도구가 어떤 순서로 주든 시점 기준으로 다시 정렬한다."""
+    return sorted(rows, key=lambda r: r.get(key) or "", reverse=True)[:limit]
+
+BRIEF_SYSTEM_PROMPT = (
+    "너는 모닝 브리프 파이프라인의 오케스트레이터(O)다. 주어진 각 종목에 대해 아래를 "
+    "수집해라. 요약문이나 의견을 쓸 필요는 없다 — 도구를 호출해 데이터를 가져오는 것이 "
+    "네 일이고, 문서 작성은 백엔드가 한다.\n\n"
+    "종목마다:\n"
+    "1. a1에게 위임해서 최근 2일 이내 공시 목록을 조회한다(dart_search, days=2).\n"
+    "2. a4에게 위임해서 해당 종목 관련 최근 뉴스를 조회한다.\n"
+    "3. 네가 직접 mcp__krx__krx_quote를 호출해 지연시세를 조회한다.\n\n"
+    "a1과 a4는 **한 메시지에서 동시에(병렬로)** 위임해라. a4는 종목코드만으로 회사명을 "
+    "추측하지 못하므로 위임 메시지에 법인명을 반드시 적어라.\n\n"
+    "마지막 답변은 '수집 완료' 한 줄이면 충분하다 — 수집한 내용을 다시 나열하지 마라."
+)
+
+
+class BriefRunBody(BaseModel):
+    stock_codes: list[str] | None = None
+
+
+def _corp_name_of(code: str, quotes: dict, disclosures: dict) -> str:
+    """법인명은 조회된 데이터에서만 가져온다 — 어디서도 못 얻으면 지어내지 않고 코드를 쓴다."""
+    if code in quotes:
+        return quotes[code]["corp_name"]
+    rows = disclosures.get(code) or []
+    return rows[0].get("corp_name", code) if rows else code
+
+
+async def _collect_brief_data(stock_codes: list[str]) -> tuple[dict, dict, dict]:
+    """에이전트를 돌려 종목별 (시세, 공시, 뉴스)를 모은다.
+
+    도구 결과를 종목코드로 귀속시키는 게 관건인데, dart_search/krx_quote 결과에는
+    stock_code가 들어 있어 그대로 쓸 수 있다. news_search 결과에는 종목 정보가 없으므로
+    a4에게 위임할 때의 종목을 tool_use_id로 추적한다.
+    """
+    options = ClaudeAgentOptions(
+        cwd=str(REPO_ROOT),
+        can_use_tool=can_use_tool,
+        hooks={
+            "PreToolUse": [HookMatcher(hooks=[_pre_tool_use_hook])],
+            "PostToolUse": [HookMatcher(hooks=[_post_tool_use_hook])],
+        },
+        system_prompt=BRIEF_SYSTEM_PROMPT,
+    )
+    prompt = (
+        "다음 종목들의 모닝 브리프 데이터를 수집해줘: " + ", ".join(stock_codes)
+    )
+
+    quotes: dict[str, dict] = {}
+    disclosures: dict[str, list[dict]] = {}
+    news: dict[str, list[dict]] = {}
+    tool_names: dict[str, str] = {}
+    # a4 위임 메시지에 어떤 종목이 들어 있었는지로, 그 서브에이전트의 뉴스 결과를 귀속시킨다.
+    code_of_agent_call: dict[str, str] = {}
+    agent_of_tool_use_id: dict[str, str] = {}
+
+    async for message in query(prompt=_prompt_stream(prompt), options=options):
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if not isinstance(block, ToolUseBlock):
+                    continue
+                tool_names[block.id] = block.name
+                if block.name == "Agent":
+                    agent_of_tool_use_id[block.id] = block.input.get("subagent_type")
+                    text = json.dumps(block.input, ensure_ascii=False)
+                    for code in stock_codes:
+                        if code in text:
+                            code_of_agent_call[block.id] = code
+                            break
+        elif isinstance(message, UserMessage):
+            parent = message.parent_tool_use_id
+            content = message.content if isinstance(message.content, list) else []
+            for blk in content:
+                if not isinstance(blk, ToolResultBlock) or blk.is_error:
+                    continue
+                name = tool_names.get(blk.tool_use_id)
+                if name is None or name == "Agent":
+                    continue
+                try:
+                    parsed = _parse_tool_result(blk.content)
+                except (KeyError, json.JSONDecodeError):
+                    continue
+                if parsed is None:
+                    continue
+                # krx_quote는 O가 직접 부르고 결과에 stock_code가 들어 있다.
+                # dart_search/news_search 결과에는 종목코드가 없으므로(DART list.json은
+                # corp_code만 준다) 위임 메시지에 실린 종목으로 귀속시킨다.
+                if name == "mcp__krx__krx_quote":
+                    quotes[parsed["stock_code"]] = parsed
+                    continue
+                code = code_of_agent_call.get(parent)
+                if not code:
+                    continue
+                if name == "mcp__dart__dart_search":
+                    disclosures.setdefault(code, []).extend(parsed)
+                elif name == "mcp__news__news_search":
+                    news.setdefault(code, []).extend(parsed)
+
+    return quotes, disclosures, news
+
+
+@app.post("/api/briefs/run")
+async def run_brief(body: BriefRunBody):
+    """모닝 브리프 배치 실행. 스케줄러 대신 이 엔드포인트를 cron이 때리면 된다.
+    # ponytail: 스케줄러는 넣지 않았다 — 배치 트리거가 하나 있으면 cron/CI로 충분하고,
+    # 앱 안에 스케줄러를 두면 컨테이너 재시작·중복 실행을 직접 관리해야 한다."""
+    codes = body.stock_codes or DEMO_WATCHLIST
+    for code in codes:
+        if not re.fullmatch(r"\d{6}", code):
+            raise HTTPException(400, f"종목코드는 6자리 숫자여야 합니다: {code}")
+
+    quotes, disclosures, news = await _collect_brief_data(codes)
+    items = [
+        {
+            "stock_code": code,
+            "corp_name": _corp_name_of(code, quotes, disclosures),
+            "quote": quotes.get(code),
+            "disclosures": brief.pick_disclosures(
+                disclosures.get(code, []), MAX_DISCLOSURES_PER_STOCK
+            ),
+            "news": _recent(news.get(code, []), "pub_date", MAX_NEWS_PER_STOCK),
+        }
+        for code in codes
+    ]
+    content_md, sentences = brief.assemble(items)
+    violations = brief.check(content_md, sentences)
+    brief_id = await db.create_brief(date.today(), content_md, items, sentences, violations)
+    await db.append_audit(
+        "brief_created", None, None,
+        {"brief_id": brief_id, "stock_codes": codes, "violations": violations},
+    )
+    return {"id": brief_id, "items": items, "violations": violations, "content_md": content_md}
+
+
+@app.get("/api/briefs/latest")
+async def get_latest_brief():
+    row = await db.latest_brief()
+    if row is None:
+        raise HTTPException(404, "아직 생성된 브리프가 없습니다.")
+    return {
+        "id": row["id"],
+        "brief_date": row["brief_date"].isoformat(),
+        "content_md": row["content_md"],
+        "items": json.loads(row["items_json"]),
+        "sentences": json.loads(row["sentences_json"]),
+        "violations": json.loads(row["violations_json"]),
+        "created_at": row["created_at"].isoformat(),
+    }
