@@ -171,6 +171,9 @@ export default function Home() {
   const [sources, setSources] = useState<Record<string, SourceEvent>>({});
   const [inputError, setInputError] = useState<string | null>(null);
   const [note, setNote] = useState<NoteEvent | null>(null);
+  // a5가 노트를 쓰는 동안 토큰이 도착하는 대로 쌓는다. 완성된 노트(note 이벤트)가 오면
+  // 출처 배지가 붙은 정식 카드로 교체되므로, 이건 생성 중에만 보이는 임시 표시다.
+  const [noteTokens, setNoteTokens] = useState('');
   const [noteDetail, setNoteDetail] = useState<NoteDetail | null>(null);
   const [actorName, setActorName] = useState('');
   const [noteActionError, setNoteActionError] = useState<string | null>(null);
@@ -242,6 +245,7 @@ export default function Home() {
     setSources({});
     setNote(null);
     setNoteDetail(null);
+    setNoteTokens('');
     setNoteActionError(null);
     gotFinancialsRef.current = false;
     delegatedRef.current = false;
@@ -314,6 +318,11 @@ export default function Home() {
       // 카드(핵심 결과)가 도착한 시점을 그 에이전트의 완료로 본다 — SDK가 별도의
       // "서브에이전트 완료" 이벤트를 주지 않고, Agent 도구 결과는 디스패치 ack일 뿐이다.
       setAgentStatus((prev) => ({ ...prev, [data.agent]: 'done' }));
+    });
+    es.addEventListener('note_token', (e) => {
+      const data: { text: string } = JSON.parse(e.data);
+      setNoteTokens((prev) => prev + data.text);
+      setAgentStatus((prev) => ({ ...prev, a5: 'running' }));
     });
     es.addEventListener('note', (e) => {
       const data: NoteEvent = JSON.parse(e.data);
@@ -610,6 +619,36 @@ export default function Home() {
           </div>
         );
       })}
+
+      {!note && !noteDetail && noteTokens && (
+        <div
+          style={{
+            border: '1px dashed #ccc',
+            borderRadius: 8,
+            padding: 16,
+            marginTop: 16,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <h2 style={{ margin: 0, fontSize: 17 }}>노트 초안 작성 중</h2>
+            <span style={{ fontSize: 12, color: '#666' }}>▍</span>
+          </div>
+          <hr style={cardDividerStyle} />
+          {/* 생성 중에는 아직 출처 매칭 전이라 각주 배지가 없다 — 완료 시 출처가 붙은
+              정식 노트 카드로 교체된다. */}
+          <p
+            style={{
+              margin: 0,
+              lineHeight: 1.6,
+              fontSize: 14,
+              whiteSpace: 'pre-wrap',
+              color: '#444',
+            }}
+          >
+            {noteTokens}
+          </p>
+        </div>
+      )}
 
       {(noteDetail ?? note) && (
         <div

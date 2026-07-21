@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>AI PB 관리자 콘솔 — 대시보드 시안</title>
 <style>
   :root {
@@ -539,26 +540,26 @@
             <div>
               <div class="t-label">출처 부착률 <span style="color:var(--muted)">· 문장 단위</span></div>
               <div class="t-sub">
-                <span class="t-value">94.2<span class="unit">%</span></span>
-                <span class="delta up" style="margin-left:6px">+1.1%p</span><span class="vs" style="font-size:11px;color:var(--muted)">vs 전주</span>
+                <span class="t-value" id="tr-cite">94.2<span class="unit">%</span></span>
+                <span class="delta up" id="tr-cite-delta" style="margin-left:6px">+1.1%p</span><span class="vs" id="tr-cite-vs" style="font-size:11px;color:var(--muted)">vs 전주</span>
               </div>
-              <div class="meter" role="img" aria-label="출처 부착률 94.2%, 목표 90% 이상">
-                <div class="fill" style="width:94.2%"></div>
+              <div class="meter" role="img" id="tr-cite-meter" aria-label="출처 부착률 94.2%, 목표 90% 이상">
+                <div class="fill" id="tr-cite-fill" style="width:94.2%"></div>
                 <div class="tick" style="left:90%"></div>
               </div>
               <div class="meter-scale"><span>0</span><span>목표 ≥90%</span></div>
-              <div class="t-cap">출처 각주가 실제 공시·뉴스와 매칭된 문장의 비율</div>
+              <div class="t-cap" id="tr-cite-cap">출처 각주가 실제 공시·뉴스와 매칭된 문장의 비율</div>
             </div>
             <div>
               <div class="t-label">발행 통과율 <span style="color:var(--muted)">· 오늘</span></div>
-              <div class="t-value">4<span class="unit"> / 9</span></div>
-              <div class="t-cap">초안 9건 중 검토→심의→발행 통과 4건 (통과율 44%) · 나머지는 대기 4 · 차단 1</div>
+              <div class="t-value" id="tr-pub">4<span class="unit"> / 9</span></div>
+              <div class="t-cap" id="tr-pub-cap">초안 9건 중 검토→심의→발행 통과 4건 (통과율 44%) · 나머지는 대기 4 · 차단 1</div>
             </div>
             <div>
               <div class="t-label">게이트 차단 <span style="color:var(--muted)">· 7일</span></div>
               <div class="t-sub">
-                <span class="t-value">2</span>
-                <span class="delta up" style="margin-left:6px">−1</span><span class="vs" style="font-size:11px;color:var(--muted)">vs 전주</span>
+                <span class="t-value" id="tr-gate">2</span>
+                <span class="delta up" id="tr-gate-delta" style="margin-left:6px">−1</span><span class="vs" id="tr-gate-vs" style="font-size:11px;color:var(--muted)">vs 전주</span>
                 <span id="gate-mini" style="margin-left:auto"></span>
               </div>
               <div class="t-cap">미인용·금지표현·MNPI·워터마크 누락으로 발행이 차단된 건수 — 0이 목표가 아니라 게이트가 일한 증거</div>
@@ -655,7 +656,7 @@ const DIAG_OK = [
 ];
 
 const givenPool = [...GIVEN];
-const customers = Array.from({ length: 50 }, (_, i) => {
+let customers = Array.from({ length: 50 }, (_, i) => {
   const name = pick(SURNAMES) + givenPool.splice(Math.floor(rnd() * givenPool.length), 1)[0];
   const risk = Math.floor(rnd() * 5);
   // 잔고 300만 ~ 30억, 로그균등 — 소액 고객이 많고 고액은 드문 현실적 분포
@@ -711,7 +712,7 @@ const TOPICS = ['포트폴리오 리밸런싱 문의', '삼성전자 실적 관�
 
 // 노트 목업 — a1→a2‖a4→a5 파이프라인 산출물의 형태 그대로 (문장별 출처, 감사로그).
 // 현대차 노트는 출처 없는 문장 3개 → 발행 시도 시 게이트가 차단하는 데모 케이스.
-const NOTES = {
+let NOTES = {
   '005930': {
     id: 19, corp: '삼성전자', code: '005930', status: 'draft', reviewer: null, deliberator: null, publisher: null,
     sentences: [
@@ -751,7 +752,7 @@ const NOTES = {
   },
 };
 
-const queueItems = [
+let queueItems = [
   { type: 'note', code: '005930', age: '12분' },
   { type: 'chat', customer: customers[3], topic: TOPICS[0], status: 'pending', age: '18분', question: '요즘 시장이 불안한데, 제 포트폴리오에서 주식 비중을 줄이는 게 좋을까요?' },
   { type: 'note', code: '000660', age: '1시간' },
@@ -775,7 +776,7 @@ const feedItems = [
   { sev: 'critical', icon: '⛔', msg: '발행 차단 — 워터마크 누락', ref: '노트 #15 · 삼성전자 · publish_blocked', time: '어제' },
 ];
 
-const auditItems = [
+let auditItems = [
   ['09:41', 'publish_blocked', '노트 #18 · violations: 미인용 3'],
   ['09:38', 'deliberation_started', '노트 #18 · actor: 정준법'],
   ['09:35', 'note_created', '노트 #19 · 삼성전자 · unsourced: 0'],
@@ -797,10 +798,10 @@ const trendDays = Array.from({ length: 14 }, (_, i) => {
 const sessionsTrend = [8, 11, 9, 14, 12, 6, 4, 13, 15, 12, 17, 14, 9, 12];
 const notesTrend = [3, 5, 4, 6, 5, 2, 1, 6, 7, 5, 8, 6, 4, 9];
 const costTrend = [4.2, 5.8, 4.9, 7.1, 6.2, 2.9, 2.1, 6.8, 8.0, 6.4, 9.3, 7.6, 4.8, 6.9];
-const agentCalls = [
+let agentCalls = [
   ['a1 공시확인', 46], ['a2 재무', 61], ['a4 뉴스', 54], ['a5 노트', 18], ['O 위임', 39],
 ];
-const gateDaily = [1, 0, 0, 0, 0, 1, 0]; // 최근 7일 게이트 차단
+let gateDaily = [1, 0, 0, 0, 0, 1, 0]; // 최근 7일 게이트 차단
 
 /* ── 헬퍼 ─────────────────────────────────────────────────── */
 const $ = (s) => document.querySelector(s);
@@ -1162,8 +1163,25 @@ const actionsRow = (acts) =>
 function bindActions(acts, rerender) {
   document.querySelectorAll('[data-act]').forEach((btn) => {
     const a = acts[+btn.dataset.act];
-    if (a.ok) btn.addEventListener('click', () => { const res = a.run() || {}; refresh(); rerender(res); });
+    // 라이브에서는 run()이 네트워크를 타므로 async — 중복 클릭은 버튼을 잠가 막는다.
+    if (a.ok) btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      const res = (await a.run()) || {};
+      if (LIVE) await hydrate(); else refresh();
+      rerender(res);
+    });
   });
+}
+
+// 노트 단계 전이는 백엔드가 상태·감사로그·게이트 재검사의 원천이다.
+async function apiNoteAct(note, action, actor) {
+  const r = await apiPost(`/api/notes/${note.id}/${action}`, { actor });
+  if (r.ok) {
+    if (action === 'publish') { toast('발행 완료 — 감사로그에 기록되었습니다'); return { ok: '게이트 통과 — 발행되었습니다.' }; }
+    return {};
+  }
+  const v = r.body?.detail?.violations;
+  return { blocked: v?.length ? `컴플라이언스 게이트 차단 — ${v.join(' / ')}` : (r.body?.detail?.message ?? '처리에 실패했습니다.') };
 }
 
 // 게이트 재검사 — 발행 직전에 다시 검사하고, 위반이 있으면 하드 블록 (LLM 아닌 규칙 코드)
@@ -1180,9 +1198,19 @@ function publishNote(note) {
 }
 
 function noteActions(note) {
-  if (note.status === 'draft') return [{ label: '검토 시작 (내가 담당)', ok: role === 'admin', deny: '검토 시작은 관리자(작성부서 대행) 권한입니다', run: () => { note.status = 'review'; note.reviewer = ACTOR[role]; note.audit.push(['방금', 'review_started', `actor: ${ACTOR[role]}`]); } }];
-  if (note.status === 'review') return [{ label: '검토 완료 → 심의 요청', ok: role === 'admin', deny: '심의 요청은 검토자(작성부서) 권한입니다', run: () => { note.status = 'delib'; note.deliberator = '정준법'; note.audit.push(['방금', 'deliberation_started', `actor: ${ACTOR[role]} → 심의자 정준법`]); } }];
-  if (note.status === 'delib') return [{ label: '발행', ok: role === 'comp', deny: '발행은 준법 권한 필요', run: () => publishNote(note) }];
+  const actor = ACTOR[role];
+  if (note.status === 'draft') return [{ label: '검토 시작 (내가 담당)', ok: role === 'admin', deny: '검토 시작은 관리자(작성부서 대행) 권한입니다', run: async () => {
+    if (LIVE) return apiNoteAct(note, 'review', actor);
+    note.status = 'review'; note.reviewer = actor; note.audit.push(['방금', 'review_started', `actor: ${actor}`]);
+  } }];
+  if (note.status === 'review') return [{ label: '검토 완료 → 심의 요청', ok: role === 'admin', deny: '심의 요청은 검토자(작성부서) 권한입니다', run: async () => {
+    if (LIVE) return apiNoteAct(note, 'deliberate', actor);
+    note.status = 'delib'; note.deliberator = '정준법'; note.audit.push(['방금', 'deliberation_started', `actor: ${actor} → 심의자 정준법`]);
+  } }];
+  if (note.status === 'delib') return [{ label: '발행', ok: role === 'comp', deny: '발행은 준법 권한 필요', run: async () => {
+    if (LIVE) return apiNoteAct(note, 'publish', actor);
+    return publishNote(note);
+  } }];
   return [];
 }
 
@@ -1202,7 +1230,8 @@ function renderNoteModal(note, res = {}) {
     ${acts.length ? actionsRow(acts) : ''}
     ${auditRows(note.audit)}`;
   $('.m-close').addEventListener('click', closeModal);
-  bindActions(acts, (r) => renderNoteModal(note, r));
+  // hydrate()가 NOTES를 통째로 갈아끼우므로, 다시 그릴 때는 최신 객체로 조회한다.
+  bindActions(acts, (r) => renderNoteModal(NOTES[note.code] ?? note, r));
 }
 
 function chatDraft(it) {
@@ -1217,9 +1246,18 @@ function chatDraft(it) {
 function chatActions(it) {
   const mine = role === 'pb' && it.customer.pb === MY_PB;
   const deny = role === 'comp' ? '상담 승인은 담당 PB 권한입니다' : '담당 PB만 승인·반려할 수 있습니다';
+  const decide = async (action, next, okMsg, toastMsg) => {
+    if (LIVE) {
+      const r = await apiPost(`/api/sessions/${it.id}/${action}`, { actor: MY_PB });
+      if (!r.ok) return { blocked: r.body?.detail?.message ?? '처리에 실패했습니다.' };
+    }
+    it.status = next;
+    toast(toastMsg);
+    return action === 'approve' ? { ok: okMsg } : { blocked: okMsg };
+  };
   return [
-    { label: '승인하고 고객에게 전송', ok: mine, deny, run: () => { it.status = 'done'; toast(`전송 완료 — ${it.customer.name} 고객에게 발송되었습니다`); return { ok: '승인됨 — 고객에게 전송되었습니다.' }; } },
-    { label: '반려 (재작성 요청)', ok: mine, deny, danger: true, run: () => { it.status = 'rejected'; toast('반려됨 — 재작성 큐로 돌아갑니다'); return { blocked: '반려됨 — AI가 재작성 후 다시 승인 대기로 올라옵니다.' }; } },
+    { label: '승인하고 고객에게 전송', ok: mine, deny, run: () => decide('approve', 'done', '승인됨 — 고객에게 전송되었습니다.', `전송 완료 — ${it.customer.name} 고객에게 발송되었습니다`) },
+    { label: '반려 (재작성 요청)', ok: mine, deny, danger: true, run: () => decide('reject', 'rejected', '반려됨 — AI가 재작성 후 다시 승인 대기로 올라옵니다.', '반려됨 — 재작성 큐로 돌아갑니다') },
   ];
 }
 
@@ -1302,5 +1340,107 @@ $('#run-research').addEventListener('click', () => {
   }, 700);
 });
 
+/* ── 라이브 연결 ──────────────────────────────────────────────
+   이 파일 하나가 두 가지로 동작한다:
+   · 백엔드가 있으면 → 아래 hydrate()가 실제 DB 데이터로 교체하고 다시 렌더
+   · 없으면(파일 직접 열기·아티팩트·오프라인) → 위의 시뮬레이션 데이터 그대로
+   그래서 시안으로서의 가치를 잃지 않으면서 실제 화면으로도 쓴다. */
+const API = location.port === '8000' ? '' : 'http://localhost:8000';
+let LIVE = false;
+
+const api = async (path) => {
+  const r = await fetch(API + path);
+  if (!r.ok) throw new Error(`${path} → ${r.status}`);
+  return r.json();
+};
+const apiPost = async (path, body) => {
+  const r = await fetch(API + path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  return { ok: r.ok, status: r.status, body: await r.json().catch(() => null) };
+};
+
+// 백엔드 상태(draft/review/deliberation/published)를 시안 PILL 키로 맞춘다.
+const ST = { draft: 'draft', review: 'review', deliberation: 'delib', published: 'published' };
+const hhmm = (iso) => new Date(iso).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+const ago = (iso) => {
+  const m = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
+  if (m < 1) return '방금';
+  if (m < 60) return `${m}분`;
+  const h = Math.round(m / 60);
+  return h < 24 ? `${h}시간` : `${Math.round(h / 24)}일`;
+};
+// 문장 출처: 백엔드 {type,viewer_url,rcept_dt}|{type,url,pub_date} → 시안 {kind,label,ref}
+const toSrc = (s) => {
+  if (!s) return null;
+  if (s.type === 'dart') return { kind: 'dart', label: `공시 ${s.rcept_dt || '접수일 미상'}`, ref: `rcpNo ${s.rcept_no}` };
+  return { kind: 'news', label: `뉴스 ${(s.pub_date || '').slice(0, 10) || '시점 미상'}`, ref: s.url };
+};
+const detailStr = (d) => {
+  if (!d || typeof d !== 'object') return '';
+  if (Array.isArray(d.violations)) return `violations: ${d.violations.join(' / ')}`;
+  return Object.entries(d).filter(([k]) => k !== 'seed').map(([k, v]) => `${k}: ${v}`).join(' · ');
+};
+
+async function hydrate() {
+  let queue, custs;
+  try {
+    [custs, queue] = await Promise.all([api('/api/customers'), api('/api/dashboard/queue')]);
+  } catch (e) {
+    console.info('[대시보드] 백엔드에 연결하지 못해 시뮬레이션 데이터로 표시합니다.', e.message);
+    document.querySelectorAll('.src.live').forEach((n) => { n.textContent = '목업 (백엔드 미연결)'; n.classList.replace('live', 'mock'); });
+    return;
+  }
+  LIVE = true;
+  customers = custs;
+  const byId = Object.fromEntries(customers.map((c) => [c.id, c]));
+
+  // 노트 본문·감사로그는 큐에 없으므로 건별 상세를 받아 시안 구조로 옮긴다.
+  const noteRows = queue.filter((i) => i.type === 'note');
+  const details = await Promise.all(noteRows.map((n) => api(`/api/notes/${n.id}`).catch(() => null)));
+  NOTES = {};
+  details.forEach((d) => {
+    if (!d) return;
+    NOTES[d.stock_code] = {
+      id: d.id, corp: d.corp_name, code: d.stock_code, status: ST[d.status] || d.status,
+      reviewer: d.reviewer, deliberator: d.deliberator, publisher: d.publisher,
+      sentences: d.sentences.filter((s) => !s.is_heading).map((s) => ({ text: s.text, src: toSrc(s.source) })),
+      audit: (d.audit_log || []).map((a) => [hhmm(a.ts), a.event_type, [a.actor && `actor: ${a.actor}`, detailStr(a.detail)].filter(Boolean).join(' · ')]),
+    };
+  });
+
+  queueItems = queue.map((i) => (i.type === 'note'
+    ? { type: 'note', code: i.code, age: ago(i.updated_at) }
+    : { type: 'chat', id: i.id, customer: byId[i.customer_id], topic: i.topic, status: i.status, age: ago(i.updated_at), question: i.question }
+  )).filter((i) => i.type === 'note' ? NOTES[i.code] : i.customer);
+
+  const [summary, audit, agents] = await Promise.all([
+    api('/api/dashboard/summary'), api('/api/dashboard/audit?limit=30'), api('/api/dashboard/agents'),
+  ]);
+  auditItems = audit.map((a) => [hhmm(a.ts), a.event_type, [a.note_id && `노트 #${a.note_id}`, a.actor && `actor: ${a.actor}`, detailStr(a.detail)].filter(Boolean).join(' · ')]);
+  agentCalls = agents.map((a) => [a.agent, a.calls]);
+  gateDaily = summary.gate_blocks_daily;
+  applySummary(summary);
+  // 전주 대비 델타는 비교할 과거 데이터가 없으므로 지어내지 않고 감춘다.
+  ['tr-cite-delta', 'tr-cite-vs', 'tr-gate-delta', 'tr-gate-vs'].forEach((id) => { $(`#${id}`).hidden = true; });
+  applyRole(role);
+}
+
+function applySummary(s) {
+  const rate = s.citation_rate;
+  $('#tr-cite').innerHTML = rate === null ? '—' : `${rate}<span class="unit">%</span>`;
+  $('#tr-cite-fill').style.width = `${rate ?? 0}%`;
+  $('#tr-cite-meter').setAttribute('aria-label', `출처 부착률 ${rate ?? '측정 불가'}%, 목표 90% 이상`);
+  $('#tr-cite-cap').textContent = s.citation_total
+    ? `전체 ${s.citation_total}문장 중 ${s.citation_sourced}문장에 출처 각주가 실제 공시·뉴스와 매칭됨`
+    : '아직 생성된 노트 문장이 없습니다.';
+  $('#tr-pub').innerHTML = `${s.notes_published}<span class="unit"> / ${s.notes_total}</span>`;
+  $('#tr-pub-cap').textContent = s.notes_total
+    ? `초안 ${s.notes_total}건 중 발행 ${s.notes_published}건 · 대기 ${s.notes_pending}건`
+    : '아직 생성된 노트가 없습니다.';
+  $('#tr-gate').textContent = s.gate_blocks_7d;
+}
+
 applyRole('admin');
+hydrate();
 </script>

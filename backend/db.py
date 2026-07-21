@@ -37,7 +37,38 @@ CREATE TABLE IF NOT EXISTS audit_log (
     actor TEXT,
     detail JSONB NOT NULL DEFAULT '{}'
 );
+
+-- 대시보드(관리자/PB 콘솔)용. 고객·상담은 대고객 AI PB 프로토타입의 목업 데이터이며
+-- 시드는 backend/scripts/seed_pb.py가 넣는다 — 여기서는 스키마만 보장한다.
+CREATE TABLE IF NOT EXISTS pb_customers (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    age INTEGER NOT NULL,
+    account_no TEXT NOT NULL,
+    pb TEXT NOT NULL,
+    risk_profile INTEGER NOT NULL,
+    balance BIGINT NOT NULL,
+    return_pct DOUBLE PRECISION NOT NULL,
+    holdings JSONB NOT NULL,
+    alloc JSONB NOT NULL,
+    diagnosis TEXT NOT NULL,
+    flag_reasons JSONB NOT NULL DEFAULT '[]'
+);
+
+CREATE TABLE IF NOT EXISTS pb_sessions (
+    id SERIAL PRIMARY KEY,
+    customer_id INTEGER NOT NULL REFERENCES pb_customers(id),
+    status TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    question TEXT,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 """
+
+# 상담 세션은 승인/반려로 한 번만 결정된다 — 이미 결정된 건의 재결정은 409로 막는다.
+SESSION_PENDING = "pending"
+SESSION_DECIDED = ("done", "rejected")
 
 STATUS_ACTOR_FIELD = {
     "review": "reviewer",
@@ -124,4 +155,71 @@ async def append_audit(
 async def get_audit_log(note_id: int) -> list[asyncpg.Record]:
     return await pool().fetch(
         "SELECT * FROM audit_log WHERE note_id = $1 ORDER BY id", note_id
+    )
+
+
+# --- 대시보드 조회 --------------------------------------------------------
+# 모든 수치는 실제 테이블에서 집계한다. 데이터가 없으면 0을 반환하고 그럴듯한 값을
+# 지어내지 않는다 (가드레일 3: 확인할 수 없는 수치를 임의로 채우지 않는다).
+
+
+async def list_customers() -> list[asyncpg.Record]:
+    return await pool().fetch("SELECT * FROM pb_customers ORDER BY id")
+
+
+async def get_customer(customer_id: int) -> asyncpg.Record | None:
+    return await pool().fetchrow("SELECT * FROM pb_customers WHERE id = $1", customer_id)
+
+
+async def list_sessions() -> list[asyncpg.Record]:
+    return await pool().fetch(
+        """SELECT s.*, c.name AS customer_name, c.pb, c.account_no
+           FROM pb_sessions s JOIN pb_customers c ON c.id = s.customer_id
+           ORDER BY s.started_at DESC"""
+    )
+
+
+async def get_session(session_id: int) -> asyncpg.Record | None:
+    return await pool().fetchrow("SELECT * FROM pb_sessions WHERE id = $1", session_id)
+
+
+async def set_session_status(session_id: int, status: str) -> None:
+    await pool().execute(
+        "UPDATE pb_sessions SET status = $2, updated_at = now() WHERE id = $1",
+        session_id,
+        status,
+    )
+
+
+async def list_notes() -> list[asyncpg.Record]:
+    return await pool().fetch(
+        "SELECT id, stock_code, corp_name, status, sentences_json, violations_json,"
+        " reviewer, deliberator, publisher, created_at, updated_at FROM notes ORDER BY id DESC"
+    )
+
+
+async def recent_audit(limit: int) -> list[asyncpg.Record]:
+    return await pool().fetch(
+        "SELECT * FROM audit_log ORDER BY id DESC LIMIT $1", limit
+    )
+
+
+async def agent_call_counts() -> list[asyncpg.Record]:
+    """감사로그의 tool_use_start에서 에이전트별 도구호출 수를 센다 — 훅이 남긴 실제 흔적."""
+    return await pool().fetch(
+        """SELECT COALESCE(detail->>'agent_type', 'O') AS agent, count(*) AS calls
+           FROM audit_log WHERE event_type = 'tool_use_start'
+           GROUP BY 1 ORDER BY calls DESC"""
+    )
+
+
+async def gate_blocks_daily(days: int) -> list[asyncpg.Record]:
+    """최근 N일 게이트 차단 건수(발행 시도가 막힌 날). 0건인 날도 행으로 채워 반환한다."""
+    return await pool().fetch(
+        """SELECT d::date AS day, count(a.id) AS blocks
+           FROM generate_series(now()::date - ($1::int - 1), now()::date, '1 day') d
+           LEFT JOIN audit_log a
+             ON a.event_type = 'publish_blocked' AND a.ts::date = d::date
+           GROUP BY d ORDER BY d""",
+        days,
     )

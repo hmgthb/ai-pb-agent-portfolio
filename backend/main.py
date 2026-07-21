@@ -10,6 +10,7 @@ from claude_agent_sdk import (
     PermissionResultAllow,
     PermissionResultDeny,
     ResultMessage,
+    StreamEvent,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
@@ -18,7 +19,7 @@ from claude_agent_sdk import (
 )
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from backend import citations, compliance, db
@@ -46,6 +47,14 @@ app.add_middleware(
 @app.get("/health")
 def health():
     return {"status": "ok", "message": "hello"}
+
+
+@app.get("/dashboard")
+def dashboard_page():
+    """관리자/PB 콘솔. 시안 파일을 그대로 서빙한다 — 복사본을 두지 않으므로 시안과 실제
+    화면이 갈라지지 않고, 같은 오리진이라 CORS도 타지 않는다.
+    # ponytail: Next.js /dashboard로 포팅하기 전까지의 배선. 포팅 시 이 라우트는 지운다."""
+    return FileResponse(REPO_ROOT / "docs" / "design" / "pb-admin-dashboard.html")
 
 
 def _sse(event: str, data: dict) -> str:
@@ -76,6 +85,19 @@ async def _prompt_stream(text: str):
         "message": {"role": "user", "content": text},
         "parent_tool_use_id": None,
     }
+
+
+def _text_delta(event: dict) -> str | None:
+    """StreamEvent.event(원시 Anthropic 스트림 이벤트)에서 텍스트 조각만 뽑는다.
+
+    스트림에는 message_start·content_block_start·ping·tool 입력 델타 등이 섞여 오는데,
+    노트 본문에 해당하는 건 content_block_delta 안의 text_delta 뿐이다."""
+    if event.get("type") != "content_block_delta":
+        return None
+    delta = event.get("delta") or {}
+    if delta.get("type") != "text_delta":
+        return None
+    return delta.get("text")
 
 
 def _extract_corp_name(a1_text: str | None) -> str | None:
@@ -146,6 +168,10 @@ async def research_stream(stock_code: str = Query(...)):
         options = ClaudeAgentOptions(
             cwd=str(REPO_ROOT),
             can_use_tool=can_use_tool,
+            # a5 노트 본문을 토큰 단위로 흘리기 위해 부분 메시지를 켠다. 켜면 StreamEvent가
+            # 추가로 오는 것이고 기존 AssistantMessage는 그대로 오므로, 노트 저장·인용 파싱
+            # 경로(a5_texts)는 손대지 않는다.
+            include_partial_messages=True,
             hooks={
                 "PreToolUse": [HookMatcher(hooks=[_pre_tool_use_hook])],
                 "PostToolUse": [HookMatcher(hooks=[_post_tool_use_hook])],
@@ -202,7 +228,15 @@ async def research_stream(stock_code: str = Query(...)):
             return "a2+a4" if subagent in PARALLEL_AGENTS else None
 
         async for message in query(prompt=_prompt_stream(prompt), options=options):
-            if isinstance(message, AssistantMessage):
+            if isinstance(message, StreamEvent):
+                # 노트 본문(a5)만 토큰으로 흘린다 — O·a1·a2·a4의 중간 텍스트까지 흘리면
+                # 화면이 노트가 아닌 내부 사고 과정으로 덮인다.
+                if agent_of_tool_use_id.get(message.parent_tool_use_id) != "a5":
+                    continue
+                chunk = _text_delta(message.event)
+                if chunk:
+                    yield _sse("note_token", {"text": chunk})
+            elif isinstance(message, AssistantMessage):
                 agent = agent_of_tool_use_id.get(message.parent_tool_use_id, "O")
                 for block in message.content:
                     if isinstance(block, TextBlock):
@@ -311,6 +345,11 @@ class ActorBody(BaseModel):
     actor: str
 
 
+class SessionDecisionBody(BaseModel):
+    actor: str
+    reason: str | None = None
+
+
 def _note_to_dict(row, audit_rows) -> dict:
     return {
         "id": row["id"],
@@ -382,3 +421,188 @@ async def publish_note(note_id: int, body: ActorBody):
     await db.advance_status(note_id, "published", body.actor, violations=[])
     await db.append_audit("published", note_id, body.actor, {})
     return {"status": "published"}
+
+
+# --- 대시보드(관리자/PB 콘솔) --------------------------------------------
+# 시안: docs/design/pb-admin-dashboard.html. 이 구간은 에이전트를 호출하지 않고
+# 이미 쌓인 산출물(노트·감사로그)과 목업 고객 데이터를 읽기만 한다.
+
+def _customer_to_dict(row) -> dict:
+    flag_reasons = json.loads(row["flag_reasons"])
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "age": row["age"],
+        "acct": row["account_no"],
+        "pb": row["pb"],
+        "risk": row["risk_profile"],
+        "balance": row["balance"],
+        "ret": row["return_pct"],
+        "holdings": json.loads(row["holdings"]),
+        "alloc": json.loads(row["alloc"]),
+        "diag": row["diagnosis"],
+        "flag": len(flag_reasons) > 0,
+        "flagReasons": flag_reasons,
+    }
+
+
+def _citation_stats(note_rows) -> tuple[int, int]:
+    """(출처 붙은 문장 수, 제목이 아닌 전체 문장 수). 제목 줄은 분모에서 뺀다."""
+    sourced = total = 0
+    for row in note_rows:
+        for s in json.loads(row["sentences_json"]):
+            if s.get("is_heading"):
+                continue
+            total += 1
+            if s.get("source"):
+                sourced += 1
+    return sourced, total
+
+
+@app.get("/api/customers")
+async def get_customers():
+    return [_customer_to_dict(r) for r in await db.list_customers()]
+
+
+@app.get("/api/customers/{customer_id}")
+async def get_customer_detail(customer_id: int):
+    row = await db.get_customer(customer_id)
+    if row is None:
+        raise HTTPException(404, "고객을 찾을 수 없습니다.")
+    return _customer_to_dict(row)
+
+
+@app.get("/api/sessions")
+async def get_sessions():
+    return [
+        {
+            "id": r["id"],
+            "customer_id": r["customer_id"],
+            "customer_name": r["customer_name"],
+            "pb": r["pb"],
+            "status": r["status"],
+            "topic": r["topic"],
+            "question": r["question"],
+            "started_at": r["started_at"].isoformat(),
+        }
+        for r in await db.list_sessions()
+    ]
+
+
+async def _decide_session(session_id: int, decision: str, body: SessionDecisionBody):
+    """승인/반려는 담당 PB의 1회성 결정이다 — 이미 결정된 건은 409로 막는다."""
+    row = await db.get_session(session_id)
+    if row is None:
+        raise HTTPException(404, "상담 세션을 찾을 수 없습니다.")
+    if row["status"] != db.SESSION_PENDING:
+        raise HTTPException(
+            409,
+            detail={
+                "message": f"이미 처리된 상담입니다 (현재 상태: {row['status']}).",
+                "status": row["status"],
+            },
+        )
+    await db.set_session_status(session_id, decision)
+    await db.append_audit(
+        "session_approved" if decision == "done" else "session_rejected",
+        None,
+        body.actor,
+        {"session_id": session_id, "reason": body.reason},
+    )
+    return {"id": session_id, "status": decision}
+
+
+@app.post("/api/sessions/{session_id}/approve")
+async def approve_session(session_id: int, body: SessionDecisionBody):
+    return await _decide_session(session_id, "done", body)
+
+
+@app.post("/api/sessions/{session_id}/reject")
+async def reject_session(session_id: int, body: SessionDecisionBody):
+    return await _decide_session(session_id, "rejected", body)
+
+
+@app.get("/api/dashboard/summary")
+async def dashboard_summary():
+    notes = await db.list_notes()
+    sessions = await db.list_sessions()
+    sourced, total = _citation_stats(notes)
+    published = [n for n in notes if n["status"] == "published"]
+    pending_notes = [n for n in notes if n["status"] != "published"]
+    pending_sessions = [s for s in sessions if s["status"] == db.SESSION_PENDING]
+    blocks = await db.gate_blocks_daily(7)
+    return {
+        # 출처 부착률 — 분모가 0이면 비율을 만들지 않고 None으로 둔다(0%로 오해되지 않게).
+        "citation_rate": round(sourced / total * 100, 1) if total else None,
+        "citation_sourced": sourced,
+        "citation_total": total,
+        "notes_total": len(notes),
+        "notes_published": len(published),
+        "notes_pending": len(pending_notes),
+        "publish_rate": round(len(published) / len(notes) * 100, 1) if notes else None,
+        "sessions_pending": len(pending_sessions),
+        "queue_pending": len(pending_notes) + len(pending_sessions),
+        "gate_blocks_7d": sum(b["blocks"] for b in blocks),
+        "gate_blocks_daily": [b["blocks"] for b in blocks],
+        "customers_total": len(await db.list_customers()),
+    }
+
+
+@app.get("/api/dashboard/queue")
+async def dashboard_queue():
+    """검토·승인 대기 큐 — 노트(검토→심의→발행)와 상담(승인/반려)을 한 줄로 합친다."""
+    items = []
+    for n in await db.list_notes():
+        if n["status"] == "published":
+            continue
+        items.append(
+            {
+                "type": "note",
+                "id": n["id"],
+                "code": n["stock_code"],
+                "title": f"{n['corp_name']}({n['stock_code']}) 실적·공시 노트 초안",
+                "status": n["status"],
+                # 셀프 클레임 — 아직 아무도 집지 않은 건은 '미배정'으로 남긴다.
+                "who": n["deliberator"] or n["reviewer"] or "미배정",
+                "violations": json.loads(n["violations_json"]),
+                "updated_at": n["updated_at"].isoformat(),
+            }
+        )
+    for s in await db.list_sessions():
+        if s["status"] != db.SESSION_PENDING:
+            continue
+        items.append(
+            {
+                "type": "chat",
+                "id": s["id"],
+                "customer_id": s["customer_id"],
+                "topic": s["topic"],
+                "title": f"{s['customer_name']} · {s['topic']}",
+                "status": s["status"],
+                "who": s["pb"],
+                "question": s["question"],
+                "updated_at": s["started_at"].isoformat(),
+            }
+        )
+    items.sort(key=lambda i: i["updated_at"], reverse=True)
+    return items
+
+
+@app.get("/api/dashboard/agents")
+async def dashboard_agents():
+    return [{"agent": r["agent"], "calls": r["calls"]} for r in await db.agent_call_counts()]
+
+
+@app.get("/api/dashboard/audit")
+async def dashboard_audit(limit: int = Query(30, ge=1, le=200)):
+    return [
+        {
+            "id": r["id"],
+            "ts": r["ts"].isoformat(),
+            "event_type": r["event_type"],
+            "note_id": r["note_id"],
+            "actor": r["actor"],
+            "detail": json.loads(r["detail"]),
+        }
+        for r in await db.recent_audit(limit)
+    ]

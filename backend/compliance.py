@@ -6,6 +6,7 @@ CLAUDE.md 컴플라이언스 게이트 4항목 중 F3 관련:
 - 출처가 누락된 문장이 없는가 (있으면 어떤 문장인지 알려줘야 함 — 발행 하드 블록)
 - MNPI/PII 패턴 없는가
 - 투자권유·광고성 표현 없는가
+- 시세 수치를 실었다면 지연시세임을 밝혔는가
 """
 
 import re
@@ -23,6 +24,14 @@ FORBIDDEN_PHRASES = [
     "무조건 오릅니다",
     "수익을 보장",
 ]
+
+# 시세를 실으면 지연시세임을 반드시 밝혀야 한다(CLAUDE.md 기능별 고지). 기능별 플래그를
+# 받지 않고 "본문에 시세가 있으면 발동"하는 조건부 규칙으로 둔다 — F3 노트는 공시·뉴스만
+# 써서 대개 걸리지 않고, KRX 시세가 들어가는 F2 모닝 브리프에서 자동으로 켜진다.
+# ponytail: 단어 포함 여부만 보는 휴리스틱이라, 시세 수치가 없는데 뉴스 요지에 "주가"가
+# 스쳐도 고지를 요구한다(과검출). 게이트에서 과검출은 발행이 막히고 사람이 사유를 보는
+# 방향이라 안전한 쪽 오류다 — 실제로 거슬리면 수치 패턴(원·%)까지 같이 보도록 좁힐 것.
+QUOTE_TERMS = ["시세", "주가", "종가", "현재가", "등락률"]
 
 # ponytail: 진짜 MNPI/PII 탐지는 NER·분류 모델급 작업이다. F3는 DART 공시·공개 뉴스만
 # 입력으로 쓰는 파이프라인이라(자유 텍스트 챗이 아님) 리스크가 F1보다 낮은 편이라
@@ -49,6 +58,13 @@ def check_note(content_md: str, sentences: list[dict]) -> list[str]:
     for pattern in MNPI_PATTERNS:
         if re.search(pattern, content_md):
             violations.append(f"MNPI 의심 패턴 감지 (정규식: {pattern})")
+
+    # "지연시세" 자체가 QUOTE_TERMS의 "시세"를 포함하므로, 고지가 있으면 자연히 통과한다.
+    quoted = [t for t in QUOTE_TERMS if t in content_md]
+    if quoted and "지연시세" not in content_md:
+        violations.append(
+            f"시세 정보 포함('{quoted[0]}') — 지연시세 고지 누락 (실시간이 아님을 명시해야 함)"
+        )
 
     unsourced = [s for s in sentences if not s["is_heading"] and s["source"] is None]
     if unsourced:
