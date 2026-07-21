@@ -23,14 +23,12 @@ cp .env.example .env          # 아래 2절을 보고 키 4개를 채운다
 docker compose up             # backend:8000 / frontend:3000 / postgres:5432 / redis:6379
 ```
 
-브라우저에서 **http://localhost:3000/dashboard** 를 연다. (`:8000/dashboard`도 같은 화면 —
-Next가 백엔드로 프록시한다.)
+브라우저에서 **http://localhost:3000** 을 연다 (대시보드로 리다이렉트된다).
 
 DB 스키마는 백엔드 기동 시 멱등 DDL로 자동 생성되므로 마이그레이션 명령이 따로 없다.
 
 > `backend/requirements.txt`를 바꿨다면
 > `docker compose build backend && docker compose up -d --force-recreate backend`.
-> `frontend/next.config.ts`를 바꿨다면 `docker compose up -d --force-recreate frontend`.
 
 ---
 
@@ -92,10 +90,12 @@ backend/.venv/bin/python backend/scripts/krx_mcp_client_check.py
 
 ### 대시보드
 `http://localhost:3000/dashboard` — 역할 토글(관리자 / PB / 준법)로 권한별 화면이 바뀐다.
-백엔드가 없으면 목업 데이터로 폴백하므로
-`docs/design/pb-admin-dashboard.html`을 브라우저로 직접 열어도 화면은 뜬다.
+**노트 생성 카드에 종목코드를 넣으면 실제 에이전트가 돈다**(아래 F3와 같은 실행, 1~2분).
+백엔드 없이 화면만 보려면 시안 파일 `docs/design/pb-admin-dashboard.html`을 직접 열면 된다
+— 그쪽은 목업 데이터로 동작하는 **디자인 시안**이고, 실화면은 위 React 페이지다.
 
 ### F3 노트 초안 (에이전트 실행 — 비용 발생)
+화면에서는 대시보드의 "리서치 노트 생성" 카드로 실행한다. API를 직접 보려면:
 ```bash
 curl -sN --max-time 900 "http://localhost:8000/api/research/stream?stock_code=005930" > /tmp/f3.sse
 grep "^event:" /tmp/f3.sse | sort | uniq -c      # 이벤트 종류별 건수부터 본다
@@ -146,8 +146,12 @@ research-copilot/
 │   ├── brief.py                 # F2 조립 (LLM 미개입 순수 함수)
 │   ├── db.py                    # 멱등 DDL · 상태 · 감사로그(append-only)
 │   └── test_*.py                # 자체 점검 7종
-├── frontend/src/app/page.tsx    # F3 단독 화면 (종목 입력 → 진행·카드·노트)
-└── docs/design/pb-admin-dashboard.html   # 대시보드 — 시안이자 실화면 (백엔드가 서빙)
+├── frontend/src/app/dashboard/  # 대시보드 (실화면)
+│   ├── page.tsx                 #   셸 · 역할 · 큐 · 브리프 · 포트폴리오 · AI 평가
+│   ├── ResearchCard.tsx         #   노트 생성 — /api/research/stream SSE 구독
+│   ├── ReviewModal.tsx          #   검토→심의→발행 / 상담 승인
+│   └── dashboard.css            #   시안의 <style>을 그대로 옮긴 것
+└── docs/design/pb-admin-dashboard.html   # 디자인 시안 (목업 데이터, 자립형)
 ```
 
 ### 에이전트 토폴로지
