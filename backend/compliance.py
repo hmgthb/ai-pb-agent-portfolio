@@ -15,12 +15,16 @@ from backend import citations
 
 WATERMARK ="⚠ AI 초안 · 미검증 — 사람의 검토·심의·승인 없이는 발행되지 않습니다."
 BRIEF_NOTICE = "ℹ 내부 참고용 — 투자권유·광고가 아닙니다."
+# F1 대화형 Q&A: CLAUDE.md 표 = "지연시세 명시, 투자권유 아님". 문구에 **"지연시세"를
+# 그대로 넣어** 자기충족적으로 만든다 — F1 답변에 시세가 실리든 안 실리든 이 고지가 늘
+# 붙으므로 QUOTE 게이트가 항상 만족된다(WATERMARK가 "미검증"을 품는 것과 같은 방식).
+CHAT_NOTICE = "ℹ 시세·주가는 지연시세(일별 종가) 기준이며, 본 답변은 투자권유가 아닙니다."
 
 # CLAUDE.md "기능별 필수 고지문구" 표를 코드로 옮긴 것. 사용자가 끌 수 없고, LLM 출력에
 # 의존하지 않도록 백엔드가 저장 시점에 강제로 붙인다(apply_notice).
-# ponytail: 이번 스코프에 있는 기능만 넣는다 — F1은 W6 조건부, F4·F5는 명시적 제외라
-# 그때 가서 한 줄씩 추가한다. 지금 넣어두면 검증 못 하는 문구만 늘어난다.
+# ponytail: 검증 가능한 기능만 넣는다 — F4·F5는 명시적 제외라 그때 가서 한 줄씩 추가한다.
 NOTICES = {
+    "F1": CHAT_NOTICE,  # 대화형 종목 Q&A
     "F2": BRIEF_NOTICE,  # 모닝 브리프
     "F3": WATERMARK,  # 실적·공시 노트 초안
 }
@@ -62,6 +66,46 @@ MNPI_PATTERNS = [
     r"비공식\s*확인",
 ]
 
+# --- F1 입력 가드 -----------------------------------------------------------
+# F1은 자유 텍스트 챗이라 F3·F2에 없던 입력 공격면이 생긴다(CLAUDE.md 가드레일 2·5).
+# 여기서 막는 건 세 갈래다:
+#   ① MNPI 유입 — 사용자가 미공개정보를 흘려 답변 근거로 삼게 하는 것(MNPI_PATTERNS 재사용)
+#   ② 프롬프트 인젝션 — 공시·뉴스가 아니라 사용자 입력이 직접 지시문으로 오는 경우.
+#      신뢰하지 않는 데이터로 취급하되, 명백한 지시 탈취 시도는 아예 처리 중단한다.
+#   ③ PII — 주민번호·계좌번호 등. 답변에 필요 없고 로그에 남으면 안 된다.
+# ponytail: NER급 정밀 탐지가 아니라 보수적 키워드/정규식이다. 놓치는 것보다 과검출이
+# 안전한 방향이라 의심되면 막고 사람에게 다시 묻게 한다(F1은 발행이 아니라 대화라 비용이 낮다).
+INJECTION_PATTERNS = [
+    r"이전\s*(?:지시|명령|규칙)(?:을|는)?\s*(?:무시|잊)",
+    r"(?:지시|규칙|가드레일|시스템\s*프롬프트)(?:을|를|은|는)?\s*(?:무시|잊|해제|무력화)",
+    r"ignore\s+(?:all\s+)?(?:previous|prior|above)",
+    r"system\s*prompt",
+    r"너는\s*이제",
+    r"역할을\s*(?:잊|바꿔)",
+]
+PII_PATTERNS = [
+    r"\b\d{6}\s*[-–]\s*[1-4]\d{6}\b",  # 주민등록번호
+    r"\b\d{2,3}\s*[-–]\s*\d{3,4}\s*[-–]\s*\d{4,6}\b",  # 계좌/카드 번호 형태
+]
+
+
+def input_guard(text: str) -> list[str]:
+    """F1 사용자 입력(신뢰하지 않는 자유 텍스트)의 위반 사유 목록. 빈 리스트면 통과.
+
+    산출물 게이트(check_note)와 분리한 이유: 이건 **입력을 받자마자, 에이전트를 돌리기
+    전에** 도는 문지기다. 여기서 막히면 어떤 도구도 호출되지 않는다."""
+    violations: list[str] = []
+    for pattern in MNPI_PATTERNS:
+        if re.search(pattern, text):
+            violations.append(f"MNPI 의심 패턴 감지 (정규식: {pattern})")
+    for pattern in INJECTION_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            violations.append(f"프롬프트 인젝션 의심 — 지시 탈취 시도 (정규식: {pattern})")
+    for pattern in PII_PATTERNS:
+        if re.search(pattern, text):
+            violations.append("PII(주민·계좌번호 등) 의심 — 개인정보는 입력하지 마세요")
+    return violations
+
 
 def check_note(content_md: str, sentences: list[dict], feature: str = "F3") -> list[str]:
     """위반 사유 목록을 반환한다. 빈 리스트면 게이트 통과.
@@ -93,7 +137,14 @@ def check_note(content_md: str, sentences: list[dict], feature: str = "F3") -> l
 
     # 소제목뿐 아니라 고지문구·구분선도 뺀다 — 우리가 강제로 붙인 워터마크가
     # "출처 없는 문장"으로 세어져 스스로 발행을 막던 문제가 있었다(citations 참고).
-    unsourced = [s for s in sentences if citations.is_body(s) and s["source"] is None]
+    #
+    # F1(대화형)은 발행 단계가 없어 사람이 해석 문장을 검토하지 않는다. 그래서 근거 없는
+    # **사실 주장**(=날조 위험)만 잡고, 규칙상 각주가 없는 해석 문장은 위반으로 세지 않는다.
+    # F3 노트는 발행 전 사람 검토가 있어 해석 문장까지 게이트에 올려 판단하게 둔다(§1-1 설계).
+    if feature == "F1":
+        unsourced = [s for s in sentences if citations.is_claim(s) and s["source"] is None]
+    else:
+        unsourced = [s for s in sentences if citations.is_body(s) and s["source"] is None]
     if unsourced:
         preview = unsourced[0]["text"][:40]
         violations.append(

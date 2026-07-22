@@ -26,6 +26,9 @@ function SourceBadge({ src }: { src: NoteSource | null }) {
       </span>
     );
   }
+  if (src.type === 'krx') {
+    return <span className="sbadge src" title={src.label}>시세 {src.as_of}</span>;
+  }
   return (
     <span className="sbadge src" title={src.url}>
       뉴스 {(src.pub_date || '').slice(0, 10) || '시점 미상'}

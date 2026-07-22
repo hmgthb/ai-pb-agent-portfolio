@@ -84,6 +84,24 @@ def test_delayed_quote_notice():
     assert _check("주가 흐름을 지켜볼 필요가 있다는 평가가 나온다.") == []
 
 
+def test_f1_notice_self_satisfies_delayed_quote():
+    """F1 고지문구에 '지연시세'가 들어 있어, 시세를 실은 F1 답변도 QUOTE 게이트를 통과한다."""
+    body = "종가는 185,900원입니다."
+    assert check_note(apply_notice(body, "F1"), SOURCED, "F1") == []
+
+
+def test_f1_gate_counts_unsourced_claims_only():
+    """F1은 발행 단계가 없어 해석 문장은 위반으로 세지 않고, 근거 없는 사실 주장만 잡는다."""
+    interp = [{"text": "판단하기 어렵습니다.", "source": None, "is_heading": False, "kind": "interpretation"}]
+    # 해석 문장만 있는 F1 답변 → 위반 없음
+    assert not any("출처 없는" in x for x in check_note(apply_notice("판단하기 어렵습니다.", "F1"), interp, "F1"))
+    # 그러나 근거 없는 사실 주장은 F1에서도 잡는다
+    claim = [{"text": "매출이 2배 늘었다.", "source": None, "is_heading": False, "kind": "claim"}]
+    assert any("출처 없는" in x for x in check_note(apply_notice("매출이 2배 늘었다.", "F1"), claim, "F1"))
+    # F3에서는 해석 문장도 게이트에 올라간다(발행 전 사람 검토용, §1-1)
+    assert any("출처 없는" in x for x in check_note(apply_notice("판단하기 어렵습니다.", "F3"), interp, "F3"))
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

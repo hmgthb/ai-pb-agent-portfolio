@@ -27,6 +27,9 @@ export async function apiPost(path: string, body: unknown): Promise<PostResult> 
 export const streamUrl = (stockCode: string) =>
   `${BASE}/api/research/stream?stock_code=${encodeURIComponent(stockCode)}`;
 
+export const chatStreamUrl = (q: string) =>
+  `${BASE}/api/chat/stream?q=${encodeURIComponent(q)}`;
+
 /** FastAPI의 에러 본문에서 사람이 읽을 메시지를 꺼낸다. 게이트 차단은 violations를 준다. */
 export function errorMessage(body: unknown, fallback = '처리에 실패했습니다.'): string {
   const detail = (body as { detail?: unknown } | null)?.detail;

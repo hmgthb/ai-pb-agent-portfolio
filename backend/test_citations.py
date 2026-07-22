@@ -127,6 +127,42 @@ def test_bare_negation_stays_claim():
     assert s[0]["kind"] == "claim", s
 
 
+def test_formal_hedge_endings_are_interpretation():
+    """F1 대화형 답변의 존댓말 해석 어미도 해석으로 잡는다(평서형과 같은 문장)."""
+    for h in [
+        "분기별 추세까지 반영한 것은 아니라는 점은 유의할 필요가 있습니다.",
+        "이 수치만으로 원인을 단정하기는 어렵습니다.",
+        "수익성이 개선된 것으로 보입니다.",
+    ]:
+        assert _parse(h)[0]["kind"] == "interpretation", h
+
+
+def test_seonboi_is_not_interpretation():
+    """'선보이며'의 '보이'까지 삼키면 사실 주장이 분모에서 빠져 부착률이 후해진다 — 막는다."""
+    s = _parse("미국에서 갤럭시 카드를 선보이며 금융업에 진출했다.")
+    assert s[0]["kind"] == "claim", s
+
+
+def test_footnote_definition_line_skipped():
+    """모델이 답변 끝에 붙이는 마크다운 각주 정의(`[^태그]: URL`)는 문장이 아니라 건너뛴다."""
+    s = _parse(
+        "매출이 늘었다.[^20250318000645]\n"
+        "[^20250318000645]: https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20250318000645"
+    )
+    assert len(s) == 1, s  # 정의 줄은 문장으로 잡히지 않는다
+    assert s[0]["source"]["type"] == "dart"
+
+
+def test_krx_quote_citation():
+    """F1 시세 답변의 `[^krx]`는 quote_source가 주어질 때만 해석된다."""
+    qs = {"as_of": "20260721", "close": "191400", "label": "KRX 일별종가"}
+    s = parse_sentences("종가는 191,400원이다.[^krx]", DART, NEWS, quote_source=qs)
+    assert s[0]["source"]["type"] == "krx" and s[0]["kind"] == "claim"
+    # quote_source 없이는 미해석(가드레일 3: 없는 출처 안 만든다)
+    s2 = _parse("종가는 191,400원이다.[^krx]")
+    assert s2[0]["source"] is None
+
+
 def test_self_disclaimer_is_boilerplate():
     """a5가 접두 기호를 바꿔 단 자기 고지문구도 boilerplate로 잡는다.
     '*'로 시작해 예전엔 '출처 없는 문장'으로 게이트에 올라갔다(실측 버그)."""

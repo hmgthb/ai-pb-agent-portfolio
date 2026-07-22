@@ -482,6 +482,43 @@
   .gen-reasons ul { margin: 0; padding-left: 16px; }
   .gen-reasons li { font-size: 12.5px; line-height: 1.7; color: var(--ink-2); }
 
+  /* ── F1 대화형 Q&A (시안에 없는 추가분) ─────────────────────────────── */
+  .rail .f.clickable { cursor: pointer; }
+  .rail .f.clickable:hover { border-color: var(--accent); }
+  .chat-hint { font-size: 12.5px; line-height: 1.6; color: var(--muted); margin: 6px 0 10px; }
+  .chat-hint em { color: var(--accent); font-style: normal; }
+  .chat-log {
+    min-height: 300px; max-height: 52vh; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 12px; background: var(--page);
+    padding: 12px; display: flex; flex-direction: column; gap: 14px;
+  }
+  .chat-empty { color: var(--muted); font-size: 13px; text-align: center; padding: 40px 0; }
+  .chat-turn { display: flex; flex-direction: column; gap: 6px; }
+  .bubble { max-width: 82%; padding: 9px 13px; border-radius: 14px; font-size: 13px; line-height: 1.6; }
+  .bubble.me { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+  .bubble.ai { align-self: flex-start; background: var(--card); border: 1px solid var(--border); border-bottom-left-radius: 4px; width: 82%; }
+  .route-badge {
+    font-size: 11px; font-weight: 700; color: var(--accent);
+    background: var(--accent-soft); border-radius: 999px; padding: 2px 9px;
+    display: inline-flex; gap: 6px; align-items: center; margin-bottom: 8px;
+  }
+  .route-badge .route-entity { color: var(--muted); font-weight: 600; }
+  .chat-answer { display: flex; flex-direction: column; gap: 7px; }
+  .chat-sent { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+  .chat-sent > span:first-child { flex: 1; min-width: 60%; }
+  .chat-notice {
+    margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border);
+    font-size: 11.5px; color: var(--muted);
+  }
+  .chat-streaming { white-space: pre-wrap; }
+  .chat-thinking, .chat-clarify { color: var(--muted); font-size: 13px; }
+  .chat-blocked {
+    color: var(--critical); font-size: 12.5px; line-height: 1.6;
+  }
+  .chat-blocked ul { margin: 6px 0 0; padding-left: 16px; }
+  .chat-input { display: flex; gap: 8px; margin-top: 10px; }
+  .chat-input .search { flex: 1; }
+
   .gen-note {
     margin-top: 12px; padding: 12px 14px;
     background: var(--page); border: 1px solid var(--border); border-radius: 10px;

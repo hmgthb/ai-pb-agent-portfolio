@@ -48,7 +48,25 @@ export type QueueItem = QueueNote | QueueChat;
 
 export type NoteSource =
   | { type: 'dart'; rcept_no: string; viewer_url: string; rcept_dt: string | null }
-  | { type: 'news'; url: string; title: string; pub_date: string };
+  | { type: 'news'; url: string; title: string; pub_date: string }
+  | { type: 'krx'; as_of: string; close: string; label: string };  // F1 시세 [^krx]
+
+/** F1 대화형 Q&A — 라우팅 배지·답변 문장·고지. 백엔드 /api/chat/stream SSE와 짝. */
+export type ChatRouting = {
+  entity_code: string | null;
+  entity_name: string | null;
+  agent: 'a1' | 'a2' | 'a4' | 'krx' | null;
+  intent: string | null;
+  need_clarify: boolean;
+  reason: string;
+};
+export type ChatAnswer = {
+  clarify: boolean;
+  notice?: string;
+  text?: string;  // clarify일 때만
+  sentences: NoteSentence[];
+  violations: string[];
+};
 
 /** 백엔드 citations.py의 문장 범주.
  *  heading=소제목 · boilerplate=고지문구·구분선 · claim=사실 주장 · interpretation=해석·전망.

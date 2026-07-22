@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import './dashboard.css';
 import { api, ago, detailStr, fmtDate, fmtKRW, hhmm } from './api';
 import { BarChart, Donut, GateMini, LineChart, Tip, useTip } from './charts';
+import F1Chat from './F1Chat';
 import ResearchCard from './ResearchCard';
 import { ChatModal, NoteModal } from './ReviewModal';
 import {
@@ -50,7 +51,7 @@ const ROLES: Record<Role, {
 };
 
 const FEATURES = [
-  { id: 'F1', name: '대화형 종목 Q&A', sub: '멀티턴 · 라우팅', on: false },
+  { id: 'F1', name: '대화형 종목 Q&A', sub: '라우팅 · 인용 · 지연시세', on: false },
   { id: 'F2', name: '모닝 브리프', sub: '공시 · 뉴스 · 지연시세', on: true },
   { id: 'F3', name: '실적·공시 노트', sub: '팬아웃 · 출처 · 사람 발행', on: true },
   { id: 'F4', name: '피어·섹터 비교', sub: '동종 비교', on: false },
@@ -93,7 +94,7 @@ export default function DashboardPage() {
   const [filter, setFilter] = useState<'all' | 'note' | 'chat'>('all');
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [modal, setModal] = useState<{ kind: 'note'; code: string } | { kind: 'chat'; id: number } | null>(null);
+  const [modal, setModal] = useState<{ kind: 'note'; code: string } | { kind: 'chat'; id: number } | { kind: 'f1' } | null>(null);
   const [toastMsg, setToastMsg] = useState('');
   const { tip, bind } = useTip();
 
@@ -270,13 +271,24 @@ export default function DashboardPage() {
       </div>
 
       <nav className="rail" aria-label="기능 레일">
-        {FEATURES.map((f) => (
-          <div className={`f ${f.on ? 'on' : 'off'}`} key={f.id}>
-            <div className="fname">{f.id} {f.name}</div>
-            <div className="fsub">{f.sub}</div>
-            <span className="fstate">{f.on ? '동작' : '로드맵'}</span>
-          </div>
-        ))}
+        {FEATURES.map((f) => {
+          const live = f.on || f.id === 'F1';  // F1은 이제 대화형 슬라이스가 동작한다
+          const openChat = f.id === 'F1' ? () => setModal({ kind: 'f1' }) : undefined;
+          return (
+            <div
+              className={`f ${live ? 'on' : 'off'}${openChat ? ' clickable' : ''}`}
+              key={f.id}
+              role={openChat ? 'button' : undefined}
+              tabIndex={openChat ? 0 : undefined}
+              onClick={openChat}
+              onKeyDown={openChat ? (e) => { if (e.key === 'Enter') openChat(); } : undefined}
+            >
+              <div className="fname">{f.id} {f.name}</div>
+              <div className="fsub">{f.sub}</div>
+              <span className="fstate">{f.id === 'F1' ? '열기 →' : f.on ? '동작' : '로드맵'}</span>
+            </div>
+          );
+        })}
       </nav>
 
       <nav className="cats" aria-label="대시보드 카테고리">
@@ -669,6 +681,7 @@ export default function DashboardPage() {
                 }}
               />
             )}
+            {modal.kind === 'f1' && <F1Chat />}
             {modal.kind === 'chat' && (() => {
               const it = data.queue.find((q): q is QueueChat => q.type === 'chat' && q.id === modal.id);
               const c = it && data.customers.find((x) => x.id === it.customer_id);

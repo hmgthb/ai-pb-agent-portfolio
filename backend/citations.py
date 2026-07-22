@@ -22,6 +22,9 @@ import re
 
 _HEADING_RE = re.compile(r"^#{1,6}\s+(.+)$")
 _RULE_RE = re.compile(r"^\s*[-*_]{3,}\s*$")  # `---` 같은 구분선
+# 마크다운 각주 정의 줄(`[^태그]: URL`) — 모델이 답변 끝에 출처 목록을 붙이면 나온다.
+# 문장이 아니라 참조 정의라 통째로 건너뛴다(안 그러면 ": URL"이 문장으로 잡힌다).
+_FOOTNOTE_DEF_RE = re.compile(r"^\s*\[\^[^\]]+\]:\s")
 _FOOTNOTE_RE = re.compile(r"\s*\[\^([^\]]+)\]")
 # 종결부호 뒤에 각주가 0개 이상 붙고 그 다음이 공백/줄끝일 때만 문장 경계로 본다.
 # 이 lookahead가 "2.96%"·URL 안의 마침표에서 잘못 쪼개지는 걸 막는다.
@@ -44,13 +47,22 @@ _BOILERPLATE_PREFIXES = ("※", "⚠", "ℹ", "*주)", "주)")
 # "…볼 여지가 있다", "…가능성이 있다" 같은 판단유보 문장이 사실 주장으로 집계돼 부착률을
 # 65.8%까지 끌어내렸다. 전부 낮은 오탐 위험의 특정 표현만 추가한다(bare "없다"는 안 쓴다 —
 # "매출이 없다"류 사실 주장까지 삼킨다).
+# F1 답변은 대화형이라 존댓말(보입니다·어렵습니다·필요가 있습니다)을 쓰고, F3 노트는
+# 평서형(보인다·어렵다)을 쓴다. 같은 해석 문장이 어미만 다르므로 **두 어형을 다 잡아야**
+# 한다 — 안 그러면 F1의 해석 문장이 사실 주장으로 집계돼 부착률을 끌어내리고 화면에
+# 빨간 UNSOURCED로 뜬다(실측). 다만 stem을 너무 넓히면 "선보이며"의 "보이"까지 삼키므로
+# (사실 주장을 분모에서 빼는 잘못된 방향), 어형은 명시적으로 나열한다.
 _INTERPRETATION_RE = re.compile(
-    r"(?:필요가 있다|필요하다|확인이 필요|어렵다|어려우|이르다"
-    r"|보인다|보이며|보이지만|읽힌다|읽히지만|해석|시사"
-    r"|전망|불확실|단정|볼 필요|살펴볼|점검할|모니터링"
+    r"(?:필요가 있다|필요가 있습니다|필요하다|필요합니다|확인이 필요"
+    r"|어렵다|어렵습니다|어려우|어려운|이르다|이릅니다"
+    # '보이다(seem)'는 '것으로/으로/게 보이…' 문맥일 때만. 안 그러면 '선보이며'(unveil)의
+    # '보이'까지 삼켜 사실 주장을 분모에서 빼버린다(실측).
+    r"|(?:것으로|으로|게)\s?보(?:인다|입니다|이며|이지만)"
+    r"|읽힌다|읽힙니다|읽히지만|해석|시사"
+    r"|전망|불확실|단정|볼 필요|살펴볼|점검할|모니터링|유의|판단하기"
     r"|볼 수 있|구분해"
     r"|근거가 없|근거가 부족|근거는 없|확인되지 않|확인할 수 없"
-    r"|바람직|가능성이 있|가능성도|여지가 있|여지도|감안|대목|판단을 유보|유보하는)"
+    r"|바람직|가능성이 있|가능성도|여지가 있|여지도|감안|대목|유보)"
 )
 
 # a5가 스스로 덧붙이는 자기 고지문구. 접두 기호가 회차마다 다르다 — 노트 6은 "※ 본 문서는
@@ -67,11 +79,14 @@ def parse_sentences(
     note_text: str,
     dart_sources: dict[str, dict],
     news_sources: dict[str, dict],
+    quote_source: dict | None = None,
 ) -> list[dict]:
     """note_text -> [{text, source, sources, is_heading, kind}, ...]
 
     dart_sources: {rcept_no: {"viewer_url": ..., "rcept_dt": ...}}
     news_sources: {url: {"title": ..., "pub_date": ...}}
+    quote_source: F1 시세 답변용 — `[^krx]` 태그를 이 메타로 해석한다(있을 때만).
+      {"as_of": ..., "close": ..., "label": ...}. 기본값 None이라 F2·F3 경로는 영향 없다.
 
     source는 첫 출처(기존 화면 호환), sources는 그 문장이 인용한 출처 전부다 —
     한 문장이 두 건을 인용하면 둘 다 보여야 한다(가드레일 3: 출처 100% 노출).
@@ -79,7 +94,7 @@ def parse_sentences(
     sentences: list[dict] = []
     for raw_line in note_text.split("\n"):
         line = raw_line.strip()
-        if not line or _RULE_RE.match(line):
+        if not line or _RULE_RE.match(line) or _FOOTNOTE_DEF_RE.match(line):
             continue
 
         heading = _HEADING_RE.match(line)
@@ -96,15 +111,21 @@ def parse_sentences(
             if not text:
                 continue
             matched = True
-            sources = [s for s in (_resolve_source(t, dart_sources, news_sources) for t in tags) if s]
+            sources = _resolve_all(tags, dart_sources, news_sources, quote_source)
             sentences.append(_make(text, sources, "boilerplate" if boilerplate else None))
         if not matched:
             # 문장부호로 안 끝나는 줄(마지막 줄 등)도 통째로 한 단위로 취급한다.
             text, tags = _strip_footnotes(line)
-            sources = [s for s in (_resolve_source(t, dart_sources, news_sources) for t in tags) if s]
+            sources = _resolve_all(tags, dart_sources, news_sources, quote_source)
             sentences.append(_make(text, sources, "boilerplate" if boilerplate else None))
 
     return sentences
+
+
+def _resolve_all(tags, dart_sources, news_sources, quote_source) -> list[dict]:
+    return [
+        s for s in (_resolve_source(t, dart_sources, news_sources, quote_source) for t in tags) if s
+    ]
 
 
 def _make(text: str, sources: list[dict], kind: str | None) -> dict:
@@ -130,10 +151,15 @@ def _strip_footnotes(unit: str) -> tuple[str, list[str]]:
 
 
 def _resolve_source(
-    tag: str | None, dart_sources: dict[str, dict], news_sources: dict[str, dict]
+    tag: str | None,
+    dart_sources: dict[str, dict],
+    news_sources: dict[str, dict],
+    quote_source: dict | None = None,
 ) -> dict | None:
     if not tag:
         return None
+    if tag == "krx" and quote_source:
+        return {"type": "krx", **quote_source}
     if tag in dart_sources:
         return {"type": "dart", "rcept_no": tag, **dart_sources[tag]}
     if tag in news_sources:
@@ -153,6 +179,11 @@ def _kind(sentence: dict) -> str:
 def is_body(sentence: dict) -> bool:
     """게이트·지표가 보는 본문 문장 — 소제목과 고지·구분선은 뺀다."""
     return _kind(sentence) not in ("heading", "boilerplate")
+
+
+def is_claim(sentence: dict) -> bool:
+    """사실 주장 문장. 각주 없는 사실 주장 = 날조 위험이라 어느 기능에서든 잡아야 한다."""
+    return _kind(sentence) == "claim"
 
 
 def unsourced_count(sentences: list[dict]) -> int:

@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from backend import brief, citations, compliance, db
+from backend import brief, citations, compliance, db, f1
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 logger = logging.getLogger(__name__)
@@ -577,6 +577,191 @@ async def research_stream(stock_code: str = Query(...)):
                 ),
             },
         )
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F1 대화형 종목 Q&A (수직 슬라이스: 단일턴·무상태)
+#
+# 파이프라인: 입력 가드(신뢰 못 할 자유텍스트) → 규칙 라우팅 → 라우팅된 에이전트가
+# 도구로 데이터 조회 → 2차 query(f1 답변자)가 구조화 데이터만 근거로 답변 스트리밍 →
+# citations 매칭(시세는 [^krx]) → F1 고지 강제 → 게이트. 라우팅·데이터취합·게이트는
+# 전부 코드가 하고 LLM은 답변 문장만 만든다(F3와 같은 각주 무결성 원칙).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 라우팅된 에이전트별 데이터 조회 지시. krx는 O가 직접 호출, 나머지는 해당 에이전트에 위임.
+_CHAT_FETCH_PROMPTS = {
+    "krx": "종목코드 {code}의 지연시세를 mcp__krx__krx_quote로 직접 조회해라. 위임하지 마라.",
+    "a2": "a2에게 위임해서 종목코드 {code}({name})의 최신 사업연도 매출액·영업이익 핵심수치를 조회해줘.",
+    "a4": "a4에게 위임해서 종목코드 {code}({name})의 최근 관련 뉴스를 조회해줘. 법인명을 위임 메시지에 명시해라.",
+    "a1": "a1에게 위임해서 종목코드 {code}({name})의 최근 공시를 조회해줘.",
+}
+
+
+async def _collect_chat_data(routing: dict, data: dict):
+    """라우팅된 에이전트를 돌려 data(가변 dict)를 채우고 진행 SSE를 흘린다.
+
+    data 키: financials, news, quote, dart_sources, failed. F3의 조회 루프를 단일
+    에이전트용으로 줄인 것 — 같은 _parse_tool_result/_tool_failed 판정을 쓴다."""
+    agent = routing["agent"]
+    code, name = routing["entity_code"], routing["entity_name"] or ""
+    system = (
+        "너는 메인 오케스트레이터(O)다. 아래 지시대로 데이터를 조회하기만 해라. "
+        "종목코드는 사용자가 준 그대로 유지하고, 조회 외의 판단·해석·산문은 만들지 마라.\n\n"
+        + _CHAT_FETCH_PROMPTS[agent].format(code=code, name=name)
+    )
+    options = ClaudeAgentOptions(
+        cwd=str(REPO_ROOT),
+        can_use_tool=can_use_tool,
+        hooks={
+            "PreToolUse": [HookMatcher(hooks=[_pre_tool_use_hook])],
+            "PostToolUse": [HookMatcher(hooks=[_post_tool_use_hook])],
+        },
+        system_prompt=system,
+    )
+    tool_names: dict[str, str] = {}
+    agent_of: dict[str, str] = {}
+    rcept_dt_by_no: dict[str, str] = {}
+
+    async for message in query(prompt=_prompt_stream(_CHAT_FETCH_PROMPTS[agent].format(code=code, name=name)), options=options):
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, ToolUseBlock):
+                    tool_names[block.id] = block.name
+                    if block.name == "Agent":
+                        agent_of[block.id] = block.input.get("subagent_type")
+                        yield _sse("progress", {"agent": block.input.get("subagent_type"), "step": "delegated", "status": "started"})
+                    else:
+                        who = agent_of.get(message.parent_tool_use_id, agent if agent != "krx" else "O")
+                        yield _sse("progress", {"agent": who, "step": block.name, "status": "running"})
+        elif isinstance(message, UserMessage):
+            content = message.content if isinstance(message.content, list) else []
+            who = agent_of.get(message.parent_tool_use_id, agent if agent != "krx" else "O")
+            for block in content:
+                if not isinstance(block, ToolResultBlock):
+                    continue
+                nm = tool_names.get(block.tool_use_id)
+                if nm is None or nm == "Agent":
+                    continue
+                if _tool_failed(block):
+                    data.setdefault("failed", []).append(nm)
+                    yield _sse("progress", {"agent": who, "step": nm, "status": "failed"})
+                    continue
+                yield _sse("progress", {"agent": who, "step": nm, "status": "completed"})
+                try:
+                    parsed = _parse_tool_result(block.content)
+                except (KeyError, json.JSONDecodeError):
+                    continue
+                if parsed is None:
+                    continue
+                if nm == "mcp__dart__dart_parse":
+                    data["financials"] = parsed
+                    yield _sse("card", {"type": "financials", "agent": who, **parsed})
+                elif nm == "mcp__news__news_search":
+                    data["news"] = parsed
+                    data.setdefault("news_sources", {})
+                    for item in parsed:
+                        data["news_sources"][item["link"]] = {"title": item["title"], "pub_date": item["pub_date"]}
+                    yield _sse("card", {"type": "news", "agent": who, "items": parsed})
+                elif nm == "mcp__krx__krx_quote":
+                    data["quote"] = parsed
+                    yield _sse("card", {"type": "quote", "agent": "O", **parsed})
+                elif nm == "mcp__dart__dart_search":
+                    for item in parsed:
+                        rcept_dt_by_no[item["rcept_no"]] = item["rcept_dt"]
+                elif nm == "mcp__dart__dart_fetch":
+                    data.setdefault("dart_sources", {})[parsed["rcept_no"]] = {
+                        "viewer_url": parsed["viewer_url"],
+                        "rcept_dt": rcept_dt_by_no.get(parsed["rcept_no"]),
+                    }
+
+
+@app.get("/api/chat/stream")
+async def chat_stream(q: str = Query(..., min_length=1, max_length=500)):
+    async def event_gen():
+        try:
+            async for chunk in _chat_run(q):
+                yield chunk
+        except Exception as exc:  # noqa: BLE001 — 어떤 실패든 화면이 종료 상태에 도달해야 한다
+            logger.exception("chat_stream 실패 (q=%r)", q)
+            yield _sse("run_error", {"message": f"실행 중 오류가 발생했습니다 ({type(exc).__name__})."})
+            yield _sse("done", {})
+
+    async def _chat_run(q: str):
+        # 1. 입력 가드 — 에이전트를 돌리기 전에 신뢰 못 할 자유텍스트를 먼저 검사한다.
+        blocked = compliance.input_guard(q)
+        if blocked:
+            yield _sse("blocked", {"violations": blocked})
+            yield _sse("done", {})
+            return
+
+        # 2. 규칙 라우팅 (감사 가능한 결정 — 배지로 그대로 노출)
+        routing = f1.route(q)
+        yield _sse("routing", routing)
+        if routing["need_clarify"]:
+            yield _sse("answer", {
+                "clarify": True,
+                "text": "어느 종목인지 알려주세요 — 종목명(예: 삼성전자)이나 6자리 코드(예: 005930)를 함께 적어주시면 조회하겠습니다.",
+                "sentences": [], "violations": [],
+            })
+            yield _sse("done", {})
+            return
+
+        # 3. 라우팅된 에이전트로 데이터 조회
+        data: dict = {}
+        async for chunk in _collect_chat_data(routing, data):
+            yield chunk
+
+        # 4. 2차 query — f1 답변자를 메인 에이전트로 돌려 답변을 토큰 스트리밍
+        yield _sse("progress", {"agent": "f1", "step": "answer", "status": "started"})
+        answer_texts: list[str] = []
+        async for message in query(
+            prompt=_prompt_stream(f1.answer_input(q, routing, data)),
+            options=ClaudeAgentOptions(
+                cwd=str(REPO_ROOT),
+                include_partial_messages=True,
+                system_prompt=f1.ANSWER_SYSTEM_PROMPT,
+                can_use_tool=_deny_all_tools,  # 넘겨받은 데이터 밖으로 못 나간다
+                max_turns=1,
+                hooks={
+                    "PreToolUse": [HookMatcher(hooks=[_pre_tool_use_hook])],
+                    "PostToolUse": [HookMatcher(hooks=[_post_tool_use_hook])],
+                },
+            ),
+        ):
+            if isinstance(message, StreamEvent):
+                delta = _text_delta(message.event)
+                if delta:
+                    yield _sse("answer_token", {"text": delta})
+            elif isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        answer_texts.append(block.text)
+        yield _sse("progress", {"agent": "f1", "step": "answer", "status": "completed" if answer_texts else "failed"})
+
+        # 5. citations + F1 고지 강제 + 게이트
+        raw = "\n".join(answer_texts).strip()
+        quote_source = None
+        if data.get("quote"):
+            qd = data["quote"]
+            quote_source = {"as_of": qd.get("as_of"), "close": qd.get("close"), "label": qd.get("source")}
+        sentences = citations.parse_sentences(
+            raw, data.get("dart_sources") or {}, data.get("news_sources") or {}, quote_source
+        )
+        content = compliance.apply_notice(raw, "F1")
+        violations = compliance.check_note(content, sentences, "F1")
+        await db.append_audit("chat_answered", None, None, {
+            "agent": routing["agent"], "intent": routing["intent"],
+            "entity": routing["entity_code"], "violations": violations,
+        })
+        yield _sse("answer", {
+            "clarify": False,
+            "notice": compliance.required_notice("F1"),
+            "sentences": sentences,
+            "violations": violations,
+        })
+        yield _sse("done", {})
 
     return StreamingResponse(event_gen(), media_type="text/event-stream")
 
