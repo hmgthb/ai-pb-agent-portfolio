@@ -51,7 +51,7 @@ const ROLES: Record<Role, {
 };
 
 const FEATURES = [
-  { id: 'F1', name: '대화형 종목 Q&A', sub: '라우팅 · 인용 · 지연시세', on: false },
+  { id: 'F1', name: '대화형 종목 Q&A', sub: '멀티턴 · 라우팅 · 인용', on: false },
   { id: 'F2', name: '모닝 브리프', sub: '공시 · 뉴스 · 지연시세', on: true },
   { id: 'F3', name: '실적·공시 노트', sub: '팬아웃 · 출처 · 사람 발행', on: true },
   { id: 'F4', name: '피어·섹터 비교', sub: '동종 비교', on: false },

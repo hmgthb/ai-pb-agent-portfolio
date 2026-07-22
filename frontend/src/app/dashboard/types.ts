@@ -58,6 +58,7 @@ export type ChatRouting = {
   agent: 'a1' | 'a2' | 'a4' | 'krx' | null;
   intent: string | null;
   need_clarify: boolean;
+  inherited: boolean;  // 멀티턴: 이전 턴 종목을 이어받았는가
   reason: string;
 };
 export type ChatAnswer = {

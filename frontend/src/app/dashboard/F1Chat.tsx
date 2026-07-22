@@ -43,6 +43,8 @@ type Turn = {
 export default function F1Chat() {
   const [input, setInput] = useState('');
   const [turns, setTurns] = useState<Turn[]>([]);
+  // 멀티턴: 백엔드가 발급한 세션 id를 들고 다음 턴에 붙인다 → "관련 뉴스는?"이 종목을 이어받는다.
+  const sessionRef = useRef<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const running = turns.length > 0 && turns[turns.length - 1].running;
@@ -59,10 +61,11 @@ export default function F1Chat() {
     setInput('');
     setTurns((ts) => [...ts, { q, streaming: '', running: true }]);
 
-    const es = new EventSource(chatStreamUrl(q));
+    const es = new EventSource(chatStreamUrl(q, sessionRef.current));
     esRef.current = es;
     let done = false;
 
+    es.addEventListener('session', (e) => { sessionRef.current = JSON.parse((e as MessageEvent).data).session; });
     es.addEventListener('routing', (e) => patchLast({ routing: JSON.parse((e as MessageEvent).data) }));
     es.addEventListener('blocked', (e) => patchLast({ blocked: JSON.parse((e as MessageEvent).data).violations }));
     es.addEventListener('answer_token', (e) =>
@@ -79,11 +82,12 @@ export default function F1Chat() {
     <>
       <div className="m-head">
         <h3>F1 대화형 종목 Q&A</h3>
-        <span className="pill on" style={{ marginLeft: 8 }}>슬라이스 · 단일턴</span>
+        <span className="pill on" style={{ marginLeft: 8 }}>규칙 라우팅 · 멀티턴</span>
       </div>
       <div className="chat-hint">
         종목명이나 6자리 코드로 물어보세요 — 규칙 라우팅으로 알맞은 에이전트가 공개데이터만
-        조회해 답합니다. 예: <em>삼성전자 최근 실적</em> · <em>네이버 주가</em> · <em>카카오 뉴스</em>
+        조회해 답합니다. 예: <em>삼성전자 최근 실적</em> → <em>주가는?</em> → <em>관련 뉴스는?</em>
+        <br />후속 질문은 <b>이전 종목을 이어받습니다</b>(멀티턴).
       </div>
 
       <div className="chat-log" ref={scrollRef}>
@@ -97,6 +101,7 @@ export default function F1Chat() {
                 <div className="route-badge" title={t.routing.reason}>
                   라우팅 → <b>{t.routing.agent ? AGENT_LABEL[t.routing.agent] : '—'}</b>
                   <span className="route-entity">{t.routing.entity_name ?? t.routing.entity_code}</span>
+                  {t.routing.inherited && <span className="route-carry" title="이전 질문의 종목을 이어받았습니다">↩ 이어받음</span>}
                 </div>
               )}
 

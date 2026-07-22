@@ -503,6 +503,7 @@
     display: inline-flex; gap: 6px; align-items: center; margin-bottom: 8px;
   }
   .route-badge .route-entity { color: var(--muted); font-weight: 600; }
+  .route-badge .route-carry { color: var(--s5); font-weight: 700; background: color-mix(in srgb, var(--s5) 12%, transparent); border-radius: 999px; padding: 1px 7px; }
   .chat-answer { display: flex; flex-direction: column; gap: 7px; }
   .chat-sent { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
   .chat-sent > span:first-child { flex: 1; min-width: 60%; }

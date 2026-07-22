@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import uuid
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
@@ -24,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from backend import brief, citations, compliance, db, f1
+from backend import brief, citations, compliance, db, f1, session_store
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ async def lifespan(app: FastAPI):
     await db.init_pool()
     yield
     await db.close_pool()
+    await session_store.close()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -678,7 +680,13 @@ async def _collect_chat_data(routing: dict, data: dict):
 
 
 @app.get("/api/chat/stream")
-async def chat_stream(q: str = Query(..., min_length=1, max_length=500)):
+async def chat_stream(
+    q: str = Query(..., min_length=1, max_length=500),
+    session: str | None = Query(None),
+):
+    # 세션 id가 없으면 새로 발급 — 프론트가 받아 다음 턴부터 이어서 보낸다(멀티턴).
+    session_id = session or f"s-{uuid.uuid4().hex[:16]}"
+
     async def event_gen():
         try:
             async for chunk in _chat_run(q):
@@ -689,6 +697,9 @@ async def chat_stream(q: str = Query(..., min_length=1, max_length=500)):
             yield _sse("done", {})
 
     async def _chat_run(q: str):
+        # 0. 세션 id를 먼저 알려준다(신규든 기존이든) — 프론트가 다음 턴에 그대로 붙인다.
+        yield _sse("session", {"session": session_id})
+
         # 1. 입력 가드 — 에이전트를 돌리기 전에 신뢰 못 할 자유텍스트를 먼저 검사한다.
         blocked = compliance.input_guard(q)
         if blocked:
@@ -696,17 +707,28 @@ async def chat_stream(q: str = Query(..., min_length=1, max_length=500)):
             yield _sse("done", {})
             return
 
-        # 2. 규칙 라우팅 (감사 가능한 결정 — 배지로 그대로 노출)
-        routing = f1.route(q)
+        # 2. 대화 맥락 로드 + 규칙 라우팅. 현재 질문에 종목이 없으면 직전 종목을 이어받는다.
+        ctx = await session_store.get_context(session_id)
+        routing = f1.route(q, prev_entity=ctx.get("last_entity"))
         yield _sse("routing", routing)
         if routing["need_clarify"]:
+            # 이어받을 종목도 없을 때만 여기 온다.
             yield _sse("answer", {
                 "clarify": True,
                 "text": "어느 종목인지 알려주세요 — 종목명(예: 삼성전자)이나 6자리 코드(예: 005930)를 함께 적어주시면 조회하겠습니다.",
                 "sentences": [], "violations": [],
             })
+            # clarify도 턴으로 기록하되 종목이 없으니 last_entity는 안 바뀐다.
+            await session_store.append_turn(session_id, {"q": q, "agent": None, "intent": None,
+                                                         "entity_code": None, "entity_name": None})
             yield _sse("done", {})
             return
+
+        # 이 턴을 세션에 기록 — last_entity가 갱신돼 다음 턴이 이어받을 수 있다.
+        await session_store.append_turn(session_id, {
+            "q": q, "agent": routing["agent"], "intent": routing["intent"],
+            "entity_code": routing["entity_code"], "entity_name": routing["entity_name"],
+        })
 
         # 3. 라우팅된 에이전트로 데이터 조회
         data: dict = {}

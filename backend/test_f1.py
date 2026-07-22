@@ -41,6 +41,30 @@ def test_route_needs_clarification_without_entity():
     r = f1.route("요즘 반도체 업황 어때?")
     assert r["need_clarify"] and r["agent"] is None
     assert "종목" in r["reason"]
+    assert r["inherited"] is False
+
+
+def test_route_inherits_prev_entity_when_missing():
+    """멀티턴: 종목을 생략한 후속 질문은 직전 종목을 이어받는다.
+    '삼성전자 실적?' → '관련 뉴스는?' 시나리오."""
+    prev = {"code": "005930", "name": "삼성전자"}
+    r = f1.route("관련 뉴스는?", prev_entity=prev)
+    assert r["entity_code"] == "005930" and r["entity_name"] == "삼성전자"
+    assert r["agent"] == "a4" and r["intent"] == "news"  # 현재 질문의 의도는 새로 판단
+    assert r["inherited"] is True
+    assert "이어받음" in r["reason"]
+
+
+def test_route_explicit_entity_overrides_prev():
+    """후속 질문에 새 종목이 있으면 이어받지 않고 그 종목으로 간다('SK하이닉스는?')."""
+    prev = {"code": "005930", "name": "삼성전자"}
+    r = f1.route("SK하이닉스 실적은?", prev_entity=prev)
+    assert r["entity_code"] == "000660" and r["inherited"] is False
+
+
+def test_route_no_entity_and_no_prev_still_clarifies():
+    r = f1.route("관련 뉴스는?", prev_entity=None)
+    assert r["need_clarify"] and r["inherited"] is False
 
 
 def test_longer_alias_wins():

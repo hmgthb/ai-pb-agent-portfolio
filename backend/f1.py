@@ -42,32 +42,43 @@ _INTENTS: list[tuple[str, str, list[str]]] = [
 _DEFAULT_INTENT = ("financials", "a2")
 
 
-def route(question: str) -> dict:
+def route(question: str, prev_entity: dict | None = None) -> dict:
     """질문 → 라우팅 결정(순수). 반환:
-    {entity_code, entity_name, agent, intent, reason, need_clarify}
-    need_clarify=True면 종목을 못 찾은 것이라 에이전트를 돌리지 않고 되묻는다."""
+    {entity_code, entity_name, agent, intent, reason, need_clarify, inherited}
+
+    prev_entity: 멀티턴에서 **이전 턴의 종목**을 이어받기 위한 것.
+      {"code": "005930", "name": "삼성전자"} 형태이며, 현재 질문에서 종목을 못 찾았을 때만
+      쓴다("관련 뉴스는?"처럼 종목을 생략한 후속 질문). 기본값 None이면 단일턴과 동일하다.
+    need_clarify=True면 종목을 못 찾은 것(이어받을 것도 없음)이라 에이전트 없이 되묻는다."""
     entity_code, entity_name = _extract_entity(question)
+    inherited = False
+    if not entity_code and prev_entity and prev_entity.get("code"):
+        # 현재 질문에 종목이 없다 → 대화 맥락에서 직전 종목을 이어받는다.
+        entity_code, entity_name = prev_entity["code"], prev_entity.get("name")
+        inherited = True
+
     if not entity_code:
         return {
             "entity_code": None, "entity_name": None,
-            "agent": None, "intent": None, "need_clarify": True,
+            "agent": None, "intent": None, "need_clarify": True, "inherited": False,
             "reason": "질문에서 종목(6자리 코드 또는 알려진 종목명)을 찾지 못했습니다.",
         }
 
     lowered = question.lower()
+    carry = "이전 종목 이어받음 · " if inherited else ""
     for intent, agent, keywords in _INTENTS:
         if any(k in lowered for k in keywords):
-            return _decision(entity_code, entity_name, agent, intent,
-                             f"'{_first_hit(lowered, keywords)}' 키워드 → {agent}")
+            return _decision(entity_code, entity_name, agent, intent, inherited,
+                             f"{carry}'{_first_hit(lowered, keywords)}' 키워드 → {agent}")
     intent, agent = _DEFAULT_INTENT
-    return _decision(entity_code, entity_name, agent, intent,
-                     f"의도 키워드가 없어 기본값(재무) → {agent}")
+    return _decision(entity_code, entity_name, agent, intent, inherited,
+                     f"{carry}의도 키워드가 없어 기본값(재무) → {agent}")
 
 
-def _decision(code, name, agent, intent, reason) -> dict:
+def _decision(code, name, agent, intent, inherited, reason) -> dict:
     return {
-        "entity_code": code, "entity_name": name,
-        "agent": agent, "intent": intent, "need_clarify": False, "reason": reason,
+        "entity_code": code, "entity_name": name, "agent": agent, "intent": intent,
+        "need_clarify": False, "inherited": inherited, "reason": reason,
     }
 
 
