@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import './dashboard.css';
-import { api, ago, detailStr, fmtDate, fmtKRW, hhmm } from './api';
+import { api, ago, detailStr, fmtDate, fmtKRW, fmtPct, hhmm, isDown } from './api';
 import { BarChart, Donut, GateMini, LineChart, Tip, useTip } from './charts';
 import F1Chat from './F1Chat';
 import ResearchCard from './ResearchCard';
@@ -123,7 +123,7 @@ function PrepMemo({
       </div>
       {rows.map(({ h, b, note }) => {
         const q = b?.quote;
-        const down = q ? String(q.change_pct).startsWith('-') : false;
+        const down = q ? isDown(q.change_pct) : false;
         const lines = [
           ...(b?.disclosures ?? []).slice(0, 2).map((d) => ({
             tag: '공시', text: d.report_nm.trim(), href: d.viewer_url, meta: fmtDate(d.rcept_dt),
@@ -139,7 +139,7 @@ function PrepMemo({
               {q && (
                 <span className="prep-quote">
                   <strong>{Number(q.close).toLocaleString()}원</strong>{' '}
-                  <span className={`delta ${down ? 'down' : 'up'}`}>{down ? '▼' : '▲'}{q.change_pct}%</span>
+                  <span className={`delta ${down ? 'down' : 'up'}`}>{down ? '▼' : '▲'}{fmtPct(q.change_pct)}%</span>
                   <span className="bcode"> · {fmtDate(q.as_of)} 지연시세</span>
                 </span>
               )}
@@ -455,13 +455,13 @@ export default function DashboardPage() {
                 <div className="mkt">
                   <span className="mkt-label">오늘 시장</span>
                   {data.brief.market.indices.map((ix) => {
-                    const down = String(ix.change_pct).startsWith('-');
+                    const down = isDown(ix.change_pct);
                     return (
                       <span className="mkt-item" key={ix.index_name}>
                         <span className="mkt-name">{ix.index_name}</span>
                         <strong>{Number(ix.close).toLocaleString()}</strong>
                         <span className={`delta ${down ? 'down' : 'up'}`}>
-                          {down ? '▼' : '▲'}{ix.change_pct}%
+                          {down ? '▼' : '▲'}{fmtPct(ix.change_pct)}%
                         </span>
                         <span className="bcode">· {fmtDate(ix.as_of)} 지연</span>
                       </span>
@@ -479,7 +479,7 @@ export default function DashboardPage() {
               <div className="brief-grid">
                 {data.brief.items.map((it) => {
                   const q = it.quote;
-                  const down = q ? String(q.change_pct).startsWith('-') : false;
+                  const down = q ? isDown(q.change_pct) : false;
                   const rows = [
                     ...it.disclosures.map((d) => ({ tag: '공시', text: d.report_nm.trim(), href: d.viewer_url, meta: fmtDate(d.rcept_dt) })),
                     ...it.news.map((n) => ({ tag: '뉴스', text: n.title, href: n.link, meta: (n.pub_date || '').slice(0, 16) })),
@@ -498,7 +498,7 @@ export default function DashboardPage() {
                       {q ? (
                         <div className="bquote">
                           <strong>{Number(q.close).toLocaleString()}원</strong>
-                          <span className={`delta ${down ? 'down' : 'up'}`}>{down ? '▼' : '▲'}{q.change_pct}%</span>
+                          <span className={`delta ${down ? 'down' : 'up'}`}>{down ? '▼' : '▲'}{fmtPct(q.change_pct)}%</span>
                           <span className="bcode">· {fmtDate(q.as_of)} 지연시세</span>
                         </div>
                       ) : (

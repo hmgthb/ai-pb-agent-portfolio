@@ -43,6 +43,17 @@ export function errorMessage(body: unknown, fallback = '처리에 실패했습�
 export const fmtKRW = (v: number) =>
   v >= 1e8 ? `${(v / 1e8).toFixed(1)}억` : `${Math.round(v / 1e4).toLocaleString()}만`;
 
+/** 등락률 표시용. KRX 원본은 "-.58"·"4.08"처럼 앞자리 0이 없거나 부호만 붙어 온다 —
+ *  방향은 화살표(▲▼)와 색이 이미 말하므로 **절댓값**만 찍고 자릿수를 정규화한다.
+ *  ("▼-.58%"처럼 부호가 겹쳐 보이던 것을 고친다. 값 자체는 손대지 않는다.) */
+export const fmtPct = (v: string | number) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.abs(n).toFixed(2) : String(v);
+};
+
+/** 등락률이 음수인가 — 표시(화살표·색)의 단일 판단 지점 */
+export const isDown = (v: string | number) => Number(v) < 0;
+
 /** "20260713" → "2026-07-13" (이미 하이픈이 있으면 그대로) */
 export const fmtDate = (s: string | null | undefined) =>
   (s ?? '').replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');

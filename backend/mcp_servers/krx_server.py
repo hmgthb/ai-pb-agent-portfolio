@@ -13,13 +13,22 @@
 """
 
 import os
+import sys
 from datetime import date, timedelta
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
-from backend import market
+# 이 파일은 MCP stdio 서버로 **스크립트로 직접 실행**된다(.mcp.json) — 그때 sys.path[0]은
+# 이 파일이 있는 디렉터리라서 cwd가 레포 루트여도 `backend` 패키지를 못 찾는다.
+# 지수 조회를 backend/market.py와 공유하려면(화면과 에이전트가 같은 숫자를 보게 하려면)
+# 레포 루트를 경로에 넣어줘야 한다. ⚠️ 여기서 import가 깨지면 krx MCP 서버 전체가 뜨지
+# 않아 **시세까지 조용히 사라진다**(실제로 발생 — 브리프 3종목의 시세가 전부 비었다).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from backend import market  # noqa: E402  (위 sys.path 부트스트랩 뒤여야 한다)
 
 load_dotenv()
 

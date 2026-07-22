@@ -126,6 +126,12 @@
   `TRUNCATE notes, audit_log, briefs`는 가능하나 차트·알림이 같이 비니 데모 노트를 새로 만드는 편이 낫다.
 - **`scripts/seed_brief.py`는 F2 파이프라인이 아니다** — 크레딧 없이 화면 검증용으로 에이전트를 건너뛰고
   MCP를 직접 부르는 시드다. 데이터는 진짜지만 "누가 수집했나"가 달라 **데모에서 F2 결과로 소개하면 안 된다**(멀티에이전트 서사 빠짐).
+- **MCP 서버(`backend/mcp_servers/*.py`)에서 `backend` 패키지를 import하려면 sys.path 부트스트랩이 필요하다.**
+  `.mcp.json`이 **스크립트로 직접 실행**하므로 `sys.path[0]`이 파일 디렉터리다 — cwd가 레포 루트여도
+  `from backend import x`가 `ModuleNotFoundError`로 죽고, **서버가 안 뜨면 그 서버의 도구 전체가 조용히
+  사라진다**(2026-07-22 실제 발생: krx가 죽어 브리프 3종목의 **시세가 전부 빔**, 게이트는 통과라 티가 안 남).
+  MCP 서버를 손대면 `backend/.venv/bin/python backend/mcp_servers/<x>_server.py </dev/null`로 기동만이라도
+  확인할 것(도구 목록·실호출은 `scripts/*_mcp_client_check.py`).
 - **도구 결과가 토큰 한도를 넘으면 `is_error=False`인 채 에러 문자열이 온다** → `main.py::_tool_failed()`로
   걸러 `completed`로 오집계되는 걸 막는다. 자체 MCP는 반환량 상한을 둘 것(`dart_search`는 하루 382건 나온 적 있음 → `limit=30`+최신순).
 - **원본과 대조할 때는 파이프라인과 같은 조건으로 조회할 것** — F2 검증 때 `days=2` 결과를 7일 창과 비교해

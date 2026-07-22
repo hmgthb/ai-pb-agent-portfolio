@@ -102,12 +102,20 @@ def fetch_market_snapshot() -> tuple[list[dict], str | None]:
     한 지수만 실패해도 나머지는 살린다 — 부분 결과가 없는 것보다 낫고, 사유는 남긴다.
     """
     indices: list[dict] = []
-    reasons: list[str] = []
+    # 사유가 같으면 지수마다 반복하지 않는다 — 미신청 키면 전 지수가 같은 문장을 내는데,
+    # 그대로 이으면 화면 한 줄이 같은 말로 두 번 채워진다(실제로 그렇게 보였다).
+    failures: dict[str, list[str]] = {}
     for name in INDEX_NAMES:
         try:
             indices.append(fetch_index(name))
         except MarketDataUnavailable as e:
-            reasons.append(f"{name}: {e}")
+            failures.setdefault(str(e), []).append(name)
+
+    parts = [
+        msg if len(names) == len(INDEX_NAMES) else f"{'·'.join(names)}: {msg}"
+        for msg, names in failures.items()
+    ]
+    note = "; ".join(parts) or None
     if indices:
-        return indices, "; ".join(reasons) or None
-    return [], "; ".join(reasons) or "지수를 가져오지 못했습니다."
+        return indices, note
+    return [], note or "지수를 가져오지 못했습니다."
