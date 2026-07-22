@@ -76,6 +76,17 @@ def _quote_line(q: dict) -> tuple[str, dict]:
     return text, {"type": "krx", "as_of": q["as_of"], "label": q["source"]}
 
 
+def _index_line(idx: dict) -> tuple[str, dict]:
+    """지수 줄. 종목 시세와 같은 규칙으로 '지연'을 문구에 넣는다 — 지수도 일별 종가 기준이다."""
+    pct = idx["change_pct"]
+    arrow = "▲" if not str(pct).startswith("-") else "▼"
+    text = (
+        f"{idx['index_name']} {float(idx['close']):,.2f} {arrow}{pct}% "
+        f"— {idx['as_of']} 기준 지연시세(실시간 아님)."
+    )
+    return text, {"type": "krx", "as_of": idx["as_of"], "label": idx["source"]}
+
+
 def _disclosure_line(d: dict) -> tuple[str, dict]:
     rcept_no = d["rcept_no"]
     # 같은 보고서명이 제출인만 달리해 여러 건 올라오는 경우가 흔하다(임원·주요주주 보고 등).
@@ -96,10 +107,15 @@ def _news_line(n: dict) -> tuple[str, dict]:
     return text, {"type": "news", "url": n["link"], "pub_date": n["pub_date"]}
 
 
-def assemble(items: list[dict]) -> tuple[str, list[dict]]:
+def assemble(items: list[dict], indices: list[dict] | None = None) -> tuple[str, list[dict]]:
     """종목별 조회 결과 → (마크다운 본문, 문장+출처 목록).
 
     items: [{stock_code, corp_name, quote, disclosures, news}, ...]
+    indices: [{index_name, close, change_pct, as_of, source}, ...] — 상담 전 "오늘 시장".
+      PB는 개별 종목보다 시장 전체를 먼저 본다(고객이 먼저 묻는 것도 그쪽이다).
+      **못 가져왔을 때 여기에 안내 문장을 넣지 않는다** — 출처 없는 본문 문장이 되어
+      게이트에 미인용으로 잡힌다. 미연결 사유는 브리프 본문이 아니라 market_json에 남기고
+      화면이 그대로 보여준다(backend/market.py).
     반환한 sentences는 그대로 compliance.check_note에 넘겨 게이트를 태운다.
     """
     lines: list[str] = []
@@ -108,6 +124,11 @@ def assemble(items: list[dict]) -> tuple[str, list[dict]]:
     def add(text: str, source: dict | None, *, heading: bool = False) -> None:
         lines.append(f"## {text}" if heading else f"- {text}")
         sentences.append({"text": text, "source": source, "is_heading": heading})
+
+    if indices:
+        add("오늘 시장", None, heading=True)
+        for idx in indices:
+            add(*_index_line(idx))
 
     for item in items:
         add(f"{item['corp_name']}({item['stock_code']})", None, heading=True)
@@ -119,6 +140,11 @@ def assemble(items: list[dict]) -> tuple[str, list[dict]]:
             add(*_news_line(n))
         # 조회 결과가 하나도 없으면 빈 채로 두지 않고 그 사실을 적는다 — 빈 카드는
         # "조회 실패"인지 "해당 없음"인지 화면에서 구분되지 않는다.
+        #
+        # ⚠️ 이 줄은 출처가 없어 게이트에 "출처 없는 문장"으로 잡힌다 — 의도된 설계다
+        # (test_empty_result_is_stated_not_silent). 다만 브리프 대상이 **고객 보유 종목**으로
+        # 바뀌면서 조용한 종목이 섞일 확률이 올라갔다 → 미통과 배너가 잦아지면 kind를
+        # boilerplate로 낮출지 재검토할 것(그때는 위 테스트도 같이 바꿔야 한다).
         if not any((item.get("quote"), item.get("disclosures"), item.get("news"))):
             add("전일 공시·밤사이 뉴스·시세 모두 조회된 항목이 없습니다.", None)
 

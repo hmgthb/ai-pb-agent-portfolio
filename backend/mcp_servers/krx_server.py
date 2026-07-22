@@ -1,6 +1,7 @@
 """공공데이터포털 금융위원회 주식시세정보를 감싼 MCP 서버.
 
 - krx_quote: 종목코드로 최근 영업일 종가·등락률·거래량 조회
+- krx_index: 지수(코스피·코스닥)의 최근 영업일 종가·등락률 조회 — 상담 전 "오늘 시장" 한 줄
 
 이 API가 주는 건 실시간이 아니라 **일별 종가 기준 시세**다 — 그래서 산출물에는 반드시
 지연시세임을 밝혀야 하고(backend/compliance.py의 지연시세 체크), 기준일자(basDt)를
@@ -17,6 +18,8 @@ from datetime import date, timedelta
 import requests
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+
+from backend import market
 
 load_dotenv()
 
@@ -84,6 +87,17 @@ def krx_quote(stock_code: str) -> dict:
         "is_delayed": True,
         "source": "공공데이터포털 금융위원회 주식시세정보 (일별 종가 기준, 실시간 아님)",
     }
+
+
+@mcp.tool()
+def krx_index(index_name: str = "코스피") -> dict:
+    """지수(예: "코스피", "코스닥")의 최근 영업일 지연 지수를 조회한다.
+
+    종목 시세와 마찬가지로 일별 종가 기준이다 — 인용 시 지연 데이터임을 함께 밝힌다.
+    조회 로직은 backend/market.py에 있다(브리프 조립도 같은 함수를 쓴다 — 화면과 에이전트가
+    다른 숫자를 보지 않게 하려면 출처가 하나여야 한다).
+    """
+    return market.fetch_index(index_name)
 
 
 if __name__ == "__main__":

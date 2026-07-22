@@ -538,3 +538,53 @@
   .gen-card { background: var(--page); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
   .gen-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
   .gen-card .holdings td { padding: 3px 0; }
+
+  /* ── PB 정렬(2026-07-22) 이후 추가된 실화면 전용 클래스 ──────
+     시안(docs/design/pb-admin-dashboard.html)에는 없다 — 대상 사용자를 PB로 확정하면서
+     "오늘 시장 → 내 고객 종목 → 고객별 상담 준비" 흐름을 위해 실화면에만 더한 것들이다.
+     기존 토큰(--accent/--grid/--muted)만 쓰고 새 색을 만들지 않는다. */
+  .fname .fcode, .m-head h3 .fcode {
+    font-size: 10px; font-weight: 600; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 2px;
+    vertical-align: 1px;
+  }
+
+  /* 오늘 시장 — 브리핑 카드 맨 위 한 줄 */
+  .mkt {
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+    padding: 9px 12px; margin-bottom: 12px;
+    background: var(--page); border: 1px solid var(--border); border-radius: 10px;
+  }
+  .mkt .mkt-label { font-size: 11px; font-weight: 700; letter-spacing: 0.03em; color: var(--muted); }
+  .mkt .mkt-item { display: flex; align-items: baseline; gap: 6px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .mkt .mkt-name { font-size: 12px; color: var(--ink-2); }
+  .mkt.off .hint { font-size: 12px; }
+
+  /* 브리프 카드 — 이 종목을 보유한 고객 수(종목 선정 근거) */
+  .bcard .bhold {
+    margin-left: auto; font-size: 10.5px; font-weight: 600;
+    color: var(--accent); background: var(--accent-soft);
+    border-radius: 999px; padding: 1px 7px; white-space: nowrap;
+  }
+
+  /* 상담 준비 메모 — 고객 상세 안 */
+  .prep { margin-top: 12px; border-top: 1px solid var(--grid); padding-top: 10px; }
+  .prep .prep-head { font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
+  .prep .prep-head .tag {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em;
+    color: var(--accent); margin-right: 6px;
+  }
+  .prep .prep-row { padding: 7px 0; border-top: 1px solid var(--grid); }
+  .prep .prep-row:first-of-type { border-top: 0; }
+  .prep .prep-name { display: flex; align-items: baseline; gap: 6px; font-size: 12.5px; font-weight: 600; }
+  .prep .prep-quote { font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .prep .prep-line { display: flex; gap: 6px; font-size: 12px; color: var(--ink-2); padding: 2px 0; }
+  .prep .prep-line a, .prep .prep-line .linklike {
+    color: inherit; text-decoration: none; border-bottom: 1px dotted var(--muted);
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .prep .prep-line a:hover, .prep .prep-line .linklike:hover { color: var(--accent); }
+  .prep .prep-line.muted { color: var(--muted); }
+  .prep .btag { font-size: 10px; font-weight: 600; color: var(--muted); flex-shrink: 0; padding-top: 1px; }
+  .linklike { font: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+  .btn.mini { font-size: 11px; padding: 2px 8px; }

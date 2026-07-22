@@ -40,8 +40,10 @@ type Turn = {
   running: boolean;
 };
 
-export default function F1Chat() {
-  const [input, setInput] = useState('');
+export default function F1Chat({ initial }: { initial?: string } = {}) {
+  // 상담 준비 메모에서 종목을 눌러 열면 질문이 채워진 채로 시작한다. **보내지는 않는다** —
+  // 실행은 크레딧을 쓰고 답변은 고객 앞에서 쓰일 수 있으니, 시작 버튼은 사람이 누른다.
+  const [input, setInput] = useState(initial ?? '');
   const [turns, setTurns] = useState<Turn[]>([]);
   // 멀티턴: 백엔드가 발급한 세션 id를 들고 다음 턴에 붙인다 → "관련 뉴스는?"이 종목을 이어받는다.
   const sessionRef = useRef<string | null>(null);
@@ -81,12 +83,12 @@ export default function F1Chat() {
   return (
     <>
       <div className="m-head">
-        <h3>F1 대화형 종목 Q&A</h3>
+        <h3>종목 즉답 <span className="fcode">F1</span></h3>
         <span className="pill on" style={{ marginLeft: 8 }}>규칙 라우팅 · 멀티턴</span>
       </div>
       <div className="chat-hint">
-        종목명이나 6자리 코드로 물어보세요 — 규칙 라우팅으로 알맞은 에이전트가 공개데이터만
-        조회해 답합니다. 예: <em>삼성전자 최근 실적</em> → <em>주가는?</em> → <em>관련 뉴스는?</em>
+        상담 중 나온 질문을 그대로 물어보세요 — 규칙 라우팅으로 알맞은 에이전트가 공개데이터만
+        조회해 답합니다(고객에게 그대로 읽어주는 답변이 아니라, PB가 확인할 사실입니다). 예: <em>삼성전자 최근 실적</em> → <em>주가는?</em> → <em>관련 뉴스는?</em>
         <br />후속 질문은 <b>이전 종목을 이어받습니다</b>(멀티턴).
       </div>
 

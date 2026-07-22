@@ -106,6 +106,33 @@ def test_ownership_still_shown_when_nothing_else():
     assert len(brief.pick_disclosures(rows, 5)) == 1
 
 
+def test_market_section_leads_and_is_sourced():
+    """지수는 브리핑 맨 위에 오고(PB가 시장을 먼저 본다), 문장마다 출처가 붙어야 한다."""
+    indices = [
+        {"index_name": "코스피", "close": "3105.22", "change_pct": "0.42",
+         "as_of": "20260721", "source": "공공데이터포털 지수시세정보"},
+    ]
+    content_md, sentences = brief.assemble(FULL, indices)
+    assert sentences[0]["text"] == "오늘 시장" and sentences[0]["is_heading"]
+    assert "코스피" in sentences[1]["text"] and "지연시세" in sentences[1]["text"]
+    assert sentences[1]["source"]["type"] == "krx"
+    # 지수가 실려도 게이트를 통과해야 한다(고지·출처·지연 표기가 다 있으므로).
+    assert brief.check(content_md, sentences) == []
+
+
+def test_market_absent_adds_no_unsourced_line():
+    """지수를 못 가져왔을 때 본문에 안내 문장을 넣으면 '출처 없는 문장'으로 게이트에 걸린다 —
+    미연결 사유는 본문이 아니라 market_json으로 나가고 화면이 보여준다."""
+    content_md, sentences = brief.assemble(
+        [{"stock_code": "005930", "corp_name": "삼성전자", "quote": None,
+          "disclosures": [{"report_nm": "분기보고서", "rcept_dt": "20260721", "rcept_no": "X1",
+                           "viewer_url": "https://dart.fss.or.kr/x"}], "news": []}],
+        [],
+    )
+    assert "오늘 시장" not in content_md
+    assert brief.check(content_md, sentences) == []
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

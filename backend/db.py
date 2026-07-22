@@ -52,6 +52,10 @@ CREATE TABLE IF NOT EXISTS briefs (
 
 -- 대시보드(관리자/PB 콘솔)용. 고객·상담은 대고객 AI PB 프로토타입의 목업 데이터이며
 -- 시드는 backend/scripts/seed_pb.py가 넣는다 — 여기서는 스키마만 보장한다.
+-- 시장 현황(지수)은 브리프보다 나중에 붙었다 — 이미 쌓인 행이 있어도 되도록 멱등 ALTER로
+-- 더한다. {"indices": [...], "note": "미연결 사유"} 형태이며, 못 가져왔으면 사유가 남는다.
+ALTER TABLE briefs ADD COLUMN IF NOT EXISTS market_json JSONB NOT NULL DEFAULT '{}';
+
 CREATE TABLE IF NOT EXISTS pb_customers (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
@@ -171,16 +175,23 @@ async def get_audit_log(note_id: int) -> list[asyncpg.Record]:
 
 
 async def create_brief(
-    brief_date, content_md: str, items: list[dict], sentences: list[dict], violations: list[str]
+    brief_date,
+    content_md: str,
+    items: list[dict],
+    sentences: list[dict],
+    violations: list[str],
+    market: dict | None = None,
 ) -> int:
     row = await pool().fetchrow(
-        """INSERT INTO briefs (brief_date, content_md, items_json, sentences_json, violations_json)
-           VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb) RETURNING id""",
+        """INSERT INTO briefs
+             (brief_date, content_md, items_json, sentences_json, violations_json, market_json)
+           VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb) RETURNING id""",
         brief_date,
         content_md,
         json.dumps(items, ensure_ascii=False),
         json.dumps(sentences, ensure_ascii=False),
         json.dumps(violations, ensure_ascii=False),
+        json.dumps(market or {}, ensure_ascii=False),
     )
     return row["id"]
 

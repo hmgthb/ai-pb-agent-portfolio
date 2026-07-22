@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -25,7 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from backend import brief, citations, compliance, db, f1, session_store
+from backend import brief, citations, compliance, db, f1, market, session_store
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 logger = logging.getLogger(__name__)
@@ -1063,7 +1064,34 @@ async def dashboard_audit(limit: int = Query(30, ge=1, le=200)):
 # 도구로 직접 조회한다. 에이전트가 쓴 산문이 아니라 **도구 결과**에서 구조화 데이터를
 # 뽑아 backend가 카드로 조립하므로(brief.assemble) 출처가 구조적으로 보장된다.
 
-DEMO_WATCHLIST = ["005930", "000660", "005380"]
+# 브리프 대상 종목은 **담당 고객이 실제로 들고 있는 종목**에서 나온다. 이 화면의 사용자는
+# PB이고, PB에게 필요한 브리핑은 "오늘 주요 종목"이 아니라 "내 고객 계좌에 있는 종목에
+# 밤사이 무슨 일이 있었나"이기 때문이다. 시드가 비어 있을 때만 아래 데모 기본값으로 떨어진다.
+FALLBACK_WATCHLIST = ["005930", "000660", "005380"]
+
+# 브리프는 훑는 화면이라 종목 수를 제한한다 — 더 필요하면 F3 노트로 깊이 들어간다.
+BRIEF_MAX_STOCKS = 3
+
+
+async def pb_watchlist(limit: int = BRIEF_MAX_STOCKS) -> list[str]:
+    """보유 고객 수가 많은 순(동수면 보유금액 합계 순) 상위 N 종목코드.
+
+    "몇 명에게 영향이 있나"가 우선이고 금액은 동점 처리다 — 한 명의 큰 계좌보다 여러
+    고객이 걸린 종목이 상담 준비에서 먼저 필요하다.
+    """
+    holders: dict[str, int] = {}
+    amounts: dict[str, int] = {}
+    for row in await db.list_customers():
+        for h in json.loads(row["holdings"]):
+            code = h.get("code")
+            if not code or not re.fullmatch(r"\d{6}", code):
+                continue
+            holders[code] = holders.get(code, 0) + 1
+            amounts[code] = amounts.get(code, 0) + int(h.get("amt") or 0)
+    if not holders:
+        return FALLBACK_WATCHLIST[:limit]
+    ranked = sorted(holders, key=lambda c: (holders[c], amounts[c]), reverse=True)
+    return ranked[:limit]
 
 # 대형주는 며칠치만 봐도 공시가 수십 건 쌓인다(삼성전자 5일 = 81건). 브리프는 훑어보는
 # 화면이라 종목당 최신 몇 건으로 자른다 — 전체 목록이 필요하면 F3 노트로 간다.
@@ -1217,11 +1245,14 @@ async def run_brief(body: BriefRunBody):
     """모닝 브리프 배치 실행. 스케줄러 대신 이 엔드포인트를 cron이 때리면 된다.
     # ponytail: 스케줄러는 넣지 않았다 — 배치 트리거가 하나 있으면 cron/CI로 충분하고,
     # 앱 안에 스케줄러를 두면 컨테이너 재시작·중복 실행을 직접 관리해야 한다."""
-    codes = body.stock_codes or DEMO_WATCHLIST
+    codes = body.stock_codes or await pb_watchlist()
     for code in codes:
         if not re.fullmatch(r"\d{6}", code):
             raise HTTPException(400, f"종목코드는 6자리 숫자여야 합니다: {code}")
 
+    # 지수는 에이전트에 위임하지 않고 backend가 직접 부른다 — 고정된 2건 조회라 판단이
+    # 필요 없고, 실패해도 브리프 전체가 흔들리면 안 된다(사유만 남기고 종목 파트는 산다).
+    indices, market_note = await asyncio.to_thread(market.fetch_market_snapshot)
     quotes, disclosures, news = await _collect_brief_data(codes)
     items = [
         {
@@ -1235,14 +1266,30 @@ async def run_brief(body: BriefRunBody):
         }
         for code in codes
     ]
-    content_md, sentences = brief.assemble(items)
+    market_payload = {"indices": indices, "note": market_note}
+    content_md, sentences = brief.assemble(items, indices)
     violations = brief.check(content_md, sentences)
-    brief_id = await db.create_brief(date.today(), content_md, items, sentences, violations)
+    brief_id = await db.create_brief(
+        date.today(), content_md, items, sentences, violations, market_payload
+    )
     await db.append_audit(
         "brief_created", None, None,
-        {"brief_id": brief_id, "stock_codes": codes, "violations": violations},
+        {
+            "brief_id": brief_id,
+            "stock_codes": codes,
+            "violations": violations,
+            # 어떤 기준으로 이 종목이 뽑혔는지도 감사 대상이다(고객 보유 기반 선정).
+            "universe": "pb_holdings" if not body.stock_codes else "explicit",
+            "market_note": market_note,
+        },
     )
-    return {"id": brief_id, "items": items, "violations": violations, "content_md": content_md}
+    return {
+        "id": brief_id,
+        "items": items,
+        "market": market_payload,
+        "violations": violations,
+        "content_md": content_md,
+    }
 
 
 @app.get("/api/briefs/latest")
@@ -1255,6 +1302,8 @@ async def get_latest_brief():
         "brief_date": row["brief_date"].isoformat(),
         "content_md": row["content_md"],
         "items": json.loads(row["items_json"]),
+        # 지수 도입 전에 만들어진 브리프는 {}다 — 화면은 "없음"과 "미연결"을 구분해야 한다.
+        "market": json.loads(row["market_json"] or "{}"),
         "sentences": json.loads(row["sentences_json"]),
         "violations": json.loads(row["violations_json"]),
         "created_at": row["created_at"].isoformat(),

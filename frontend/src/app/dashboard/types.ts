@@ -136,10 +136,24 @@ export type BriefItem = {
   news: { title: string; link: string; pub_date: string }[];
 };
 
+/** 지수(코스피·코스닥). 종목 시세와 같은 일별 종가 기준이라 "지연" 표기가 붙는다. */
+export type MarketIndex = {
+  index_name: string;
+  close: string;
+  change_pct: string;
+  as_of: string;
+  source: string;
+};
+
+/** 지수를 못 가져왔으면 note에 사유가 온다 — 화면은 "지수 없음"과 "미연결"을 구분해 말한다.
+ *  (지수 도입 전에 만들어진 브리프는 빈 객체다.) */
+export type BriefMarket = { indices?: MarketIndex[]; note?: string | null };
+
 export type Brief = {
   id: number;
   brief_date: string;
   items: BriefItem[];
+  market?: BriefMarket;
   violations: string[];
   created_at: string;
 };
@@ -149,10 +163,12 @@ export const PILL: Record<string, [label: string, cls: string]> = {
   draft: ['초안', ''],
   review: ['검토중', 'review'],
   deliberation: ['심의중', 'delib'],
-  pending: ['승인 대기', 'review'],
+  pending: ['확인 대기', 'review'],
   published: ['발행완료', ''],
-  done: ['전송완료', ''],
-  rejected: ['반려됨', ''],
+  // 상담 세션의 done은 "AI가 고객에게 보냈다"가 아니라 "PB가 확인을 끝냈다"는 뜻이다 —
+  // 회신은 사람이 직접 쓴다(대상 사용자 = PB).
+  done: ['확인완료', ''],
+  rejected: ['보류됨', ''],
 };
 
 export const RISK = ['안정형', '안정추구형', '위험중립형', '적극투자형', '공격투자형'];

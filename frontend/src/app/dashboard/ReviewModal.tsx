@@ -182,19 +182,26 @@ export function NoteModal({
   );
 }
 
-/* ── 상담 모달 ────────────────────────────────────────────── */
-/** 답변 초안은 아직 F1(대화형)이 없어 목업이다 — 고객 계좌 데이터만 실제 값을 쓴다.
- *  화면에도 "목업" 배지로 표시해 실데이터와 섞이지 않게 한다. */
-function chatDraft(c: Customer) {
+/* ── 고객 문의 대응 준비 모달 ──────────────────────────────── */
+/** AI는 고객에게 나갈 답변을 대신 쓰지 않는다(대상 사용자 = PB, 2026-07-22 확정).
+ *  여기서 보여주는 것은 **PB가 회신을 쓰기 전에 확인할 사실**뿐이다.
+ *
+ *  계좌 요약은 시드(가상 고객)의 실제 값이고, 상담 고지 문구는 규정에서 온 고정 문구다.
+ *  종목 관련 사실이 필요하면 F1(종목 즉답)·브리핑으로 간다 — 여기서 지어내지 않는다. */
+function prepFacts(c: Customer) {
   return [
     {
-      text: `고객님 계좌의 현재 국내주식 비중은 ${c.alloc['국내주식'] ?? 0}%로, 등록된 투자성향(${RISK[c.risk]})을 기준으로 검토했습니다.`,
-      source: null,
+      text: `등록 투자성향 ${RISK[c.risk]} · 국내주식 비중 ${c.alloc['국내주식'] ?? 0}% · 잔고 ₩${fmtKRW(c.balance)}.`,
       badge: <span className="sbadge acct" title={c.acct}>계좌 데이터</span>,
     },
+    ...(c.flag
+      ? [{
+          text: `위험 플래그: ${c.flagReasons.map((r) => r.text).join(' · ')}.`,
+          badge: <span className="sbadge acct">규칙 판정</span>,
+        }]
+      : []),
     {
-      text: '본 답변은 정보 제공 목적이며 투자권유가 아닙니다 — 구체적 매매 판단은 담당 PB와의 상담으로 확정하시기 바랍니다.',
-      source: null,
+      text: '회신 시 고지: 정보 제공 목적이며 투자권유가 아님을 밝히고, 매매 판단은 고객 확인을 거칩니다.',
       badge: <span className="sbadge ntc">필수 고지</span>,
     },
   ];
@@ -213,7 +220,7 @@ export function ChatModal({
   const [res, setRes] = useState<Result>({});
   const [status, setStatus] = useState(item.status);
   const mine = role === 'pb' && customer.pb === MY_PB;
-  const deny = role === 'comp' ? '상담 승인은 담당 PB 권한입니다' : '담당 PB만 승인·반려할 수 있습니다';
+  const deny = role === 'comp' ? '이 건의 처리는 담당 PB 권한입니다' : '담당 PB만 처리할 수 있습니다';
   const [label, cls] = PILL[status] ?? [status, ''];
 
   const decide = async (action: 'approve' | 'reject'): Promise<Result> => {
@@ -221,25 +228,25 @@ export function ChatModal({
     if (!r.ok) return { blocked: errorMessage(r.body) };
     setStatus(action === 'approve' ? 'done' : 'rejected');
     if (action === 'approve') {
-      toast(`전송 완료 — ${customer.name} 고객에게 발송되었습니다`);
-      return { ok: '승인됨 — 고객에게 전송되었습니다.' };
+      toast(`확인 완료 — ${customer.name} 고객 회신은 PB가 직접 작성합니다`);
+      return { ok: '확인 완료 — 회신 작성은 사람이 합니다(AI가 대신 보내지 않습니다).' };
     }
-    toast('반려됨 — 재작성 큐로 돌아갑니다');
-    return { blocked: '반려됨 — AI가 재작성 후 다시 승인 대기로 올라옵니다.' };
+    toast('보류됨 — 추가 확인 필요로 표시했습니다');
+    return { blocked: '보류됨 — 사실 확인이 더 필요한 건으로 표시했습니다.' };
   };
 
   const actions: Action[] =
     status === 'pending'
       ? [
-          { label: '승인하고 고객에게 전송', ok: mine, deny, run: () => decide('approve') },
-          { label: '반려 (재작성 요청)', ok: mine, deny, danger: true, run: () => decide('reject') },
+          { label: '확인 완료 (회신은 PB가 직접)', ok: mine, deny, run: () => decide('approve') },
+          { label: '보류 (추가 확인 필요)', ok: mine, deny, danger: true, run: () => decide('reject') },
         ]
       : [];
 
   return (
     <>
       <div className="m-head">
-        <h3>상담 답변 검토 — {customer.name}</h3>
+        <h3>고객 문의 대응 준비 — {customer.name}</h3>
         <span className={`pill ${cls}`}>{label}</span>
         <button className="m-close" aria-label="닫기" onClick={onClose}>×</button>
       </div>
@@ -249,7 +256,9 @@ export function ChatModal({
           <> · <span className="flag">▲ {customer.flagReasons.map((r) => r.text).join(' · ')}</span></>
         )}
       </div>
-      <div className="wm">{WATERMARK} 승인 전에는 고객에게 전송되지 않습니다.</div>
+      <div className="wm">
+        {WATERMARK} AI는 고객 회신을 대신 쓰지 않습니다 — 아래는 PB가 회신 전에 확인할 사실입니다.
+      </div>
       {res.blocked && <div className="vbox">⛔ {res.blocked}</div>}
       {res.ok && <div className="okbox">✓ {res.ok}</div>}
       <div className="bubble q">
@@ -258,10 +267,11 @@ export function ChatModal({
       </div>
       <div className="bubble">
         <div className="blabel">
-          AI 답변 초안 <span className="src mock" style={{ marginLeft: 6 }}>목업 · F1 미구현</span>
+          회신 전 확인할 사실
+          <span className="src mock" style={{ marginLeft: 6 }}>계좌는 시드 데이터 · 가상 고객</span>
         </div>
         <div className="srows">
-          {chatDraft(customer).map((s, i) => (
+          {prepFacts(customer).map((s, i) => (
             <div className="srow" key={i}>
               <span className="stext">{s.text}</span>
               <span className="spacer" style={{ flex: 1 }} />

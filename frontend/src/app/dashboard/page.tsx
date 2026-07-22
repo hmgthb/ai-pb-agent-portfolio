@@ -1,6 +1,11 @@
 'use client';
 
-/** PB 관리자 콘솔 (H1) — docs/design/pb-admin-dashboard.html 시안의 React 포팅.
+/** AI PB 어시스턴트 (H1) — docs/design/pb-admin-dashboard.html 시안의 React 포팅.
+ *
+ *  **대상 사용자 = PB**(2026-07-22 확정). 이 화면은 PB가 고객을 만나기 전에 여는 화면이고,
+ *  AI는 PB를 대신하지 않는다 — 출처 있는 사실을 모아줄 뿐, 고객에게 나가는 말은 사람이 쓴다.
+ *  그래서 기본 역할이 PB이고, 첫 화면에 "오늘 시장 → 내 고객 종목 → 고객별 상담 준비" 순으로
+ *  놓인다(관리자·준법 역할은 감독용 뷰로 유지).
  *
  *  시안과 달라진 점:
  *   · 노트 생성 카드가 시뮬레이션이 아니라 **실제 SSE**로 돈다 (ResearchCard).
@@ -36,8 +41,10 @@ const ROLES: Record<Role, {
     aiTab: true, portfolio: true, research: true, defaultView: null,
     queueFilter: null, custFilter: null, qScope: '',
   },
+  // PB도 팩트 노트를 **생성**할 수 있다(상담 준비 자료). 검토·심의·발행은 여전히
+  // 리서치·준법 권한이다 — 만드는 것과 내보내는 것을 분리하는 게 이 제품의 핵심이다.
   pb: {
-    aiTab: false, portfolio: true, research: false, defaultView: 'cust',
+    aiTab: false, portfolio: true, research: true, defaultView: 'cust',
     queueFilter: (it) => it.type === 'chat' && it.who === MY_PB,
     custFilter: (c) => c.pb === MY_PB,
     qScope: `${MY_PB}(나) 담당 건만 표시 중`,
@@ -50,12 +57,14 @@ const ROLES: Record<Role, {
   },
 };
 
+/** 기능 레일은 PB가 읽는 말로 적는다 — F1~F5는 내부 코드명이라 이름만으로는 무엇을
+ *  해주는지 알 수 없다. 코드는 뒤에 작게 붙여 문서·발표와 대응이 유지되게 한다. */
 const FEATURES = [
-  { id: 'F1', name: '대화형 종목 Q&A', sub: '멀티턴 · 라우팅 · 인용', on: false },
-  { id: 'F2', name: '모닝 브리프', sub: '공시 · 뉴스 · 지연시세', on: true },
-  { id: 'F3', name: '실적·공시 노트', sub: '팬아웃 · 출처 · 사람 발행', on: true },
-  { id: 'F4', name: '피어·섹터 비교', sub: '동종 비교', on: false },
-  { id: 'F5', name: '규정 Q&A', sub: '컴플라이언스 RAG', on: false },
+  { id: 'F1', name: '종목 즉답', sub: '상담 중 질문에 출처와 함께', on: false },
+  { id: 'F2', name: '상담 전 브리핑', sub: '내 고객 종목의 밤사이 변화', on: true },
+  { id: 'F3', name: '종목 팩트 노트', sub: '실적·공시를 출처와 함께 정리', on: true },
+  { id: 'F4', name: '피어·섹터 비교', sub: '"경쟁사 대비" 질문 대응', on: false },
+  { id: 'F5', name: '규정 확인', sub: '상담 화법·고지 의무', on: false },
 ];
 
 type Session = { id: number; started_at: string };
@@ -86,15 +95,98 @@ function lastDays(n: number) {
 }
 const dayKey = (iso: string) => iso.slice(0, 10);
 
+/* ── 상담 준비 메모 ───────────────────────────────────────────
+   고객을 고르면, 그 고객이 **실제로 들고 있는 종목**에 대해 이미 수집된 사실만 모아 보여준다.
+   여기서 에이전트를 새로 돌리지 않는다 — 브리프(F2)와 팩트 노트(F3)가 출처와 함께 이미 가진
+   것을 고객 기준으로 다시 배열할 뿐이다("공통 인프라 1 + 얇은 레이어 N"의 실제 사례).
+   확인된 게 없으면 없다고 말한다 — 빈 줄을 그럴듯한 문장으로 채우지 않는다(가드레일 3). */
+function PrepMemo({
+  customer, brief, notes, onAsk, onOpenNote,
+}: {
+  customer: Customer;
+  brief: Brief | null;
+  notes: Record<string, NoteDetail>;
+  onAsk: (q: string) => void;
+  onOpenNote: (code: string) => void;
+}) {
+  const rows = customer.holdings.map((h) => ({
+    h,
+    b: brief?.items.find((i) => i.stock_code === h.code) ?? null,
+    note: notes[h.code] ?? null,
+  }));
+
+  return (
+    <div className="prep">
+      <div className="prep-head">
+        <span className="tag">상담 준비</span>
+        이 고객 보유 종목에서 <strong>출처가 확인된 사실</strong>만 모았습니다 — 링크로 원문을 확인한 뒤 쓰세요.
+      </div>
+      {rows.map(({ h, b, note }) => {
+        const q = b?.quote;
+        const down = q ? String(q.change_pct).startsWith('-') : false;
+        const lines = [
+          ...(b?.disclosures ?? []).slice(0, 2).map((d) => ({
+            tag: '공시', text: d.report_nm.trim(), href: d.viewer_url, meta: fmtDate(d.rcept_dt),
+          })),
+          ...(b?.news ?? []).slice(0, 1).map((n) => ({
+            tag: '뉴스', text: n.title, href: n.link, meta: (n.pub_date || '').slice(0, 16),
+          })),
+        ];
+        return (
+          <div className="prep-row" key={h.code}>
+            <div className="prep-name">
+              {h.name} <span className="bcode">{h.code}</span>
+              {q && (
+                <span className="prep-quote">
+                  <strong>{Number(q.close).toLocaleString()}원</strong>{' '}
+                  <span className={`delta ${down ? 'down' : 'up'}`}>{down ? '▼' : '▲'}{q.change_pct}%</span>
+                  <span className="bcode"> · {fmtDate(q.as_of)} 지연시세</span>
+                </span>
+              )}
+              <span className="spacer" style={{ flex: 1 }} />
+              <button className="btn mini" onClick={() => onAsk(`${h.name} 최근 실적`)}>이 종목 묻기</button>
+            </div>
+            {lines.map((l, i) => (
+              <div className="prep-line" key={i}>
+                <span className="btag">{l.tag}</span>
+                <a href={l.href || '#'} target="_blank" rel="noreferrer">{l.text}</a>
+                <span className="bcode"> {l.meta}</span>
+              </div>
+            ))}
+            {note && (
+              <div className="prep-line">
+                <span className="btag">노트</span>
+                <button className="linklike" onClick={() => onOpenNote(h.code)}>
+                  {note.corp_name} 팩트 노트 열기
+                </button>
+                <span className="bcode"> · {PILL[note.status]?.[0] ?? note.status}</span>
+              </div>
+            )}
+            {!lines.length && !note && (
+              <div className="prep-line muted">
+                오늘 브리핑·노트에 이 종목은 없습니다 — 필요하면 &ldquo;이 종목 묻기&rdquo;로 바로 확인하세요.
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {!customer.holdings.length && <div className="hint">보유 종목이 없습니다.</div>}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
-  const [role, setRole] = useState<Role>('admin');
+  // 기본 역할은 PB다 — 이 제품의 사용자가 PB이므로 첫 화면도 PB가 보는 화면이어야 한다.
+  const [role, setRole] = useState<Role>('pb');
   const [view, setView] = useState<'cust' | 'ai'>('cust');
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<'all' | 'note' | 'chat'>('all');
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [modal, setModal] = useState<{ kind: 'note'; code: string } | { kind: 'chat'; id: number } | { kind: 'f1' } | null>(null);
+  const [modal, setModal] = useState<
+    { kind: 'note'; code: string } | { kind: 'chat'; id: number } | { kind: 'f1'; q?: string } | null
+  >(null);
   const [toastMsg, setToastMsg] = useState('');
   const { tip, bind } = useTip();
 
@@ -160,6 +252,16 @@ export default function DashboardPage() {
     () => roleCustomers.filter((c) => c.name.includes(search.trim())),
     [roleCustomers, search],
   );
+
+  /* 종목코드 → 이 종목을 보유한 (내 담당) 고객 수. 브리프가 "왜 이 종목인가"를 화면에서
+     스스로 설명하게 만든다 — 종목 선정 기준이 고객 포트폴리오이기 때문이다. */
+  const holders = useMemo(() => {
+    const m = new Map<string, number>();
+    roleCustomers.forEach((c) =>
+      c.holdings.forEach((h) => m.set(h.code, (m.get(h.code) ?? 0) + 1)),
+    );
+    return m;
+  }, [roleCustomers]);
   const selected = useMemo(
     () => visibleCustomers.find((c) => c.id === selectedId) ?? visibleCustomers[0] ?? null,
     [visibleCustomers, selectedId],
@@ -209,7 +311,7 @@ export default function DashboardPage() {
   if (error) {
     return (
       <div className="wrap">
-        <header className="topbar"><div className="brand">리서치 코파일럿<small>PB 관리자 콘솔</small></div></header>
+        <header className="topbar"><div className="brand">AI PB 어시스턴트<small>상담 전 사실 확인</small></div></header>
         <section className="card">
           <div className="card-head"><h2>백엔드에 연결하지 못했습니다</h2></div>
           <div className="hint" style={{ padding: '8px 0' }}>
@@ -232,13 +334,13 @@ export default function DashboardPage() {
   const tiles =
     role === 'admin'
       ? [
-          { label: '승인 대기', value: String(roleQueue.length), breakdown: `노트 초안 ${noteCount} · 상담 답변 ${chatCount}` },
+          { label: '처리 대기', value: String(roleQueue.length), breakdown: `팩트 노트 ${noteCount} · 고객 문의 ${chatCount}` },
           { label: '위험 플래그 고객', value: String(flagged), breakdown: `전체 ${roleCustomers.length}명 중 규칙 3종으로 도출` },
         ]
       : role === 'pb'
       ? [
           { label: '내 담당 고객', value: String(roleCustomers.length), breakdown: `위험 플래그 ${flagged}명` },
-          { label: '내 승인 대기', value: String(roleQueue.length), breakdown: '승인 전에는 고객에게 전송되지 않습니다' },
+          { label: '내 처리 대기', value: String(roleQueue.length), breakdown: 'AI 산출물은 사람 확인 전에는 고객에게 나가지 않습니다' },
         ]
       : [
           { label: '심의 대기', value: String(roleQueue.length), breakdown: '검토를 통과해 준법 심의를 기다리는 노트' },
@@ -248,7 +350,7 @@ export default function DashboardPage() {
   return (
     <div className="wrap">
       <header className="topbar">
-        <div className="brand">리서치 코파일럿<small>PB 관리자 콘솔</small></div>
+        <div className="brand">AI PB 어시스턴트<small>상담 전 사실 확인 · 리서치 코파일럿</small></div>
         <span className="env-pill">프로토타입</span>
         <div className="right">
           <div className="role-toggle" role="group" aria-label="역할 전환 (목 로그인)">
@@ -265,8 +367,9 @@ export default function DashboardPage() {
       <div className="notice" role="note">
         <span className="dot">⚠</span>
         <span>
-          <strong>내부 참고용</strong> — 투자권유·광고가 아닙니다. AI 산출물은 전부{' '}
-          <strong>초안·미검증</strong>이며, 발행·고객 전달은 사람의 검토·심의·승인 후에만 가능합니다.
+          <strong>PB 상담 준비용 내부 참고 자료</strong> — 투자권유·광고가 아닙니다. AI는 공개 공시·뉴스·
+          지연시세에서 <strong>출처 있는 사실만</strong> 모읍니다. 고객에게 나가는 말은 PB가 직접 쓰고,
+          AI 산출물은 전부 <strong>초안·미검증</strong>이며 발행·전달은 사람의 검토·심의·승인 후에만 가능합니다.
         </span>
       </div>
 
@@ -283,7 +386,7 @@ export default function DashboardPage() {
               onClick={openChat}
               onKeyDown={openChat ? (e) => { if (e.key === 'Enter') openChat(); } : undefined}
             >
-              <div className="fname">{f.id} {f.name}</div>
+              <div className="fname">{f.name} <span className="fcode">{f.id}</span></div>
               <div className="fsub">{f.sub}</div>
               <span className="fstate">{f.id === 'F1' ? '열기 →' : f.on ? '동작' : '로드맵'}</span>
             </div>
@@ -336,16 +439,43 @@ export default function DashboardPage() {
           </section>
         </div>
 
-        {/* 오늘의 브리프 (F2) */}
+        {/* 상담 전 브리핑 (F2) — 오늘 시장 + 내 고객 보유 종목의 밤사이 변화 */}
         <section className="card" aria-labelledby="b-title">
           <div className="card-head">
-            <h2 id="b-title">오늘의 브리프</h2>
-            <span className="hint">전일 공시 · 밤사이 뉴스 · 지연시세 — 새 에이전트 없이 a1·a4 재사용</span>
+            <h2 id="b-title">상담 전 브리핑</h2>
+            <span className="hint">내 고객 보유 상위 종목 · 전일 공시 · 밤사이 뉴스 · 지연시세</span>
             {data.brief && <span className="hint" style={{ color: 'var(--muted)' }}>{data.brief.brief_date} 생성</span>}
             <span className="src live">DB 실데이터</span>
           </div>
           {data.brief ? (
             <>
+              {/* 오늘 시장 — PB가 고객에게 가장 먼저 듣는 질문이 개별 종목이 아니라 시장이다.
+                  못 가져왔으면 빈칸으로 두지 않고 미연결 사유를 그대로 말한다. */}
+              {data.brief.market?.indices?.length ? (
+                <div className="mkt">
+                  <span className="mkt-label">오늘 시장</span>
+                  {data.brief.market.indices.map((ix) => {
+                    const down = String(ix.change_pct).startsWith('-');
+                    return (
+                      <span className="mkt-item" key={ix.index_name}>
+                        <span className="mkt-name">{ix.index_name}</span>
+                        <strong>{Number(ix.close).toLocaleString()}</strong>
+                        <span className={`delta ${down ? 'down' : 'up'}`}>
+                          {down ? '▼' : '▲'}{ix.change_pct}%
+                        </span>
+                        <span className="bcode">· {fmtDate(ix.as_of)} 지연</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="mkt off">
+                  <span className="mkt-label">오늘 시장</span>
+                  <span className="hint">
+                    {data.brief.market?.note ?? '이 브리프에는 지수가 포함되지 않았습니다.'}
+                  </span>
+                </div>
+              )}
               <div className="brief-grid">
                 {data.brief.items.map((it) => {
                   const q = it.quote;
@@ -359,6 +489,11 @@ export default function DashboardPage() {
                       <div className="bh">
                         <span className="bname">{it.corp_name}</span>
                         <span className="bcode">{it.stock_code}</span>
+                        {!!holders.get(it.stock_code) && (
+                          <span className="bhold" title="이 종목을 보유한 고객 수 — 브리프 종목 선정 기준">
+                            보유 고객 {holders.get(it.stock_code)}명
+                          </span>
+                        )}
                       </div>
                       {q ? (
                         <div className="bquote">
@@ -402,15 +537,15 @@ export default function DashboardPage() {
         {/* 검토·승인 대기 */}
         <section className="card" aria-labelledby="q-title">
           <div className="card-head">
-            <h2 id="q-title">검토·승인 대기</h2>
-            <span className="hint">사람 승인 없이는 어떤 산출물도 나가지 않습니다</span>
+            <h2 id="q-title">처리 대기</h2>
+            <span className="hint">사람 확인 없이는 어떤 산출물도 고객에게 나가지 않습니다</span>
             {cfg.qScope && <span className="hint" style={{ color: 'var(--accent)', fontWeight: 600 }}>{cfg.qScope}</span>}
             <span className="src live">DB 실데이터</span>
           </div>
           <div className="tabs" role="group" aria-label="대기 항목 필터">
             {(['all', 'note', 'chat'] as const).map((f) => (
               <button key={f} className="tab" aria-pressed={filter === f} onClick={() => setFilter(f)}>
-                {f === 'all' ? <>전체 <span>{roleQueue.length}</span></> : f === 'note' ? '노트 초안' : '상담 답변'}
+                {f === 'all' ? <>전체 <span>{roleQueue.length}</span></> : f === 'note' ? '팩트 노트' : '고객 문의'}
               </button>
             ))}
           </div>
@@ -419,7 +554,7 @@ export default function DashboardPage() {
               const [label, cls] = PILL[it.status] ?? [it.status, ''];
               return (
                 <div className="qrow" key={`${it.type}-${it.id}`}>
-                  <span className={`chip ${it.type}`}>{it.type === 'note' ? '노트 초안' : '상담 답변'}</span>
+                  <span className={`chip ${it.type}`}>{it.type === 'note' ? '팩트 노트' : '고객 문의'}</span>
                   <span className="title">{it.title}</span>
                   <span className="meta">{it.who} · {ago(it.updated_at)} 경과</span>
                   <span className="spacer" />
@@ -533,6 +668,13 @@ export default function DashboardPage() {
                           ))}
                         </tbody>
                       </table>
+                      <PrepMemo
+                        customer={selected}
+                        brief={data.brief}
+                        notes={data.notes}
+                        onAsk={(q) => setModal({ kind: 'f1', q })}
+                        onOpenNote={(code) => setModal({ kind: 'note', code })}
+                      />
                       <div className="diag"><span className="tag">AI 진단 · 초안·미검증</span>{selected.diag}</div>
                     </>
                   )}
@@ -681,7 +823,7 @@ export default function DashboardPage() {
                 }}
               />
             )}
-            {modal.kind === 'f1' && <F1Chat />}
+            {modal.kind === 'f1' && <F1Chat initial={modal.q} />}
             {modal.kind === 'chat' && (() => {
               const it = data.queue.find((q): q is QueueChat => q.type === 'chat' && q.id === modal.id);
               const c = it && data.customers.find((x) => x.id === it.customer_id);

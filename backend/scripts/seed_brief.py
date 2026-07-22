@@ -16,8 +16,8 @@ import asyncio
 import sys
 from datetime import date
 
-from backend import brief, db
-from backend.main import MAX_DISCLOSURES_PER_STOCK, MAX_NEWS_PER_STOCK, DEMO_WATCHLIST, _recent
+from backend import brief, db, market
+from backend.main import MAX_DISCLOSURES_PER_STOCK, MAX_NEWS_PER_STOCK, _recent, pb_watchlist
 from backend.mcp_servers.dart_server import dart_search
 from backend.mcp_servers.krx_server import krx_quote
 from backend.mcp_servers.news_server import news_search
@@ -47,15 +47,24 @@ def collect(stock_codes: list[str]) -> list[dict]:
 
 
 async def main() -> None:
-    codes = sys.argv[1:] or DEMO_WATCHLIST
+    # 종목 선정은 F2와 같은 규칙을 쓴다 — 고객 보유 상위 N(= pb_watchlist). 그래서 DB가
+    # 먼저 필요하다.
+    await db.init_pool()
+    codes = sys.argv[1:] or await pb_watchlist()
     print(f"수집 중 (에이전트 없이 MCP 직접 호출): {', '.join(codes)}")
     items = collect(codes)
 
-    content_md, sentences = brief.assemble(items)
+    indices, market_note = market.fetch_market_snapshot()
+    if market_note:
+        print(f"  지수: {market_note}")
+
+    content_md, sentences = brief.assemble(items, indices)
     violations = brief.check(content_md, sentences)
 
-    await db.init_pool()
-    brief_id = await db.create_brief(date.today(), content_md, items, sentences, violations)
+    brief_id = await db.create_brief(
+        date.today(), content_md, items, sentences, violations,
+        {"indices": indices, "note": market_note},
+    )
     await db.append_audit(
         "brief_created", None, None,
         {"brief_id": brief_id, "stock_codes": codes, "violations": violations, "seed": True},

@@ -167,7 +167,7 @@ export default function ResearchCard({ onNoteCreated }: { onNoteCreated: () => v
       noteArrived = true;
       setCorp(d.corp_name);
       setMsg(
-        `${d.corp_name}(${code.trim()}) 노트 초안 생성 완료 — 승인 대기 큐에 올라갔습니다.` +
+        `${d.corp_name}(${code.trim()}) 팩트 노트 초안 생성 완료 — 처리 대기 큐에 올라갔습니다.` +
           (d.violations.length ? ` 게이트 지적 ${d.violations.length}건은 검토 화면에서 확인하세요.` : ''),
       );
       onNoteCreated();
@@ -233,9 +233,9 @@ export default function ResearchCard({ onNoteCreated }: { onNoteCreated: () => v
   return (
     <section className="card" aria-labelledby="g-title" id="research-card">
       <div className="card-head">
-        <h2 id="g-title">리서치 노트 생성</h2>
+        <h2 id="g-title">종목 팩트 노트 생성 <span className="fcode">F3</span></h2>
         <span className="hint">
-          종목코드 하나로 멀티에이전트 파이프라인 실행 — 초안은 승인 대기로 들어갑니다
+          상담 전에 종목 하나를 깊게 — 여러 에이전트가 공시·실적·뉴스를 모아 출처 붙은 초안을 만듭니다
         </span>
         <span className="src live">실제 에이전트 실행 · 1~2분</span>
       </div>
