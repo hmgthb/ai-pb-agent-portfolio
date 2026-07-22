@@ -124,6 +124,15 @@ export type Summary = {
   gate_blocks_7d: number;
   gate_blocks_daily: number[];
   customers_total: number;
+  /** 오늘 에이전트가 실제로 한 일 — 훅이 남긴 감사로그 집계(없으면 전부 0). */
+  today: {
+    tool_calls: number;
+    agents: number;
+    briefs: number;
+    notes: number;
+    chats: number;
+    last_run: string | null;
+  };
 };
 
 export type AgentCalls = { agent: string; calls: number };

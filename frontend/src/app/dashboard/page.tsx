@@ -331,6 +331,19 @@ export default function DashboardPage() {
   const chatCount = roleQueue.filter((i) => i.type === 'chat').length;
   const flagged = roleCustomers.filter((c) => c.flag).length;
 
+  /* "AI가 오늘 한 일" — 백엔드가 감사로그에서 센 오늘치만 쓴다(프론트에서 audit 목록을
+     세면 최근 N건 제한 때문에 조용히 적게 세인다). **0인 항목은 아예 적지 않는다** —
+     "0건"을 나열하면 아무것도 안 한 날도 일한 것처럼 보인다. */
+  const today = data.summary.today;
+  const briefToday = data.brief?.brief_date === days[days.length - 1].key ? data.brief : null;
+  const aiwork = [
+    briefToday && `상담 전 브리핑 ${briefToday.items.length}종목 수집`,
+    today.tool_calls &&
+      `에이전트 도구 호출 ${today.tool_calls}건${today.agents ? ` (에이전트 ${today.agents}종)` : ''}`,
+    today.chats && `종목 즉답 ${today.chats}건`,
+    today.notes && `팩트 노트 ${today.notes}건`,
+  ].filter((x): x is string => typeof x === 'string');
+
   const tiles =
     role === 'admin'
       ? [
@@ -407,36 +420,21 @@ export default function DashboardPage() {
 
       {/* ══════════ 탭 1 · 고객 관리 ══════════ */}
       <div className="view stack" hidden={view !== 'cust'}>
-        <div className="oprow" style={{ marginBottom: 0 }}>
-          <div className="tile-col">
-            {tiles.map((t) => (
-              <div className="tile" key={t.label}>
-                <div className="label">{t.label}</div>
-                <div className="value">{t.value}</div>
-                {'gate' in t && t.gate && <div className="sub"><GateMini data={data.summary.gate_blocks_daily} /></div>}
-                <div className="breakdown">{t.breakdown}</div>
-              </div>
-            ))}
-          </div>
-          <section className="card chart-box" aria-labelledby="t1" style={{ margin: 0 }}>
-            <div className="card-head">
-              <h2 id="t1">상담·노트 추이 <span className="hint">14일</span></h2>
-              <span className="src live">실집계</span>
-            </div>
-            <div className="chart-legend">
-              <span className="li"><span className="key" style={{ background: 'var(--s1)' }} />상담 세션</span>
-              <span className="li"><span className="key" style={{ background: 'var(--s2)' }} />노트 생성</span>
-            </div>
-            <LineChart
-              days={days.map((d) => d.label)}
-              width={620}
-              bind={bind}
-              series={[
-                { name: '상담 세션', data: trend.sessions, color: 'var(--s1)' },
-                { name: '노트 생성', data: trend.notes, color: 'var(--s2)' },
-              ]}
-            />
-          </section>
+        {/* AI가 오늘 한 일 — 첫 화면에서 "에이전트가 뭘 했나"가 보여야 한다.
+            숫자는 전부 훅이 남긴 감사로그 실집계다(없으면 없다고 말한다). */}
+        <div className="aiwork">
+          <span className="aiwork-label">AI가 오늘 한 일</span>
+          {aiwork.length ? (
+            <span className="aiwork-body">{aiwork.join(' · ')}</span>
+          ) : (
+            <span className="aiwork-body muted">
+              오늘은 실행 기록이 없습니다 — 브리핑을 생성하면 여기에 표시됩니다.
+            </span>
+          )}
+          {data.summary.today.last_run && (
+            <span className="aiwork-time">마지막 실행 {hhmm(data.summary.today.last_run)}</span>
+          )}
+          <span className="src live">감사로그 실집계</span>
         </div>
 
         {/* 상담 전 브리핑 (F2) — 오늘 시장 + 내 고객 보유 종목의 밤사이 변화 */}
@@ -531,6 +529,18 @@ export default function DashboardPage() {
             </div>
           )}
         </section>
+
+        {/* 타일은 브리핑 다음이다 — PB에게 먼저 필요한 건 카운터가 아니라 오늘 모인 사실이다. */}
+        <div className="tile-row">
+          {tiles.map((t) => (
+            <div className="tile" key={t.label}>
+              <div className="label">{t.label}</div>
+              <div className="value">{t.value}</div>
+              {'gate' in t && t.gate && <div className="sub"><GateMini data={data.summary.gate_blocks_daily} /></div>}
+              <div className="breakdown">{t.breakdown}</div>
+            </div>
+          ))}
+        </div>
 
         {cfg.research && <ResearchCard onNoteCreated={() => void load()} />}
 
@@ -749,12 +759,19 @@ export default function DashboardPage() {
               </section>
               <section className="card chart-box" aria-labelledby="t3">
                 <div className="card-head">
-                  <h2 id="t3">노트 생성 <span className="hint">14일</span></h2>
+                  <h2 id="t3">상담·노트 추이 <span className="hint">14일</span></h2>
                   <span className="src live">실집계</span>
+                </div>
+                <div className="chart-legend">
+                  <span className="li"><span className="key" style={{ background: 'var(--s1)' }} />상담 세션</span>
+                  <span className="li"><span className="key" style={{ background: 'var(--s2)' }} />노트 생성</span>
                 </div>
                 <LineChart
                   days={days.map((d) => d.label)} bind={bind}
-                  series={[{ name: '노트', data: trend.notes, color: 'var(--s1)', fill: true }]}
+                  series={[
+                    { name: '상담 세션', data: trend.sessions, color: 'var(--s1)' },
+                    { name: '노트 생성', data: trend.notes, color: 'var(--s2)' },
+                  ]}
                 />
               </section>
             </div>

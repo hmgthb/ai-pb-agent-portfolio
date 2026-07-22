@@ -255,6 +255,26 @@ async def agent_call_counts() -> list[asyncpg.Record]:
     )
 
 
+async def today_activity() -> asyncpg.Record:
+    """오늘 에이전트가 실제로 한 일 — 훅이 남긴 감사로그에서만 센다.
+
+    화면의 "AI가 오늘 한 일" 줄이 쓴다. 프론트에서 audit 목록을 세지 않는 이유는
+    그 API가 최근 N건만 주기 때문이다(도구호출이 하루 수백 건이라 조용히 적게 세인다).
+    """
+    return await pool().fetchrow(
+        """SELECT
+             count(*) FILTER (WHERE event_type = 'tool_use_start') AS tool_calls,
+             count(DISTINCT detail->>'agent_type')
+               FILTER (WHERE event_type = 'tool_use_start'
+                         AND detail->>'agent_type' IS NOT NULL) AS agents,
+             count(*) FILTER (WHERE event_type = 'brief_created') AS briefs,
+             count(*) FILTER (WHERE event_type = 'note_created') AS notes,
+             count(*) FILTER (WHERE event_type = 'chat_answered') AS chats,
+             max(ts) FILTER (WHERE event_type = 'tool_use_start') AS last_run
+           FROM audit_log WHERE ts::date = now()::date"""
+    )
+
+
 async def gate_blocks_daily(days: int) -> list[asyncpg.Record]:
     """최근 N일 게이트 차단 건수(발행 시도가 막힌 날). 0건인 날도 행으로 채워 반환한다."""
     return await pool().fetch(

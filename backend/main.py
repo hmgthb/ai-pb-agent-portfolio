@@ -996,6 +996,11 @@ async def dashboard_summary():
         "gate_blocks_7d": sum(b["blocks"] for b in blocks),
         "gate_blocks_daily": [b["blocks"] for b in blocks],
         "customers_total": len(await db.list_customers()),
+        # "AI가 오늘 한 일" 줄 — 훅이 남긴 오늘치 흔적만 센다(없으면 0이고, 그게 사실이다).
+        "today": {
+            k: (v.isoformat() if k == "last_run" and v else v)
+            for k, v in dict(await db.today_activity()).items()
+        },
     }
 
 
