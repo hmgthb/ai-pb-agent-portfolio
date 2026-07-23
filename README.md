@@ -1,9 +1,13 @@
-# AI PB 어시스턴트 (Research Copilot)
+# ai-pb-agent — AI PB 어시스턴트
 
 **PB가 고객을 만나기 전에 확인할 사실**을 공개 데이터(DART 전자공시 · 공개 뉴스 · KRX
-지연시세)만으로 모아주는 사내 워크벤치. 여러 Claude 에이전트가 나눠 조사하고, 모든 문장에
-출처가 붙는다. **AI는 PB를 대신하지 않는다** — 초안까지만 만들고, 고객에게 나가는 말과
+지연시세)만으로 모아주는 사내 워크벤치. **시장 현황**(지수 · 전일 공시 · 뉴스)과 **내 고객이
+보유한 종목**을 같은 화면에 놓고, 여러 Claude 에이전트가 나눠 조사해 모든 문장에 출처를 붙인다.
+**AI는 PB를 대신하지 않는다** — 상담 전 사실 확인과 초안까지만 하고, 고객에게 나가는 말과
 발행 승인은 사람이 한다. (대상 사용자 = PB, 2026-07-22 확정)
+
+> 레포 이름을 `research-copilot` → `ai-pb-agent`로 바꿨다. 애널리스트가 리포트를 쓰는
+> 리서치 도구가 아니라 **PB의 상담 준비 · 고객 관리 도구**라는 뜻이다.
 
 > 설계 근거·에이전트 토폴로지·Agent SDK 매핑표·한계·로드맵은
 > **[기술 문서](docs/ARCHITECTURE.md)** 에 있다. 이 README는 **쓰는 법**만 다룬다.
@@ -21,7 +25,7 @@
 ## 1. 빠른 시작
 
 ```bash
-git clone <repo> && cd research-copilot
+git clone <repo> && cd ai-pb-agent
 cp .env.example .env          # 아래 2절을 보고 키 4개를 채운다
 docker compose up             # backend:8000 / frontend:3000 / postgres:5432 / redis:6379
 ```
@@ -141,7 +145,7 @@ done
 
 ### 테스트 데이터 정리
 ```bash
-docker exec research-copilot-postgres-1 psql -U app -d app \
+docker exec ai-pb-agent-postgres-1 psql -U app -d app \
   -c "TRUNCATE notes, audit_log, briefs RESTART IDENTITY;"
 ```
 
@@ -150,7 +154,7 @@ docker exec research-copilot-postgres-1 psql -U app -d app \
 ## 5. 구조
 
 ```
-research-copilot/
+ai-pb-agent/
 ├── CLAUDE.md                    # O(오케스트레이터) 런타임 지침 · 가드레일 5원칙 · 기능별 고지문구
 ├── .claude/agents/              # 서브에이전트 정의 (frontmatter: name·description·model·tools)
 │   ├── a1.md  공시 수집·정규화        (Haiku)

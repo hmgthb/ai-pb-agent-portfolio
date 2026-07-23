@@ -1,4 +1,4 @@
-# 인수인계 — AI PB 어시스턴트 (리서치 코파일럿)
+# 인수인계 — AI PB 어시스턴트 (`ai-pb-agent`)
 
 > 최종 갱신: 2026-07-22 · **다음 세션은 이 문서부터 읽으세요.**
 > 주차 계획은 `주차별_실행계획.md`(**원본 유지 — 진행 기록은 여기에만**), 런타임 지침은 `CLAUDE.md`,
@@ -255,9 +255,9 @@
   F2 `curl -s -X POST .../api/briefs/run -d '{}'`(~40초, 종목 생략 시 고객 보유 상위) / F1 `curl -sN ".../api/chat/stream?q=삼성전자 최근 실적"`(→`session` id를 다음 턴 `&session=`).
   → `grep "^event:" *.sse | sort | uniq -c`로 이벤트별 건수부터 본다.
 - 위임 동기/비동기 판정(저비용): `docker compose exec -T backend python -m backend.scripts.background_flag_check`.
-- 테스트 데이터 정리: `docker exec research-copilot-postgres-1 psql -U app -d app -c "TRUNCATE notes, audit_log, briefs RESTART IDENTITY;"`(`pb_*`는 지우지 말 것 — §2).
+- 테스트 데이터 정리: `docker exec ai-pb-agent-postgres-1 psql -U app -d app -c "TRUNCATE notes, audit_log, briefs RESTART IDENTITY;"`(`pb_*`는 지우지 말 것 — §2).
 - API 키 4개(`.env`): `ANTHROPIC_API_KEY`·`DART_API_KEY`·`NAVER_CLIENT_ID/SECRET`·`KRX_API_KEY`(data.go.kr, 무료).
-- git: main → **personal**(hmgthb/research-copilot) 업스트림. origin(kwangtekNa/intern)에는 푸시 안 함.
+- git: main → **personal**(hmgthb/ai-pb-agent) 업스트림. origin(kwangtekNa/intern)에는 푸시 안 함.
   **커밋·푸시 둘 다 사용자 확인 후에만 실행한다(§2 첫 항목).**
 - SDK API명은 `claude-agent-sdk==0.2.110` 실물 확인 — `CLAUDE.md` "검증됨" 절.
 

@@ -368,7 +368,7 @@ export default function DashboardPage() {
   return (
     <div className="wrap">
       <header className="topbar">
-        <div className="brand">AI PB 어시스턴트<small>상담 전 사실 확인 · 리서치 코파일럿</small></div>
+        <div className="brand">AI PB 어시스턴트<small>상담 전 사실 확인</small></div>
         <span className="env-pill">프로토타입</span>
         <div className="right">
           <div className="role-toggle" role="group" aria-label="역할 전환 (목 로그인)">
