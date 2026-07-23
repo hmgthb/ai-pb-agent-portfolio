@@ -96,6 +96,11 @@ const ROLES: Record<
    카드에 있다). F4·F5는 만들지 않은 기능의 자리표시였다 — 로드맵은 발표 자료가 할 일이지
    PB가 매일 보는 화면이 할 일이 아니다. F1 입구는 우하단 고정 버튼으로 옮겼다. */
 
+/** 화면(탭). 어떤 탭이 실제로 나오는지는 역할이 정한다 — 아래 TABS 참조.
+ *  세 뷰는 전부 **마운트된 채로** `hidden`만 토글한다. 특히 'note' 탭은 1~2분짜리 SSE가
+ *  도는 곳이라, 언마운트하면 실행이 끊기고 크레딧만 쓰고 노트가 안 나온다. */
+type View = 'cust' | 'note' | 'ai';
+
 type Session = { id: number; started_at: string };
 
 type Data = {
@@ -153,9 +158,7 @@ function PrepMemo({
   return (
     <div className="prep">
       <div className="prep-head">
-        <span className="tag">상담 준비</span>이 고객 보유 종목에서{' '}
-        <strong>출처가 확인된 사실</strong>만 모았습니다 — 링크로 원문을 확인한
-        뒤 쓰세요.
+        <span className="tag">상담 준비</span>
       </div>
       {rows.map(({ h, b, note }) => {
         const q = b?.quote;
@@ -236,7 +239,10 @@ function PrepMemo({
 export default function DashboardPage() {
   // 기본 역할은 PB다 — 이 제품의 사용자가 PB이므로 첫 화면도 PB가 보는 화면이어야 한다.
   const [role, setRole] = useState<Role>('pb');
-  const [view, setView] = useState<'cust' | 'ai'>('cust');
+  const [view, setView] = useState<View>('cust');
+  /** 종목 노트 생성이 도는 중인가 — 전용 탭에 있어서 다른 탭을 보고 있으면 실행 여부를
+   *  알 수 없다. 탭 라벨의 표시등이 그걸 말한다(1~2분짜리 실행이다). */
+  const [noteRunning, setNoteRunning] = useState(false);
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<'all' | 'note' | 'chat'>('all');
@@ -309,11 +315,37 @@ export default function DashboardPage() {
 
   const cfg = ROLES[role];
 
+  /** 이 역할에게 실제로 있는 탭. 하나뿐이면 탭 줄을 아예 내지 않는다(고를 게 없다). */
+  const tabs = useMemo(
+    () =>
+      (
+        [
+          // 축은 "읽기 / 하기"다. 상담 준비 = 무엇을 알아야 하나(브리핑·고객),
+          // 노트·승인 = 내가 손대야 하는 것(생성·처리 대기).
+          // 준법 화면은 그 축이 없어(만들지 않는다) 원래 이름을 쓴다.
+          {
+            id: 'cust',
+            label: cfg.research ? '상담 준비' : '고객 관리',
+            on: true,
+          },
+          { id: 'note', label: '노트·승인', on: cfg.research },
+          { id: 'ai', label: 'AI 평가', on: cfg.aiTab },
+        ] as const
+      ).filter((t) => t.on),
+    [cfg],
+  );
+
   function applyRole(r: Role) {
     setRole(r);
     const next = ROLES[r];
+    // 역할을 바꾸면 지금 보던 탭이 없어질 수 있다 — 없으면 그 역할의 기본 화면으로 돌린다.
+    // (예: 종목 노트 탭에서 준법으로 넘어가면 준법에는 그 탭이 없다.)
+    const stillThere =
+      view === 'cust' ||
+      (view === 'note' && next.research) ||
+      (view === 'ai' && next.aiTab);
     if (next.defaultView) setView(next.defaultView);
-    else if (view === 'ai' && !next.aiTab) setView('cust');
+    else if (!stillThere) setView('cust');
   }
 
   const pending = useMemo(
@@ -326,6 +358,12 @@ export default function DashboardPage() {
   const roleQueue = useMemo(
     () => pending.filter((it) => !cfg.queueFilter || cfg.queueFilter(it)),
     [pending, cfg],
+  );
+  /** 지금 선택된 탭에서 실제로 보이는 건. 목록과 건수 표시가 **같은 값**을 써야 한다 —
+   *  따로 세면 필터 조건이 바뀔 때 한쪽만 고치고 넘어가기 쉽다. */
+  const shownQueue = useMemo(
+    () => roleQueue.filter((it) => filter === 'all' || it.type === filter),
+    [roleQueue, filter],
   );
   const roleCustomers = useMemo(
     () =>
@@ -431,9 +469,7 @@ export default function DashboardPage() {
     return (
       <div className="wrap">
         <header className="topbar">
-          <div className="brand">
-            AI PB 어시스턴트<small>상담 전 사실 확인</small>
-          </div>
+          <div className="brand">AI PB 어시스턴트</div>
         </header>
         <section className="card">
           <div className="card-head">
@@ -454,13 +490,7 @@ export default function DashboardPage() {
     );
   }
   if (!data) {
-    return (
-      <div className="wrap">
-        <div className="hint" style={{ padding: 40 }}>
-          불러오는 중…
-        </div>
-      </div>
-    );
+    return <div className="wrap"></div>;
   }
 
   const noteCount = roleQueue.filter((i) => i.type === 'note').length;
@@ -489,12 +519,15 @@ export default function DashboardPage() {
           {
             label: '담당 고객',
             value: String(roleCustomers.length),
-            breakdown: `위험 플래그 ${flagged}명`,
+            breakdown: `위험 플래그 ${flagged}`,
           },
           {
             label: '처리 대기',
             value: String(roleQueue.length),
             breakdown: `종목 노트 ${noteCount} · 고객 문의 ${chatCount}`,
+            // 큐가 다른 탭으로 갔으므로 이 타일이 그리로 가는 길이 된다 — 첫 화면에서
+            // "오늘 할 일"이 사라지지 않게 붙잡아 두는 유일한 고리다.
+            go: 'note' as const,
           },
         ]
       : [
@@ -511,13 +544,76 @@ export default function DashboardPage() {
           },
         ];
 
+  /* 처리 대기 카드 — 두 화면이 나눠 갖는다.
+     PB에게는 「노트·승인」 탭(만드는 것과 처리하는 것을 같이 두는 곳)에,
+     준법에게는 그 탭이 없으므로 원래 자리에 남긴다 — 준법이 큐를 잃으면
+     심의할 노트를 화면에서 찾을 방법이 아예 없어진다. */
+  const queueCard = (
+    <section className="card" aria-labelledby="q-title">
+      <div className="card-head">
+        <h2 id="q-title">처리 대기</h2>
+        {cfg.qScope && (
+          <span
+            className="hint"
+            style={{ color: 'var(--accent)', fontWeight: 600 }}
+          >
+            {cfg.qScope}
+          </span>
+        )}
+      </div>
+      <div className="tabs" role="group" aria-label="대기 항목 필터">
+        {(['all', 'note', 'chat'] as const).map((f) => (
+          <button
+            key={f}
+            className="tab"
+            aria-pressed={filter === f}
+            onClick={() => setFilter(f)}
+          >
+            {f === 'all' ? '전체' : f === 'note' ? '종목 노트' : '고객 문의'}
+          </button>
+        ))}
+        {/* 건수는 탭마다 붙이지 않고 **선택된 탭의 것 하나만** 낸다 — 세 개를 늘어놓으면
+                  지금 보고 있는 게 어느 수인지가 오히려 흐려진다.
+                  aria-live: 탭을 바꾸면 목록이 갈리는데 스크린리더에는 그 변화가 안 들린다. */}
+        <span className="tab-count" aria-live="polite">
+          {shownQueue.length}건
+        </span>
+      </div>
+      <div className="queue">
+        {shownQueue.map((it) => {
+          const [label, cls] = PILL[it.status] ?? [it.status, ''];
+          return (
+            <div className="qrow" key={`${it.type}-${it.id}`}>
+              <span className={`chip ${it.type}`}>
+                {it.type === 'note' ? '종목 노트' : '고객 문의'}
+              </span>
+              <span className="title">{it.title}</span>
+              {/* 담당자(it.who)는 적지 않는다 — 1인용 대시보드에서 이 큐의 건은 전부
+                        한 사람 몫이라 "미배정/관리자/박PB"가 구분하는 게 없다. 누가 무엇을
+                        했는지는 노트 모달의 확인·심의·발행 줄과 감사로그에 그대로 남는다
+                        (거기서는 PB와 준법이 갈리므로 실제로 다른 사람을 가리킨다). */}
+              <span className="meta">{ago(it.updated_at)} 경과</span>
+              <span className="spacer" />
+              <span className={`pill ${cls}`}>{label}</span>
+              <button className="btn" onClick={() => openItem(it)}>
+                검토
+              </button>
+            </div>
+          );
+        })}
+        {!shownQueue.length && (
+          <div className="hint" style={{ padding: '10px 4px' }}>
+            표시할 대기 건이 없습니다.
+          </div>
+        )}
+      </div>
+    </section>
+  );
+
   return (
     <div className="wrap">
       <header className="topbar">
-        <div className="brand">
-          AI PB 어시스턴트<small>상담 전 사실 확인</small>
-        </div>
-        <span className="env-pill">프로토타입</span>
+        <div className="brand">AI PB 어시스턴트</div>
         <div className="right">
           {/* 역할 전환이 아니라 **화면 전환**이다 — 이 대시보드의 사용자는 PB 한 명이고,
               준법은 이 화면을 같이 쓰는 사람이 아니라 승인 단계를 맡는 다른 사람이다.
@@ -533,37 +629,33 @@ export default function DashboardPage() {
                 aria-pressed={role === r}
                 onClick={() => applyRole(r)}
               >
-                {r === 'pb' ? '내 화면' : '준법 화면 (데모)'}
+                {r === 'pb' ? 'PB' : '준법'}
               </button>
             ))}
           </div>
-          <span className="asof">
-            담당 고객 {data.summary.customers_total}명 · 노트{' '}
-            {data.summary.notes_total}건
-          </span>
         </div>
       </header>
 
-      {/* 탭 줄은 **고를 게 둘 이상일 때만** 낸다. PB 화면에는 AI 평가 탭이 없어 "고객 관리"
-          하나만 남는데, 선택지가 하나뿐인 탭은 고르는 장치가 아니라 제목일 뿐이다.
-          준법 화면(aiTab)에서는 실제로 두 화면을 오가므로 그대로 필요하다. */}
-      {cfg.aiTab && (
+      {/* 탭 줄은 **고를 게 둘 이상일 때만** 낸다 — 선택지가 하나뿐인 탭은 고르는 장치가
+          아니라 제목일 뿐이다. PB는 고객 관리 + 종목 노트, 준법은 고객 관리 + AI 평가. */}
+      {tabs.length > 1 && (
         <nav className="cats" aria-label="대시보드 카테고리">
-          <button
-            className="cat"
-            aria-pressed={view === 'cust'}
-            onClick={() => setView('cust')}
-          >
-            고객 관리<span className="cat-sub">지금 처리할 일 · 고객 현황</span>
-          </button>
-          <button
-            className="cat"
-            aria-pressed={view === 'ai'}
-            onClick={() => setView('ai')}
-          >
-            AI 평가
-            <span className="cat-sub">신뢰도 · 컴플라이언스 · 활동 감사</span>
-          </button>
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              className="cat"
+              aria-pressed={view === t.id}
+              onClick={() => setView(t.id)}
+            >
+              {t.label}
+              {/* 다른 탭을 보는 동안에도 실행이 도는 걸 알려주는 유일한 신호다. */}
+              {t.id === 'note' && noteRunning && (
+                <span className="cat-run" title="종목 노트 생성 중">
+                  ●
+                </span>
+              )}
+            </button>
+          ))}
         </nav>
       )}
 
@@ -589,41 +681,50 @@ export default function DashboardPage() {
                 마지막 실행 {hhmm(data.summary.today.last_run)}
               </span>
             )}
-            <span className="src live">감사로그 실집계</span>
           </div>
         </details>
 
         {/* 오늘 규모(내 담당 고객·내 처리 대기) → 바로 만들 수 있는 것(종목 노트) 순서다.
             "AI가 오늘 한 일" 바로 아래에 오늘의 수치와 조작이 붙고, 그 아래로 읽을거리
             (브리핑·처리 대기·고객)가 이어진다. */}
-        <div className="tile-row">
-          {tiles.map((t) => (
-            <div className="tile" key={t.label}>
-              <div className="label">{t.label}</div>
-              <div className="value">{t.value}</div>
-              {'gate' in t && t.gate && (
-                <div className="sub">
-                  <GateMini data={data.summary.gate_blocks_daily} />
+        {/* 탭이 둘인 화면(준법)에서는 AI 평가 탭과 **같은 열 경계**를 쓴다 — 탭을 오갈 때
+            좌우를 가르는 이음매가 제자리에 있어야 같은 대시보드로 읽힌다(그전엔 612/612 ↔
+            816/408로 200px씩 튀었다). PB 화면은 AI 평가 탭이 없어 균등 2열 그대로다. */}
+        <div className={`tile-row${cfg.aiTab ? ' aligned' : ''}`}>
+          {tiles.map((t) => {
+            // 갈 곳이 있는 타일은 버튼이다 — div에 onClick만 얹으면 키보드로 못 누른다.
+            const go = 'go' in t ? t.go : undefined;
+            const Tag = go ? 'button' : 'div';
+            return (
+              <Tag
+                className={`tile${go ? ' clickable' : ''}`}
+                key={t.label}
+                {...(go
+                  ? { type: 'button' as const, onClick: () => setView(go) }
+                  : {})}
+              >
+                <div className="label">
+                  {t.label}
+                  {go && <span className="tile-go">→</span>}
                 </div>
-              )}
-              {/* 설명줄이 없는 타일은 빈 칸을 남기지 않는다(빈 div도 자리를 차지한다). */}
-              {t.breakdown && <div className="breakdown">{t.breakdown}</div>}
-            </div>
-          ))}
+                <div className="value">{t.value}</div>
+                {'gate' in t && t.gate && (
+                  <div className="sub">
+                    <GateMini data={data.summary.gate_blocks_daily} />
+                  </div>
+                )}
+                {/* 설명줄이 없는 타일은 빈 칸을 남기지 않는다(빈 div도 자리를 차지한다). */}
+                {t.breakdown && <div className="breakdown">{t.breakdown}</div>}
+              </Tag>
+            );
+          })}
         </div>
-
-        {cfg.research && (
-          <ResearchCard actor={ACTOR[role]} onNoteCreated={() => void load()} />
-        )}
 
         {/* 상담 전 브리핑 (F2) — 오늘 시장 + 내 고객 보유 상위 종목의 밤사이 변화.
             선정 기준은 내 담당 고객의 보유 수다(backend pb_watchlist) — 배지가 그 근거를 적는다. */}
         <section className="card" aria-labelledby="b-title" hidden={!cfg.brief}>
           <div className="card-head">
-            <h2 id="b-title">상담 전 브리핑</h2>
-            <span className="hint">
-              내 고객 보유 상위 종목 · 전일 공시 · 밤사이 뉴스 · 지연시세
-            </span>
+            <h2 id="b-title">브리핑</h2>
             {data.brief && (
               <span className="hint" style={{ color: 'var(--muted)' }}>
                 {data.brief.brief_date} 생성
@@ -693,7 +794,7 @@ export default function DashboardPage() {
                           className="bhold"
                           title="브리프 종목 선정 기준 = 내 담당 고객의 보유 수"
                         >
-                          고객 {holders.get(it.stock_code) ?? 0}명 보유
+                          {holders.get(it.stock_code) ?? 0}명 보유
                         </span>
                       </div>
                       {q ? (
@@ -751,71 +852,8 @@ export default function DashboardPage() {
           )}
         </section>
 
-        {/* 검토·승인 대기 */}
-        <section className="card" aria-labelledby="q-title">
-          <div className="card-head">
-            <h2 id="q-title">처리 대기</h2>
-            {cfg.qScope && (
-              <span
-                className="hint"
-                style={{ color: 'var(--accent)', fontWeight: 600 }}
-              >
-                {cfg.qScope}
-              </span>
-            )}
-          </div>
-          <div className="tabs" role="group" aria-label="대기 항목 필터">
-            {(['all', 'note', 'chat'] as const).map((f) => (
-              <button
-                key={f}
-                className="tab"
-                aria-pressed={filter === f}
-                onClick={() => setFilter(f)}
-              >
-                {f === 'all' ? (
-                  <>
-                    전체 <span>{roleQueue.length}</span>
-                  </>
-                ) : f === 'note' ? (
-                  '종목 노트'
-                ) : (
-                  '고객 문의'
-                )}
-              </button>
-            ))}
-          </div>
-          <div className="queue">
-            {roleQueue
-              .filter((it) => filter === 'all' || it.type === filter)
-              .map((it) => {
-                const [label, cls] = PILL[it.status] ?? [it.status, ''];
-                return (
-                  <div className="qrow" key={`${it.type}-${it.id}`}>
-                    <span className={`chip ${it.type}`}>
-                      {it.type === 'note' ? '종목 노트' : '고객 문의'}
-                    </span>
-                    <span className="title">{it.title}</span>
-                    {/* 담당자(it.who)는 적지 않는다 — 1인용 대시보드에서 이 큐의 건은 전부
-                      한 사람 몫이라 "미배정/관리자/박PB"가 구분하는 게 없다. 누가 무엇을
-                      했는지는 노트 모달의 확인·심의·발행 줄과 감사로그에 그대로 남는다
-                      (거기서는 PB와 준법이 갈리므로 실제로 다른 사람을 가리킨다). */}
-                    <span className="meta">{ago(it.updated_at)} 경과</span>
-                    <span className="spacer" />
-                    <span className={`pill ${cls}`}>{label}</span>
-                    <button className="btn" onClick={() => openItem(it)}>
-                      검토
-                    </button>
-                  </div>
-                );
-              })}
-            {!roleQueue.filter((it) => filter === 'all' || it.type === filter)
-              .length && (
-              <div className="hint" style={{ padding: '10px 4px' }}>
-                표시할 대기 건이 없습니다.
-              </div>
-            )}
-          </div>
-        </section>
+        {/* 처리 대기는 노트·승인 탭으로 옮겼다(PB). 준법은 그 탭이 없어 여기 남는다. */}
+        {!cfg.research && queueCard}
 
         {/* 고객 포트폴리오 */}
         <section className="card" aria-labelledby="c-title">
@@ -859,7 +897,6 @@ export default function DashboardPage() {
                   <div className="v">
                     {flagged}
                     <span className="unit">건</span>{' '}
-                    <span className="flag">▲</span>
                   </div>
                 </div>
               </div>
@@ -1033,14 +1070,28 @@ export default function DashboardPage() {
         </section>
       </div>
 
-      {/* ══════════ 탭 2 · AI 평가 ══════════ */}
+      {/* ══════════ 탭 2 · 종목 노트 (F3) ══════════
+          `hidden`으로 감출 뿐 **언마운트하지 않는다** — 실행이 1~2분 걸리는데 언마운트되면
+          ResearchCard가 스트림을 닫아(§ResearchCard의 cleanup) 노트가 안 나온다.
+          그래서 생성을 걸어두고 고객 관리 탭으로 건너가도 계속 돈다. */}
+      {cfg.research && (
+        <div className="view stack" hidden={view !== 'note'}>
+          <ResearchCard
+            actor={ACTOR[role]}
+            onNoteCreated={() => void load()}
+            onRunningChange={setNoteRunning}
+          />
+          {queueCard}
+        </div>
+      )}
+
+      {/* ══════════ 탭 3 · AI 평가 ══════════ */}
       <div className="view" hidden={view !== 'ai'}>
         <div className="grid">
           <div className="col">
             <section className="card" aria-labelledby="tr-title">
               <div className="card-head">
-                <h2 id="tr-title">AI 신뢰도</h2>
-                <span className="hint">가드레일이 실제로 작동하고 있는지</span>
+                <h2 id="tr-title">AI 신뢰도</h2>아{' '}
                 <span className="src live">DB 실데이터</span>
               </div>
               <div className="trust">

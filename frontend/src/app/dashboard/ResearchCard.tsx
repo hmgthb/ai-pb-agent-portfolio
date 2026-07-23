@@ -75,14 +75,25 @@ const yoy = (cur: string, prev: string): string | null => {
 
 export default function ResearchCard({
   onNoteCreated,
+  onRunningChange,
   actor,
 }: {
   onNoteCreated: () => void;
+  /** 실행 중인지를 밖에 알린다 — 이 카드는 전용 탭에 있어서, 다른 탭을 보고 있으면
+   *  1~2분짜리 실행이 도는지 알 길이 없다. 탭 라벨에 표시를 띄우기 위한 것. */
+  onRunningChange?: (running: boolean) => void;
   /** 이 노트를 만든 사람(목 로그인) — 처리 대기에서 자기 노트를 찾는 축이 된다 */
   actor: string;
 }) {
   const [code, setCode] = useState('');
   const [running, setRunning] = useState(false);
+  /** setRunning과 항상 짝으로 부른다 — 한쪽만 바꾸면 탭 표시가 실제 상태와 갈라진다.
+   *  (effect로 running을 감시하지 않는 이유: 부모 setState를 effect에서 부르면
+   *   렌더가 한 번 더 도는데, 전이 지점이 세 곳뿐이라 직접 부르는 게 정확하다.) */
+  const setRun = (v: boolean) => {
+    setRunning(v);
+    onRunningChange?.(v);
+  };
   const [steps, setSteps] = useState<Steps>(IDLE);
   const [corp, setCorp] = useState('');
   // 부분결과 점진 렌더(W3) — 먼저 끝난 에이전트의 결과부터 도착 순서대로 쌓인다.
@@ -136,7 +147,7 @@ export default function ResearchCard({
       setMsg('종목코드는 6자리 숫자여야 합니다.');
       return;
     }
-    setRunning(true);
+    setRun(true);
     setStarted(true);
     setSteps(IDLE);
     setCorp('');
@@ -204,7 +215,7 @@ export default function ResearchCard({
     es.addEventListener('done', (e) => {
       closedCleanly = true;
       es.close();
-      setRunning(false);
+      setRun(false);
       const d: DoneEvent = JSON.parse((e as MessageEvent).data);
       setOutcome(d.outcome);
       // 스트림이 끝났으면 아무 단계도 더 이상 돌고 있지 않다. 'run'인 채로 두면 아직
@@ -233,7 +244,7 @@ export default function ResearchCard({
 
     es.onerror = () => {
       es.close();
-      setRunning(false);
+      setRun(false);
       // done까지 정상 수신한 뒤 닫히면서 나는 onerror는 실패가 아니다.
       if (!noteArrived && !closedCleanly) {
         setFailed(
