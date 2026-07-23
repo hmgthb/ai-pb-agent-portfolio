@@ -457,13 +457,19 @@ tr:focus-visible,
   display: grid;
   grid-template-columns: 2fr 1fr;
   gap: 16px;
-  align-items: start;
+  /* stretch(기본값) — 두 열이 같은 높이가 되어 아랫선이 맞는다.
+     start였을 때는 각 열이 제 내용만큼만 차지해서 짧은 쪽이 위에서 끝났다. */
 }
 .col {
   display: flex;
   flex-direction: column;
   gap: 16px;
   min-width: 0;
+}
+/* 카드가 하나뿐인 열은 그 카드가 열 높이를 채운다 — 옆 열과 아랫선을 맞추기 위한 것.
+   여러 장이 든 열에는 걸지 않는다(어느 한 장만 늘어나면 오히려 어긋나 보인다). */
+.col > .card:only-child {
+  flex: 1;
 }
 .stack > * + * {
   margin-top: 16px;
@@ -1812,16 +1818,7 @@ tbody tr[aria-selected='true'] {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 16px;
 }
-/* 고객 관리 / AI 평가 두 탭이 함께 있는 화면(준법)에서만 붙는다. AI 평가 탭의 .grid와
-   같은 2fr 1fr을 써서 **탭을 바꿔도 좌우 이음매가 같은 x에 남게** 한다. */
-.tile-row.aligned {
-  grid-template-columns: 2fr 1fr;
-}
-/* 접히는 지점도 .grid와 같이 간다 — 한쪽만 접히면 좁은 화면에서 다시 어긋난다.
-   ⚠️ 이 미디어쿼리는 위 규칙 **바로 뒤**에 있어야 한다. 파일 앞쪽(1080px 블록)에 두면
-   같은 특이도(0,2,0)라 뒤에 오는 기본 규칙이 이겨서 조용히 안 먹는다 — 실제로 그랬다. */
-@media (max-width: 1080px) {
-  .tile-row.aligned {
-    grid-template-columns: 1fr;
-  }
-}
+/* 한때 준법 화면에서만 `.tile-row.aligned`(2fr 1fr)를 붙여 AI 평가 탭의 사이드바
+   격자와 이음매를 맞췄다. 뺀 이유: 타일 두 장은 무게가 같은 지표인데 폭이 다르면
+   왼쪽이 더 중요한 것처럼 읽힌다. 탭을 오갈 때 이음매가 어긋나는 건 감수한다
+   (원래 "어긋나 보인다"의 진짜 원인은 스크롤바였고, 그건 위 scrollbar-gutter로 잡았다). */

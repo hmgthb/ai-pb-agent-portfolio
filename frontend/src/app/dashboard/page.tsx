@@ -84,7 +84,9 @@ const ROLES: Record<
     portfolio: false,
     research: false,
     brief: false,
-    defaultView: 'ai',
+    // 준법도 처리할 일(심의 대기 큐)부터 본다 — AI 평가는 지표를 훑는 화면이지
+    // 오늘 손댈 것을 알려주지 않는다.
+    defaultView: 'cust',
     queueFilter: (it) => it.type === 'note' && it.status === 'deliberation',
     custFilter: null,
     qScope: '심의 단계 건만 표시 중',
@@ -687,10 +689,10 @@ export default function DashboardPage() {
         {/* 오늘 규모(내 담당 고객·내 처리 대기) → 바로 만들 수 있는 것(종목 노트) 순서다.
             "AI가 오늘 한 일" 바로 아래에 오늘의 수치와 조작이 붙고, 그 아래로 읽을거리
             (브리핑·처리 대기·고객)가 이어진다. */}
-        {/* 탭이 둘인 화면(준법)에서는 AI 평가 탭과 **같은 열 경계**를 쓴다 — 탭을 오갈 때
-            좌우를 가르는 이음매가 제자리에 있어야 같은 대시보드로 읽힌다(그전엔 612/612 ↔
-            816/408로 200px씩 튀었다). PB 화면은 AI 평가 탭이 없어 균등 2열 그대로다. */}
-        <div className={`tile-row${cfg.aiTab ? ' aligned' : ''}`}>
+        {/* 타일은 어느 화면에서나 균등 2열이다. 한때 준법 화면에서만 AI 평가 탭의
+            사이드바 격자(2fr 1fr)에 맞췄는데, 두 타일의 무게가 같은데 폭이 다르면
+            왼쪽이 더 중요한 것처럼 읽힌다 — 탭 사이 이음매보다 이쪽이 우선이다. */}
+        <div className="tile-row">
           {tiles.map((t) => {
             // 갈 곳이 있는 타일은 버튼이다 — div에 onClick만 얹으면 키보드로 못 누른다.
             const go = 'go' in t ? t.go : undefined;
@@ -1086,12 +1088,12 @@ export default function DashboardPage() {
       )}
 
       {/* ══════════ 탭 3 · AI 평가 ══════════ */}
-      <div className="view" hidden={view !== 'ai'}>
+      <div className="view stack" hidden={view !== 'ai'}>
         <div className="grid">
           <div className="col">
             <section className="card" aria-labelledby="tr-title">
               <div className="card-head">
-                <h2 id="tr-title">AI 신뢰도</h2>아{' '}
+                <h2 id="tr-title">AI 신뢰도</h2>
                 <span className="src live">DB 실데이터</span>
               </div>
               <div className="trust">
@@ -1172,7 +1174,9 @@ export default function DashboardPage() {
               </div>
             </section>
 
-            <div className="charts2" style={{ marginTop: 16 }}>
+            {/* 간격은 바깥 .col의 gap(16px)이 준다 — marginTop을 또 주면 이 줄만
+                32px로 벌어져 고객 관리 탭의 카드 간격(.stack, 16px)과 어긋난다. */}
+            <div className="charts2">
               <section className="card chart-box" aria-labelledby="t2">
                 <div className="card-head">
                   <h2 id="t2">
@@ -1259,34 +1263,36 @@ export default function DashboardPage() {
                 )}
               </div>
             </section>
-
-            <section className="card" aria-labelledby="a-title">
-              <div className="card-head">
-                <h2 id="a-title">
-                  감사로그 <span className="hint">append-only · 최근 12건</span>
-                </h2>
-                <span className="src live">DB 실데이터</span>
-              </div>
-              <div className="audit">
-                {data.audit.slice(0, 12).map((a) => (
-                  <div className="aitem" key={a.id}>
-                    <span className="ats">{hhmm(a.ts)}</span>
-                    <span className="aev">{a.event_type}</span>
-                    <span className="adet">
-                      {[
-                        a.note_id && `노트 #${a.note_id}`,
-                        a.actor && `actor: ${a.actor}`,
-                        detailStr(a.detail),
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </section>
           </div>
         </div>
+
+        {/* 감사로그는 좁은 사이드바에 두면 event_type·detail이 잘린다 —
+            전폭으로 내려 한 줄에 담기게 한다. */}
+        <section className="card" aria-labelledby="a-title">
+          <div className="card-head">
+            <h2 id="a-title">
+              감사로그 <span className="hint">append-only · 최근 12건</span>
+            </h2>
+            <span className="src live">DB 실데이터</span>
+          </div>
+          <div className="audit">
+            {data.audit.slice(0, 12).map((a) => (
+              <div className="aitem" key={a.id}>
+                <span className="ats">{hhmm(a.ts)}</span>
+                <span className="aev">{a.event_type}</span>
+                <span className="adet">
+                  {[
+                    a.note_id && `노트 #${a.note_id}`,
+                    a.actor && `actor: ${a.actor}`,
+                    detailStr(a.detail),
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
 
       {/* ── 전체 고지 (맨 아래) ──────────────────────────────
