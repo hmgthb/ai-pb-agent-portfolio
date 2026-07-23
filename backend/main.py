@@ -1063,7 +1063,7 @@ async def dashboard_audit(limit: int = Query(30, ge=1, le=200)):
     ]
 
 
-# --- F2 모닝 브리프 --------------------------------------------------------
+# --- F2 상담 전 브리핑 --------------------------------------------------------
 # 새 에이전트 0개: 이미 있는 a1(공시)·a4(뉴스)를 그대로 재사용하고, 시세는 O가 krx MCP
 # 도구로 직접 조회한다. 에이전트가 쓴 산문이 아니라 **도구 결과**에서 구조화 데이터를
 # 뽑아 backend가 카드로 조립하므로(brief.assemble) 출처가 구조적으로 보장된다.
@@ -1108,7 +1108,8 @@ def _recent(rows: list[dict], key: str, limit: int) -> list[dict]:
     return sorted(rows, key=lambda r: r.get(key) or "", reverse=True)[:limit]
 
 BRIEF_SYSTEM_PROMPT = (
-    "너는 모닝 브리프 파이프라인의 오케스트레이터(O)다. 주어진 각 종목에 대해 아래를 "
+    "너는 PB의 '상담 전 브리핑' 파이프라인의 오케스트레이터(O)다. 종목들은 담당 고객이 "
+    "실제로 보유한 것이고, PB가 고객을 만나기 전에 훑는 화면에 올라간다. 각 종목에 대해 아래를 "
     "수집해라. 요약문이나 의견을 쓸 필요는 없다 — 도구를 호출해 데이터를 가져오는 것이 "
     "네 일이고, 문서 작성은 백엔드가 한다.\n\n"
     "종목마다:\n"
@@ -1182,7 +1183,7 @@ async def _collect_brief_data(stock_codes: list[str]) -> tuple[dict, dict, dict]
         system_prompt=BRIEF_SYSTEM_PROMPT,
     )
     prompt = (
-        "다음 종목들의 모닝 브리프 데이터를 수집해줘: " + ", ".join(stock_codes)
+        "다음 종목들의 상담 전 브리핑 데이터를 수집해줘: " + ", ".join(stock_codes)
     )
 
     quotes: dict[str, dict] = {}
@@ -1246,7 +1247,7 @@ async def _collect_brief_data(stock_codes: list[str]) -> tuple[dict, dict, dict]
 
 @app.post("/api/briefs/run")
 async def run_brief(body: BriefRunBody):
-    """모닝 브리프 배치 실행. 스케줄러 대신 이 엔드포인트를 cron이 때리면 된다.
+    """상담 전 브리핑 배치 실행. 스케줄러 대신 이 엔드포인트를 cron이 때리면 된다.
     # ponytail: 스케줄러는 넣지 않았다 — 배치 트리거가 하나 있으면 cron/CI로 충분하고,
     # 앱 안에 스케줄러를 두면 컨테이너 재시작·중복 실행을 직접 관리해야 한다."""
     codes = body.stock_codes or await pb_watchlist()

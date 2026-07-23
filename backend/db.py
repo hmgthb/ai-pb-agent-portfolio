@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     detail JSONB NOT NULL DEFAULT '{}'
 );
 
--- F2 모닝 브리프. 노트(검토→심의→발행)와 달리 내부 참고용이라 승인 흐름이 없고,
+-- F2 상담 전 브리핑. 노트(검토→심의→발행)와 달리 내부 참고용이라 승인 흐름이 없고,
 -- 배치 실행마다 한 행씩 쌓인다.
 CREATE TABLE IF NOT EXISTS briefs (
     id SERIAL PRIMARY KEY,

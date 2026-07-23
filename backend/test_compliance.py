@@ -68,7 +68,7 @@ def test_unsourced_sentence_blocks():
 
 
 def test_delayed_quote_notice():
-    # 시세를 실었는데 지연시세 고지가 없으면 막힌다 (F2 모닝 브리프 대비)
+    # 시세를 실었는데 지연시세 고지가 없으면 막힌다 (F2 상담 전 브리핑 대비)
     v = _check("현재 주가는 7만원이다.")
     assert any("지연시세" in x for x in v), v
 
