@@ -4,7 +4,7 @@
  *
  *  **대상 사용자 = PB**(2026-07-22 확정). 이 화면은 PB가 고객을 만나기 전에 여는 화면이고,
  *  AI는 PB를 대신하지 않는다 — 출처 있는 사실을 모아줄 뿐, 고객에게 나가는 말은 사람이 쓴다.
- *  그래서 기본 역할이 PB이고, 첫 화면에 "오늘 시장 → 내 고객 종목 → 고객별 상담 준비" 순으로
+ *  그래서 기본 역할이 PB이고, 첫 화면에 "오늘 시장 → 고객 보유 종목 → 고객별 상담 준비" 순으로
  *  놓인다(관리자·준법 역할은 감독용 뷰로 유지).
  *
  *  시안과 달라진 점:
@@ -22,9 +22,9 @@ import F1Chat from './F1Chat';
 import ResearchCard from './ResearchCard';
 import { ChatModal, NoteModal } from './ReviewModal';
 import {
-  MY_PB, PILL, RISK,
+  ACTOR, MY_PB, PILL, RISK,
   type AgentCalls, type Brief, type Customer, type DashboardAudit,
-  type NoteDetail, type QueueChat, type QueueItem, type Role, type Summary,
+  type NoteDetail, type NoteIndex, type QueueChat, type QueueItem, type Role, type Summary,
 } from './types';
 
 /* ── 역할(목 로그인)별 화면 구성 ──────────────────────────── */
@@ -43,11 +43,14 @@ const ROLES: Record<Role, {
   },
   // PB도 팩트 노트를 **생성**할 수 있다(상담 준비 자료). 검토·심의·발행은 여전히
   // 리서치·준법 권한이다 — 만드는 것과 내보내는 것을 분리하는 게 이 제품의 핵심이다.
+  //
+  // 그래서 노트를 담당자(who=검토자·심의자)로만 거르면 PB는 **자기가 만든 노트를 영영
+  // 못 본다** — 만들 수는 있는데 담당자가 될 수는 없기 때문이다. 생성자(created_by)로 건다.
   pb: {
     aiTab: false, portfolio: true, research: true, defaultView: 'cust',
-    queueFilter: (it) => it.type === 'chat' && it.who === MY_PB,
+    queueFilter: (it) => (it.type === 'chat' ? it.who : it.created_by) === MY_PB,
     custFilter: (c) => c.pb === MY_PB,
-    qScope: `${MY_PB}(나) 담당 건만 표시 중`,
+    qScope: `${MY_PB}(나) 담당·생성 건만 표시 중`,
   },
   comp: {
     aiTab: true, portfolio: false, research: false, defaultView: 'ai',
@@ -61,7 +64,7 @@ const ROLES: Record<Role, {
  *  해주는지 알 수 없다. 코드는 뒤에 작게 붙여 문서·발표와 대응이 유지되게 한다. */
 const FEATURES = [
   { id: 'F1', name: '종목 즉답', sub: '상담 중 질문에 출처와 함께', on: false },
-  { id: 'F2', name: '상담 전 브리핑', sub: '내 고객 종목의 밤사이 변화', on: true },
+  { id: 'F2', name: '상담 전 브리핑', sub: '고객 보유 종목의 밤사이 변화', on: true },
   { id: 'F3', name: '종목 팩트 노트', sub: '실적·공시를 출처와 함께 정리', on: true },
   { id: 'F4', name: '피어·섹터 비교', sub: '"경쟁사 대비" 질문 대응', on: false },
   { id: 'F5', name: '규정 확인', sub: '상담 화법·고지 의무', on: false },
@@ -202,21 +205,25 @@ export default function DashboardPage() {
 
   const load = useCallback(async () => {
     try {
-      const [customers, queue, summary, audit, agents, sessions] = await Promise.all([
+      const [customers, queue, noteIndex, summary, audit, agents, sessions] = await Promise.all([
         api<Customer[]>('/api/customers'),
         api<QueueItem[]>('/api/dashboard/queue'),
+        api<NoteIndex[]>('/api/notes'),
         api<Summary>('/api/dashboard/summary'),
         api<DashboardAudit[]>('/api/dashboard/audit?limit=200'),
         api<AgentCalls[]>('/api/dashboard/agents'),
         api<Session[]>('/api/sessions'),
       ]);
-      // 노트 본문·감사로그는 큐에 없으므로 건별 상세를 따로 받는다.
+      // 노트 본문·감사로그는 목록에 없으므로 건별 상세를 따로 받는다.
+      // 목록을 큐가 아니라 /api/notes에서 받는 이유: 큐는 발행분을 빼기 때문에, 큐를 쓰면
+      // **발행된 노트(= PB가 상담에 써도 되는 유일한 등급)가 상담 준비 메모에서 사라진다.**
       const details = await Promise.all(
-        queue.filter((i): i is Extract<QueueItem, { type: 'note' }> => i.type === 'note')
-          .map((n) => api<NoteDetail>(`/api/notes/${n.id}`).catch(() => null)),
+        noteIndex.map((n) => api<NoteDetail>(`/api/notes/${n.id}`).catch(() => null)),
       );
+      // 종목별 최신 1건. noteIndex는 id 내림차순이므로 먼저 담긴 것이 최신이다
+      // (덮어쓰면 같은 종목의 옛 노트가 이기고, 그게 예전 동작이었다).
       const notes: Record<string, NoteDetail> = {};
-      details.forEach((d) => { if (d) notes[d.stock_code] = d; });
+      details.forEach((d) => { if (d && !notes[d.stock_code]) notes[d.stock_code] = d; });
       // 브리프는 아직 없을 수 있다(404) — 그건 오류가 아니라 상태다.
       const brief = await api<Brief>('/api/briefs/latest').catch(() => null);
       setData({ customers, queue, notes, summary, audit, agents, sessions, brief });
@@ -258,15 +265,18 @@ export default function DashboardPage() {
     [roleCustomers, search],
   );
 
-  /* 종목코드 → 이 종목을 보유한 (내 담당) 고객 수. 브리프가 "왜 이 종목인가"를 화면에서
-     스스로 설명하게 만든다 — 종목 선정 기준이 고객 포트폴리오이기 때문이다. */
-  const holders = useMemo(() => {
+  /* 종목코드 → 이 종목을 보유한 고객 수. 브리프가 "왜 이 종목인가"를 화면에서 스스로
+     설명하게 만든다 — 종목 선정 기준이 고객 포트폴리오이기 때문이다.
+     두 벌을 만든다: 선정 근거는 **전사 전체**(backend pb_watchlist가 그렇게 고른다)이고,
+     PB에게 필요한 건 그중 **내 담당 몇 명**인가다. 예전엔 역할로 거른 수 하나만 보여줘서,
+     전사 기준으로 뽑은 종목이 "내 고객 상위"처럼 읽혔다. */
+  const countHolders = (list: Customer[]) => {
     const m = new Map<string, number>();
-    roleCustomers.forEach((c) =>
-      c.holdings.forEach((h) => m.set(h.code, (m.get(h.code) ?? 0) + 1)),
-    );
+    list.forEach((c) => c.holdings.forEach((h) => m.set(h.code, (m.get(h.code) ?? 0) + 1)));
     return m;
-  }, [roleCustomers]);
+  };
+  const holders = useMemo(() => countHolders(data?.customers ?? []), [data]);
+  const myHolders = useMemo(() => countHolders(roleCustomers), [roleCustomers]);
   const selected = useMemo(
     () => visibleCustomers.find((c) => c.id === selectedId) ?? visibleCustomers[0] ?? null,
     [visibleCustomers, selectedId],
@@ -442,11 +452,12 @@ export default function DashboardPage() {
           <span className="src live">감사로그 실집계</span>
         </div>
 
-        {/* 상담 전 브리핑 (F2) — 오늘 시장 + 내 고객 보유 종목의 밤사이 변화 */}
+        {/* 상담 전 브리핑 (F2) — 오늘 시장 + 고객 보유 상위 종목의 밤사이 변화.
+            선정은 전사 기준이고(backend pb_watchlist), 카드 배지가 "그중 내 담당 N명"을 말한다. */}
         <section className="card" aria-labelledby="b-title">
           <div className="card-head">
             <h2 id="b-title">상담 전 브리핑</h2>
-            <span className="hint">내 고객 보유 상위 종목 · 전일 공시 · 밤사이 뉴스 · 지연시세</span>
+            <span className="hint">전사 고객 보유 상위 종목 · 전일 공시 · 밤사이 뉴스 · 지연시세</span>
             {data.brief && <span className="hint" style={{ color: 'var(--muted)' }}>{data.brief.brief_date} 생성</span>}
             <span className="src live">DB 실데이터</span>
           </div>
@@ -493,8 +504,18 @@ export default function DashboardPage() {
                         <span className="bname">{it.corp_name}</span>
                         <span className="bcode">{it.stock_code}</span>
                         {!!holders.get(it.stock_code) && (
-                          <span className="bhold" title="이 종목을 보유한 고객 수 — 브리프 종목 선정 기준">
+                          <span
+                            className="bhold"
+                            title="브리프 종목 선정 기준 = 전사 보유 고객 수 (PB별로 따로 뽑지 않는다)"
+                          >
                             보유 고객 {holders.get(it.stock_code)}명
+                            {/* PB로 보고 있으면 "그중 내 담당 몇 명"까지 — 0명이면 0명이라고
+                                말한다. 이 카드를 건너뛰어도 되는지는 그 숫자가 결정한다. */}
+                            {cfg.custFilter && (
+                              <span className="bhold-mine">
+                                {' '}· 내 담당 {myHolders.get(it.stock_code) ?? 0}명
+                              </span>
+                            )}
                           </span>
                         )}
                       </div>
@@ -547,7 +568,7 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        {cfg.research && <ResearchCard onNoteCreated={() => void load()} />}
+        {cfg.research && <ResearchCard actor={ACTOR[role]} onNoteCreated={() => void load()} />}
 
         {/* 검토·승인 대기 */}
         <section className="card" aria-labelledby="q-title">

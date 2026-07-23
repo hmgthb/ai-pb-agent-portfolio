@@ -24,8 +24,10 @@ export async function apiPost(path: string, body: unknown): Promise<PostResult> 
   return { ok: r.ok, status: r.status, body: await r.json().catch(() => null) };
 }
 
-export const streamUrl = (stockCode: string) =>
-  `${BASE}/api/research/stream?stock_code=${encodeURIComponent(stockCode)}`;
+/** `actor`는 목 로그인 사용자 — 노트의 생성자로 남아 "내가 만든 노트"를 찾을 수 있게 한다. */
+export const streamUrl = (stockCode: string, actor?: string) =>
+  `${BASE}/api/research/stream?stock_code=${encodeURIComponent(stockCode)}` +
+  (actor ? `&actor=${encodeURIComponent(actor)}` : '');
 
 export const chatStreamUrl = (q: string, session?: string | null) =>
   `${BASE}/api/chat/stream?q=${encodeURIComponent(q)}` +

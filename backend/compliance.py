@@ -107,11 +107,24 @@ def input_guard(text: str) -> list[str]:
     return violations
 
 
-def check_note(content_md: str, sentences: list[dict], feature: str = "F3") -> list[str]:
+def check_note(
+    content_md: str,
+    sentences: list[dict],
+    feature: str = "F3",
+    acked_indices: set[int] | None = None,
+) -> list[str]:
     """위반 사유 목록을 반환한다. 빈 리스트면 게이트 통과.
 
     feature: 기능 코드(NOTICES의 키). 기능마다 요구되는 고지문구가 다르므로 필수다 —
     기본값 F3는 기존 노트 경로가 그대로 동작하도록 둔 것이다.
+
+    acked_indices: 준법이 **사유를 적어 확인한** 문장의 인덱스(F3 심의 단계).
+    각주를 붙일 수 없는 문장(해석·전망, 고지·면책, 데이터 설명)이 실제로 있기 때문에,
+    게이트가 그걸 전부 잠그면 사람이 열 방법이 없어진다 — 그래서 '누가 왜 확인했는가'가
+    기록된 문장만 미인용 집계에서 뺀다(판단은 사람, 근거는 감사로그).
+
+    ⚠️ **면제되는 건 미인용 규칙 하나뿐이다.** 투자권유·광고성 표현, MNPI 패턴,
+    지연시세 고지 누락은 확인으로 풀 수 없다 — 그건 문장을 고쳐야 하는 위반이다.
     """
     violations: list[str] = []
 
@@ -142,9 +155,15 @@ def check_note(content_md: str, sentences: list[dict], feature: str = "F3") -> l
     # **사실 주장**(=날조 위험)만 잡고, 규칙상 각주가 없는 해석 문장은 위반으로 세지 않는다.
     # F3 노트는 발행 전 사람 검토가 있어 해석 문장까지 게이트에 올려 판단하게 둔다(§1-1 설계).
     if feature == "F1":
+        # F1은 발행 단계가 없어 확인해 줄 사람도 없다 — acked_indices를 받지 않는다.
         unsourced = [s for s in sentences if citations.is_claim(s) and s["source"] is None]
     else:
-        unsourced = [s for s in sentences if citations.is_body(s) and s["source"] is None]
+        acked = acked_indices or set()
+        unsourced = [
+            s
+            for i, s in enumerate(sentences)
+            if citations.is_body(s) and s["source"] is None and i not in acked
+        ]
     if unsourced:
         preview = unsourced[0]["text"][:40]
         violations.append(

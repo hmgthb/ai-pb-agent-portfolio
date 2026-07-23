@@ -322,7 +322,9 @@ async def _post_tool_use_hook(input_data, tool_use_id, context):
 
 
 @app.get("/api/research/stream")
-async def research_stream(stock_code: str = Query(...)):
+async def research_stream(stock_code: str = Query(...), actor: str | None = Query(None)):
+    """F3 노트 생성. `actor`는 화면의 목 로그인이 알려주는 실행자다 —
+    노트의 `created_by`와 감사로그에 그대로 남아, 만든 사람이 자기 노트를 찾을 수 있다."""
     if not re.fullmatch(r"\d{6}", stock_code):
         raise HTTPException(400, "stock_code는 6자리 숫자여야 합니다.")
 
@@ -548,12 +550,14 @@ async def research_stream(stock_code: str = Query(...)):
             sentences = citations.parse_sentences(raw_note, dart_sources, news_sources)
             content_md = compliance.apply_notice(raw_note, "F3")
             violations = compliance.check_note(content_md, sentences, "F3")
-            note_id = await db.create_note(stock_code, corp_name, content_md, sentences, violations)
+            note_id = await db.create_note(
+                stock_code, corp_name, content_md, sentences, violations, actor
+            )
             note_created = True
             await db.append_audit(
                 "note_created",
                 note_id,
-                None,
+                actor,
                 {"violations": violations, "unsourced": citations.unsourced_count(sentences)},
             )
             yield _sse(
@@ -792,9 +796,39 @@ class ActorBody(BaseModel):
     actor: str
 
 
+class AckBody(BaseModel):
+    """미인용 문장 확인. reason=None이면 확인을 되돌린다."""
+
+    actor: str
+    index: int
+    reason: str | None = None
+
+
 class SessionDecisionBody(BaseModel):
     actor: str
     reason: str | None = None
+
+
+# 미인용 문장을 확인할 때 고를 수 있는 사유. 자유 입력이 아닌 이유는 감사 대상이기
+# 때문이다 — 나중에 "무슨 근거로 통과시켰나"를 세려면 값이 닫혀 있어야 한다.
+# 각주를 붙일 수 없는 문장의 실제 종류에서 왔다(해석·전망 / 워터마크·면책 / 데이터 설명).
+ACK_REASONS = ("해석·전망", "고지·면책", "데이터 설명")
+
+
+def _valid_acks(row, sentences: list[dict]) -> set[int]:
+    """확인 기록 중 **지금 문장과 여전히 맞는 것**의 인덱스.
+
+    재파싱(scripts/reparse_notes.py)으로 문장 배열이 바뀌면 저장된 인덱스가 다른 문장을
+    가리킬 수 있다. 그때는 확인을 무효로 본다 — 컴플라이언스 판정은 어긋나면 **막히는**
+    쪽으로 틀려야 한다(통과하는 쪽으로 틀리면 아무도 모르게 새 문장이 발행된다).
+    """
+    valid: set[int] = set()
+    for a in json.loads(row["acks_json"]):
+        i = a.get("index")
+        if isinstance(i, int) and 0 <= i < len(sentences):
+            if sentences[i]["text"][:60] == a.get("text"):
+                valid.add(i)
+    return valid
 
 
 def _note_to_dict(row, audit_rows) -> dict:
@@ -806,6 +840,7 @@ def _note_to_dict(row, audit_rows) -> dict:
         "content_md": row["content_md"],
         "sentences": json.loads(row["sentences_json"]),
         "violations": json.loads(row["violations_json"]),
+        "acks": json.loads(row["acks_json"]),
         "reviewer": row["reviewer"],
         "deliberator": row["deliberator"],
         "publisher": row["publisher"],
@@ -819,6 +854,28 @@ def _note_to_dict(row, audit_rows) -> dict:
             for a in audit_rows
         ],
     }
+
+
+@app.get("/api/notes")
+async def list_notes_index():
+    """노트 목록 — **발행된 것까지 전부**. 본문은 건별 상세(`/api/notes/{id}`)로 받는다.
+
+    큐(`/api/dashboard/queue`)와 일부러 분리한다. 큐는 "아직 처리할 일"이라 발행분을 빼는데,
+    상담 준비 메모가 큐를 재료로 쓰면 **사람이 검토·심의·발행을 끝낸 노트 —— PB가 상담에
+    실제로 써도 되는 유일한 등급 —— 가 바로 그 순간 화면에서 사라진다.** 처리할 일의 목록과
+    읽을 것의 목록은 같지 않다.
+    """
+    return [
+        {
+            "id": n["id"],
+            "stock_code": n["stock_code"],
+            "corp_name": n["corp_name"],
+            "status": n["status"],
+            "created_by": n["created_by"],
+            "updated_at": n["updated_at"].isoformat(),
+        }
+        for n in await db.list_notes()  # id 내림차순 — 화면은 종목별 최신 1건을 고른다
+    ]
 
 
 @app.get("/api/notes/{note_id}")
@@ -855,11 +912,49 @@ async def start_deliberation(note_id: int, body: ActorBody):
     return {"status": "deliberation"}
 
 
+@app.post("/api/notes/{note_id}/ack")
+async def ack_sentence(note_id: int, body: AckBody):
+    """미인용 문장 하나를 '확인함'으로 표시하거나(reason) 되돌린다(reason=null).
+
+    심의 단계에서만 가능하다 — 초안에서 미리 풀어두면 검토가 형식이 된다.
+    권한(준법만)은 화면이 막고, 여기서는 **누가 무엇을 왜** 확인했는지를 남기는 게 일이다.
+    """
+    row = await _require_status(note_id, "deliberation")
+    sentences = json.loads(row["sentences_json"])
+    if not 0 <= body.index < len(sentences):
+        raise HTTPException(400, "문장 인덱스가 범위를 벗어났습니다.")
+
+    s = sentences[body.index]
+    if body.reason is not None:
+        # 출처가 있는 문장은 확인 대상이 아니다 — 애초에 게이트를 막고 있지 않다.
+        # (해제는 이 검사를 하지 않는다. 푸는 건 언제나 막을 이유가 없고, 재파싱 등으로
+        #  조건이 달라진 뒤 남은 확인을 되돌릴 길이 없으면 안 된다.)
+        if not citations.is_body(s) or s["source"] is not None:
+            raise HTTPException(400, "출처가 이미 있거나 게이트 대상이 아닌 문장입니다.")
+        if body.reason not in ACK_REASONS:
+            raise HTTPException(400, f"사유는 {' / '.join(ACK_REASONS)} 중 하나여야 합니다.")
+
+    acks = await db.set_note_ack(note_id, body.index, body.reason, body.actor, s["text"])
+    await db.append_audit(
+        "ack_added" if body.reason else "ack_removed",
+        note_id,
+        body.actor,
+        {"index": body.index, "reason": body.reason, "text": s["text"][:60]},
+    )
+    # 남은 차단 사유를 같이 돌려준다 — 화면이 "몇 개 남았나"를 스스로 계산하지 않아도 된다.
+    remaining = compliance.check_note(
+        row["content_md"], sentences, "F3", {a["index"] for a in acks}
+    )
+    return {"acks": acks, "violations": remaining}
+
+
 @app.post("/api/notes/{note_id}/publish")
 async def publish_note(note_id: int, body: ActorBody):
     row = await _require_status(note_id, "deliberation")
     sentences = json.loads(row["sentences_json"])
-    violations = compliance.check_note(row["content_md"], sentences, "F3")
+    violations = compliance.check_note(
+        row["content_md"], sentences, "F3", _valid_acks(row, sentences)
+    )
     if violations:
         await db.append_audit("publish_blocked", note_id, body.actor, {"violations": violations})
         raise HTTPException(
@@ -1019,6 +1114,9 @@ async def dashboard_queue():
                 "status": n["status"],
                 # 셀프 클레임 — 아직 아무도 집지 않은 건은 '미배정'으로 남긴다.
                 "who": n["deliberator"] or n["reviewer"] or "미배정",
+                # 담당(who)과 생성자는 다르다. PB는 노트를 만들 수 있지만 검토·발행은 못 하므로
+                # who로는 자기 노트를 영영 못 찾는다 — 화면이 "내가 만든 건"을 거를 축이다.
+                "created_by": n["created_by"],
                 "violations": json.loads(n["violations_json"]),
                 "updated_at": n["updated_at"].isoformat(),
             }
@@ -1082,6 +1180,11 @@ async def pb_watchlist(limit: int = BRIEF_MAX_STOCKS) -> list[str]:
 
     "몇 명에게 영향이 있나"가 우선이고 금액은 동점 처리다 — 한 명의 큰 계좌보다 여러
     고객이 걸린 종목이 상담 준비에서 먼저 필요하다.
+
+    ⚠️ 집계 범위는 **전사 고객 전체**다(PB별이 아니다). 브리핑은 하루 한 번 도는 배치라
+    로그인 사용자가 없고, PB마다 따로 돌리면 실행·크레딧이 PB 수만큼 늘어난다. 그래서
+    **화면이 이걸 "내 고객 보유 상위"라고 말하면 안 된다** — 선정 근거(전사 보유 고객 수)와
+    내 담당 몇 명이 걸렸는지를 따로 보여준다(frontend `page.tsx`의 브리핑 카드 배지).
     """
     holders: dict[str, int] = {}
     amounts: dict[str, int] = {}

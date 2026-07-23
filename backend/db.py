@@ -6,6 +6,7 @@
 
 import json
 import os
+from datetime import datetime, timezone
 
 import asyncpg
 
@@ -29,6 +30,18 @@ CREATE TABLE IF NOT EXISTS notes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- 누가 만든 노트인가. PB도 F3로 노트를 만들 수 있는데(생성은 PB, 발행은 준법) 생성자가
+-- 없으면 **만든 사람이 자기 노트를 처리 대기에서 찾을 수 없다**. 나중에 붙은 컬럼이라
+-- 멱등 ALTER로 더한다 — 이전에 만들어진 노트는 NULL(생성자 미상)이고, 지어내지 않는다.
+ALTER TABLE notes ADD COLUMN IF NOT EXISTS created_by TEXT;
+
+-- 미인용 문장 확인 기록. 각주를 붙일 수 없는 문장(해석·고지·데이터 설명)이 게이트를 잠그면
+-- 사람이 열 방법이 없어서, 준법이 사유를 적어 확인한 문장을 여기 남긴다.
+-- [{"index": 3, "reason": "해석·전망", "actor": "정준법", "ts": "...", "text": "앞 60자"}]
+-- text를 같이 두는 이유: 재파싱(scripts/reparse_notes.py)으로 문장 배열이 바뀌면 인덱스가
+-- 다른 문장을 가리킬 수 있다 — 발행 때 원문과 대조해 안 맞으면 그 확인은 무효로 본다.
+ALTER TABLE notes ADD COLUMN IF NOT EXISTS acks_json JSONB NOT NULL DEFAULT '[]';
 
 -- append-only: 애플리케이션 코드에서 UPDATE/DELETE 하지 않는다
 -- (강제하는 DB 트리거·권한 분리는 MVP 스코프 밖 — 운영 전환 시 추가할 것).
@@ -119,21 +132,54 @@ async def create_note(
     content_md: str,
     sentences: list[dict],
     violations: list[str],
+    created_by: str | None = None,
 ) -> int:
+    """`created_by`는 화면이 알려준 실행자다 — 없으면 NULL로 두고 추측하지 않는다."""
     row = await pool().fetchrow(
-        """INSERT INTO notes (stock_code, corp_name, content_md, sentences_json, violations_json)
-           VALUES ($1, $2, $3, $4::jsonb, $5::jsonb) RETURNING id""",
+        """INSERT INTO notes
+               (stock_code, corp_name, content_md, sentences_json, violations_json, created_by)
+           VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6) RETURNING id""",
         stock_code,
         corp_name,
         content_md,
         json.dumps(sentences, ensure_ascii=False),
         json.dumps(violations, ensure_ascii=False),
+        created_by,
     )
     return row["id"]
 
 
 async def get_note(note_id: int) -> asyncpg.Record | None:
     return await pool().fetchrow("SELECT * FROM notes WHERE id = $1", note_id)
+
+
+async def set_note_ack(
+    note_id: int, index: int, reason: str | None, actor: str, text: str
+) -> list[dict]:
+    """미인용 문장 확인을 남기거나(reason) 지운다(reason=None). 갱신된 전체 목록을 준다.
+
+    한 문장에 하나만 남는다 — 같은 인덱스를 다시 확인하면 사유·확인자가 덮어써진다.
+    (되돌린 이력이 필요하면 감사로그를 본다. 이 컬럼은 '지금 상태'만 든다.)
+    """
+    row = await pool().fetchrow("SELECT acks_json FROM notes WHERE id = $1", note_id)
+    acks = [a for a in json.loads(row["acks_json"]) if a.get("index") != index]
+    if reason is not None:
+        acks.append(
+            {
+                "index": index,
+                "reason": reason,
+                "actor": actor,
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "text": text[:60],
+            }
+        )
+    acks.sort(key=lambda a: a["index"])
+    await pool().execute(
+        "UPDATE notes SET acks_json = $2::jsonb, updated_at = now() WHERE id = $1",
+        note_id,
+        json.dumps(acks, ensure_ascii=False),
+    )
+    return acks
 
 
 async def advance_status(
@@ -239,7 +285,8 @@ async def set_session_status(session_id: int, status: str) -> None:
 async def list_notes() -> list[asyncpg.Record]:
     return await pool().fetch(
         "SELECT id, stock_code, corp_name, status, sentences_json, violations_json,"
-        " reviewer, deliberator, publisher, created_at, updated_at FROM notes ORDER BY id DESC"
+        " reviewer, deliberator, publisher, created_by, created_at, updated_at"
+        " FROM notes ORDER BY id DESC"
     )
 
 

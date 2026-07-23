@@ -27,7 +27,11 @@ export type QueueNote = {
   code: string;
   title: string;
   status: string;
+  /** 담당자(검토자·심의자) — 아직 아무도 안 집었으면 '미배정' */
   who: string;
+  /** 생성자. 담당과 다르다 — PB는 만들 수 있지만 검토·발행은 못 한다.
+   *  created_by 컬럼이 붙기 전에 만들어진 노트는 null(생성자 미상) */
+  created_by: string | null;
   violations: string[];
   updated_at: string;
 };
@@ -91,6 +95,29 @@ export type AuditRow = {
   detail: Record<string, unknown>;
 };
 
+/** `/api/notes` — 발행분까지 포함한 노트 색인(본문 없음). 큐와 달리 "읽을 것"의 목록이다. */
+export type NoteIndex = {
+  id: number;
+  stock_code: string;
+  corp_name: string;
+  status: string;
+  created_by: string | null;
+  updated_at: string;
+};
+
+/** 미인용 문장 확인 기록 — 준법이 심의 단계에서 사유를 골라 남긴다.
+ *  index는 NoteDetail.sentences의 위치, text는 저장 시점 원문(앞 60자)이다. */
+export type NoteAck = {
+  index: number;
+  reason: string;
+  actor: string;
+  ts: string;
+  text: string;
+};
+
+/** 확인 사유 — 백엔드 main.py의 ACK_REASONS와 1:1. 자유 입력이 아닌 이유는 감사 대상이라서다. */
+export const ACK_REASONS = ['해석·전망', '고지·면책', '데이터 설명'] as const;
+
 export type NoteDetail = {
   id: number;
   stock_code: string;
@@ -99,6 +126,8 @@ export type NoteDetail = {
   content_md: string;
   sentences: NoteSentence[];
   violations: string[];
+  /** 사람이 확인해 미인용 집계에서 뺀 문장들 */
+  acks: NoteAck[];
   reviewer: string | null;
   deliberator: string | null;
   publisher: string | null;

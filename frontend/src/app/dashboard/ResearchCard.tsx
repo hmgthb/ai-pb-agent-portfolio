@@ -68,7 +68,14 @@ const yoy = (cur: string, prev: string): string | null => {
   return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
 };
 
-export default function ResearchCard({ onNoteCreated }: { onNoteCreated: () => void }) {
+export default function ResearchCard({
+  onNoteCreated,
+  actor,
+}: {
+  onNoteCreated: () => void;
+  /** 이 노트를 만든 사람(목 로그인) — 처리 대기에서 자기 노트를 찾는 축이 된다 */
+  actor: string;
+}) {
   const [code, setCode] = useState('');
   const [running, setRunning] = useState(false);
   const [steps, setSteps] = useState<Steps>(IDLE);
@@ -134,7 +141,7 @@ export default function ResearchCard({ onNoteCreated }: { onNoteCreated: () => v
     setFailed('');
     setMsg('에이전트를 실행하고 있습니다 — 완료까지 1~2분 걸립니다.');
 
-    const es = new EventSource(streamUrl(code.trim()));
+    const es = new EventSource(streamUrl(code.trim(), actor));
     esRef.current = es;
     let noteArrived = false;
     // done을 받고 우리가 닫으면 EventSource가 onerror를 한 번 부른다 — 그건 실패가 아니다.

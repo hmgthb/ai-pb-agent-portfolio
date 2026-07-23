@@ -102,6 +102,30 @@ def test_f1_gate_counts_unsourced_claims_only():
     assert any("출처 없는" in x for x in check_note(apply_notice("판단하기 어렵습니다.", "F3"), interp, "F3"))
 
 
+def test_acked_sentence_clears_unsourced_only():
+    """준법이 확인한 미인용 문장은 게이트에서 빠진다 — 단 미인용 규칙에서만."""
+    interp = {"text": "수익성 회복이 뚜렷하다고 볼 여지가 있다.", "source": None,
+              "is_heading": False, "kind": "interpretation"}
+    notice_line = {"text": "내부 참고용 초안이다.", "source": None,
+                   "is_heading": False, "kind": "claim"}
+    body = apply_notice("수익성 회복이 뚜렷하다고 볼 여지가 있다. 내부 참고용 초안이다.", "F3")
+
+    # 확인 전 — 두 문장 다 미인용으로 잡힌다
+    assert any("출처 없는 문장 2개" in x for x in check_note(body, [interp, notice_line], "F3"))
+    # 하나만 확인 — 아직 1개 남는다
+    assert any("출처 없는 문장 1개" in x for x in check_note(body, [interp, notice_line], "F3", {0}))
+    # 둘 다 확인 — 게이트 통과. 해석뿐 아니라 분류기가 claim으로 본 고지 문장도 사람이 푼다
+    assert check_note(body, [interp, notice_line], "F3", {0, 1}) == []
+
+
+def test_ack_cannot_waive_forbidden_phrase():
+    """확인은 미인용만 푼다 — 투자권유 표현·지연시세 누락은 문장을 고쳐야 한다."""
+    s = [{"text": "목표주가는 20만원이다.", "source": None, "is_heading": False, "kind": "claim"}]
+    v = check_note(apply_notice("목표주가는 20만원이다.", "F3"), s, "F3", {0})
+    assert not any("출처 없는" in x for x in v)  # 미인용은 풀렸는데
+    assert any("목표주가" in x for x in v)       # 투자권유 표현은 그대로 막는다
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

@@ -10,8 +10,9 @@
 import { useState } from 'react';
 import { apiPost, errorMessage, fmtKRW, hhmm, detailStr } from './api';
 import {
-  ACTOR, MY_PB, PILL, RISK, WATERMARK,
-  type Customer, type NoteDetail, type NoteSentence, type NoteSource, type QueueChat, type Role,
+  ACK_REASONS, ACTOR, MY_PB, PILL, RISK, WATERMARK,
+  type Customer, type NoteAck, type NoteDetail, type NoteSentence, type NoteSource,
+  type QueueChat, type Role,
 } from './types';
 
 type Result = { ok?: string; blocked?: string };
@@ -36,24 +37,56 @@ function SourceBadge({ src }: { src: NoteSource | null }) {
   );
 }
 
-function SentenceRows({ sentences }: { sentences: NoteSentence[] }) {
+/** 문장 목록. `rows`의 i는 **원본 sentences 배열의 인덱스**다 — 확인 기록(ack)이 그
+ *  인덱스로 저장되므로, 소제목·고지문구를 걸러낸 뒤의 순번을 쓰면 다른 문장을 가리킨다. */
+function SentenceRows({
+  rows, acks, canAck, onAck,
+}: {
+  rows: { s: NoteSentence; i: number }[];
+  acks: NoteAck[];
+  /** 준법 + 심의 단계에서만 확인할 수 있다 */
+  canAck: boolean;
+  onAck: (index: number, reason: string | null) => void;
+}) {
+  const ackOf = new Map(acks.map((a) => [a.index, a]));
   return (
     <div className="srows">
-      {sentences.map((s, i) => {
+      {rows.map(({ s, i }) => {
         // 옛 노트는 sources 없이 source만 있다 — 둘 다 읽는다.
         const srcs = s.sources ?? (s.source ? [s.source] : []);
+        const ack = ackOf.get(i);
         return (
           <div className="srow" key={i}>
             <span className="stext">{s.text}</span>
             <span className="spacer" style={{ flex: 1 }} />
             {srcs.length ? (
               srcs.map((src, j) => <SourceBadge key={j} src={src} />)
+            ) : ack ? (
+              // 사람이 확인한 문장 — 누가·언제·무슨 사유였는지가 배지에 남는다.
+              <span className="sbadge ack" title={`${ack.actor} · ${hhmm(ack.ts)} 확인`}>
+                확인함 · {ack.reason}
+              </span>
             ) : s.kind === 'interpretation' ? (
               // 각주가 없는 게 규칙대로인 문장. UNSOURCED로 칠하면 검토자가 위반으로
               // 오해한다 — 다만 판단은 사람이 하도록 큐에는 그대로 올라간다.
               <span className="sbadge itp" title="해석·전망 문장은 출처 각주 대상이 아닙니다">해석</span>
             ) : (
               <SourceBadge src={null} />
+            )}
+            {/* 확인 UI는 미인용 문장에만 붙는다. 출처가 있는 문장은 애초에 게이트를
+                막고 있지 않으므로 풀 것도 없다. */}
+            {canAck && !srcs.length && (
+              <select
+                className="acksel"
+                aria-label="확인 사유"
+                value={ack?.reason ?? ''}
+                onChange={(e) => onAck(i, e.target.value || null)}
+              >
+                <option value="">확인 안 함</option>
+                {ACK_REASONS.map((r) => (
+                  <option key={r} value={r}>{r}(으)로 확인</option>
+                ))}
+              </select>
             )}
           </div>
         );
@@ -99,9 +132,9 @@ export function NoteModal({
   onChanged: () => Promise<NoteDetail | null>;
   toast: (m: string) => void;
 }) {
-  // 발행되면 이 노트는 큐에서 빠지므로 부모의 목록에서 사라진다 — 결과 메시지를 계속
-  // 보여주려면 모달이 자기 사본을 들고 있어야 한다. 다른 노트를 열면 부모가 key로
-  // 리마운트하므로 prop→state 동기화 effect는 필요 없다.
+  // 발행되면 이 노트는 **큐**에서 빠진다(처리할 일이 아니게 되므로). 부모의 노트 목록은
+  // /api/notes라 발행분도 남지만, 결과 메시지를 계속 보여주려면 모달이 자기 사본을 들고
+  // 있어야 한다. 다른 노트를 열면 부모가 key로 리마운트하므로 prop→state 동기화는 불필요.
   const [current, setCurrent] = useState(note);
   const [res, setRes] = useState<Result>({});
 
@@ -144,7 +177,30 @@ export function NoteModal({
     .join(' · ');
 
   // 소제목과 고지문구·구분선은 검토 대상 문장이 아니다(백엔드 게이트와 같은 기준).
-  const body = current.sentences.filter((s) => !s.is_heading && s.kind !== 'boilerplate');
+  // 원본 인덱스를 들고 다닌다 — 확인 기록이 그 인덱스로 저장되기 때문이다.
+  const body = current.sentences
+    .map((s, i) => ({ s, i }))
+    .filter(({ s }) => !s.is_heading && s.kind !== 'boilerplate');
+
+  /* 각주를 붙일 수 없는 문장(해석·고지·데이터 설명)이 실제로 있어서, 게이트가 그걸 전부
+     잠그면 사람이 열 방법이 없다 — 그래서 준법이 사유를 적어 확인하면 미인용 집계에서
+     빠진다. 확인은 **심의 단계에서만**(초안에서 미리 풀면 검토가 형식이 된다) 그리고
+     발행과 같은 권한(준법)에게만 연다. */
+  const canAck = role === 'comp' && current.status === 'deliberation';
+  const acked = new Set(current.acks.map((a) => a.index));
+  const blocking = body.filter(
+    ({ s, i }) => !(s.sources?.length || s.source) && !acked.has(i),
+  ).length;
+
+  const ack = async (index: number, reason: string | null) => {
+    const r = await apiPost(`/api/notes/${current.id}/ack`, { actor, index, reason });
+    if (!r.ok) {
+      setRes({ blocked: errorMessage(r.body) });
+      return;
+    }
+    const fresh = await onChanged();
+    if (fresh) setCurrent(fresh);
+  };
 
   return (
     <>
@@ -157,7 +213,18 @@ export function NoteModal({
       <div className="wm">{WATERMARK}</div>
       {res.blocked && <div className="vbox">⛔ {res.blocked}</div>}
       {res.ok && <div className="okbox">✓ {res.ok}</div>}
-      <SentenceRows sentences={body} />
+      {/* 심의 단계에서 "무엇이 남아서 막고 있는가"를 문장 목록 위에 먼저 말한다 —
+          발행 버튼을 눌러 409를 받고 나서야 아는 건 검토 화면이 할 일이 아니다. */}
+      {current.status === 'deliberation' && (
+        <div className={blocking ? 'ackbar' : 'ackbar done'}>
+          {blocking
+            ? `출처 없는 문장 ${blocking}개가 발행을 막고 있습니다 — 각주를 붙일 수 없는 문장이면 사유를 골라 확인하세요.`
+            : '미인용 문장이 모두 확인되었습니다 — 발행할 수 있습니다.'}
+          {current.acks.length > 0 && ` (확인 ${current.acks.length}개, 감사로그에 기록됨)`}
+          {!canAck && <span className="hint"> · 🔒 확인은 준법 권한입니다</span>}
+        </div>
+      )}
+      <SentenceRows rows={body} acks={current.acks} canAck={canAck} onAck={ack} />
       <ActionsRow
         acts={actions}
         onDone={async (r) => {
