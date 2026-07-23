@@ -215,8 +215,9 @@ export const PILL: Record<string, [label: string, cls: string]> = {
 export const RISK = ['안정형', '안정추구형', '위험중립형', '적극투자형', '공격투자형'];
 
 /** 이 대시보드의 주인 (목 로그인). 백엔드 `main.PB_NAME`과 같아야 한다 —
- *  어긋나면 화면은 "내 고객"이라 적는데 서버는 다른 사람의 고객을 보낸다. */
-export const MY_PB = '박PB';
+ *  어긋나면 화면은 "내 고객"이라 적는데 서버는 다른 사람의 고객을 보낸다.
+ *  사용자가 한 명뿐이라 사람 이름이 아니라 역할명을 쓴다(구분할 상대가 없다). */
+export const MY_PB = 'PB';
 
 export const ACTOR: Record<Role, string> = { pb: MY_PB, comp: '정준법' };
 

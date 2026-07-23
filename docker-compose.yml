@@ -18,9 +18,10 @@ services:
       DART_MCP_PYTHON: python3
       DATABASE_URL: postgresql://app:app@postgres:5432/app
       REDIS_URL: redis://redis:6379/0
-      # 이 대시보드의 주인. PB 1인용이므로 고객·상담·브리핑 유니버스가 전부 이 이름으로
-      # 좁혀진다. 프론트의 MY_PB(types.ts)와 같은 값이어야 한다.
-      PB_NAME: ${PB_NAME:-박PB}
+      # 이 대시보드의 주인. PB 1인용이므로 고객·상담·브리핑 유니버스가 전부 이 값으로
+      # 좁혀진다. 사람 이름이 아니라 역할명이 기본값이다(사용자가 한 명이라 구분할 게 없다).
+      # 프론트의 MY_PB(types.ts)와 같은 값이어야 한다.
+      PB_NAME: ${PB_NAME:-PB}
     depends_on:
       - postgres
       - redis

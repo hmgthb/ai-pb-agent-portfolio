@@ -47,7 +47,11 @@ type Financials = {
   figures: Record<string, { 당기: string; 전기: string }>;
 };
 type NewsItem = { title: string; link: string; pub_date: string };
-type SourceEvent = { rcept_no: string; viewer_url: string; rcept_dt: string | null };
+type SourceEvent = {
+  rcept_no: string;
+  viewer_url: string;
+  rcept_dt: string | null;
+};
 type CardEvent =
   | ({ type: 'financials' } & Financials)
   | { type: 'news'; items: NewsItem[] };
@@ -62,7 +66,8 @@ function fmtWon(raw: string): string {
 }
 
 const yoy = (cur: string, prev: string): string | null => {
-  const c = Number(cur), p = Number(prev);
+  const c = Number(cur),
+    p = Number(prev);
   if (!Number.isFinite(c) || !Number.isFinite(p) || p === 0) return null;
   const pct = ((c - p) / Math.abs(p)) * 100;
   return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
@@ -98,7 +103,9 @@ export default function ResearchCard({
 
   /** 'fail'은 덮어쓰지 않는다 — 뒤 단계가 진행돼도 실패한 단계는 실패로 남아야 한다. */
   const mark = (agent: Agent, state: StepState) =>
-    setSteps((prev) => (prev[agent] === 'fail' ? prev : { ...prev, [agent]: state }));
+    setSteps((prev) =>
+      prev[agent] === 'fail' ? prev : { ...prev, [agent]: state },
+    );
 
   function handleProgress(d: ProgressEvent) {
     if (d.status === 'failed' && d.agent !== 'O') {
@@ -148,7 +155,9 @@ export default function ResearchCard({
     let closedCleanly = false;
     let runErrored = false;
 
-    es.addEventListener('progress', (e) => handleProgress(JSON.parse((e as MessageEvent).data)));
+    es.addEventListener('progress', (e) =>
+      handleProgress(JSON.parse((e as MessageEvent).data)),
+    );
 
     es.addEventListener('card', (e) => {
       const d: CardEvent = JSON.parse((e as MessageEvent).data);
@@ -161,7 +170,9 @@ export default function ResearchCard({
 
     es.addEventListener('source', (e) => {
       const d: SourceEvent = JSON.parse((e as MessageEvent).data);
-      setSources((prev) => (prev.some((s) => s.rcept_no === d.rcept_no) ? prev : [...prev, d]));
+      setSources((prev) =>
+        prev.some((s) => s.rcept_no === d.rcept_no) ? prev : [...prev, d],
+      );
     });
 
     es.addEventListener('note_token', (e) => {
@@ -174,8 +185,10 @@ export default function ResearchCard({
       noteArrived = true;
       setCorp(d.corp_name);
       setMsg(
-        `${d.corp_name}(${code.trim()}) 팩트 노트 초안 생성 완료 — 처리 대기 큐에 올라갔습니다.` +
-          (d.violations.length ? ` 게이트 지적 ${d.violations.length}건은 검토 화면에서 확인하세요.` : ''),
+        `${d.corp_name}(${code.trim()}) 종목 노트 초안 생성 완료 — 처리 대기 큐에 올라갔습니다.` +
+          (d.violations.length
+            ? ` 게이트 지적 ${d.violations.length}건은 검토 화면에서 확인하세요.`
+            : ''),
       );
       onNoteCreated();
     });
@@ -198,10 +211,14 @@ export default function ResearchCard({
       // 도는 것처럼 보인다. 데이터가 비었는지는 아래 카드가 말하므로 칩은 진행만 나타낸다.
       // 단 예외로 중단된 실행은 완료가 아니다 — ✓로 바꾸면 성공했다고 거짓말하게 된다.
       const settled: StepState = runErrored ? 'fail' : 'done';
-      setSteps((prev) =>
-        Object.fromEntries(
-          Object.entries(prev).map(([k, v]) => [k, v === 'run' ? settled : v]),
-        ) as Steps,
+      setSteps(
+        (prev) =>
+          Object.fromEntries(
+            Object.entries(prev).map(([k, v]) => [
+              k,
+              v === 'run' ? settled : v,
+            ]),
+          ) as Steps,
       );
       // 오류 배너가 이미 이유를 말하고 있으면 안내문을 겹쳐 띄우지 않는다.
       if (!noteArrived && !runErrored) {
@@ -219,7 +236,9 @@ export default function ResearchCard({
       setRunning(false);
       // done까지 정상 수신한 뒤 닫히면서 나는 onerror는 실패가 아니다.
       if (!noteArrived && !closedCleanly) {
-        setFailed('스트림이 끊겼습니다 (백엔드에 연결할 수 없거나 실행 중 중단됨).');
+        setFailed(
+          '스트림이 끊겼습니다 (백엔드에 연결할 수 없거나 실행 중 중단됨).',
+        );
         setMsg('');
       }
     };
@@ -228,7 +247,11 @@ export default function ResearchCard({
   const chip = (agent: Agent) => {
     const state = steps[agent];
     const suffix =
-      state === 'done' && agent === 'a1' && corp ? ` ✓ ${corp}` : state === 'done' ? ' ✓' : '';
+      state === 'done' && agent === 'a1' && corp
+        ? ` ✓ ${corp}`
+        : state === 'done'
+          ? ' ✓'
+          : '';
     return (
       <span className={`step ${state === 'idle' ? '' : state}`}>
         {LABEL[agent]}
@@ -240,11 +263,7 @@ export default function ResearchCard({
   return (
     <section className="card" aria-labelledby="g-title" id="research-card">
       <div className="card-head">
-        <h2 id="g-title">종목 팩트 노트 생성 <span className="fcode">F3</span></h2>
-        <span className="hint">
-          상담 전에 종목 하나를 깊게 — 여러 에이전트가 공시·실적·뉴스를 모아 출처 붙은 초안을 만듭니다
-        </span>
-        <span className="src live">실제 에이전트 실행 · 1~2분</span>
+        <h2 id="g-title">종목 노트 생성</h2>
       </div>
 
       <div className="gen-row">
@@ -252,7 +271,7 @@ export default function ResearchCard({
           className="search"
           inputMode="numeric"
           maxLength={6}
-          placeholder="종목코드 6자리 (예: 035420)"
+          placeholder="종목코드 (000000)"
           aria-label="종목코드"
           value={code}
           disabled={running}
@@ -303,7 +322,8 @@ export default function ResearchCard({
               <div className="gen-card-head">
                 <span className="chip note">a2 재무 핵심수치</span>
                 <span className="bcode">
-                  {financials.bsns_year} · {financials.fs_div === 'CFS' ? '연결' : '별도'}
+                  {financials.bsns_year} ·{' '}
+                  {financials.fs_div === 'CFS' ? '연결' : '별도'}
                 </span>
               </div>
               <table className="holdings">
@@ -315,7 +335,13 @@ export default function ResearchCard({
                         <td>{item}</td>
                         <td className="num">{fmtWon(v.당기)}</td>
                         <td className="num">
-                          {d && <span className={`delta ${d.startsWith('-') ? 'down' : 'up'}`}>{d}</span>}
+                          {d && (
+                            <span
+                              className={`delta ${d.startsWith('-') ? 'down' : 'up'}`}
+                            >
+                              {d}
+                            </span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -326,8 +352,13 @@ export default function ResearchCard({
                 <div className="bline" key={s.rcept_no}>
                   <span className="btag">공시</span>
                   <span style={{ minWidth: 0 }}>
-                    <a href={s.viewer_url} target="_blank" rel="noreferrer">원문 {s.rcept_no}</a>
-                    <span className="bcode"> {fmtDate(s.rcept_dt) || '접수일 미상'}</span>
+                    <a href={s.viewer_url} target="_blank" rel="noreferrer">
+                      원문 {s.rcept_no}
+                    </a>
+                    <span className="bcode">
+                      {' '}
+                      {fmtDate(s.rcept_dt) || '접수일 미상'}
+                    </span>
                   </span>
                 </div>
               ))}
@@ -356,7 +387,9 @@ export default function ResearchCard({
                 <div className="bline" key={i}>
                   <span className="btag">뉴스</span>
                   <span style={{ minWidth: 0 }}>
-                    <a href={n.link} target="_blank" rel="noreferrer">{n.title}</a>
+                    <a href={n.link} target="_blank" rel="noreferrer">
+                      {n.title}
+                    </a>
                     <span className="bcode"> {fmtDate(n.pub_date)}</span>
                   </span>
                 </div>
@@ -376,13 +409,19 @@ export default function ResearchCard({
         </div>
       )}
 
-      {failed && <div className="vbox" style={{ marginTop: 10 }}>⛔ {failed}</div>}
+      {failed && (
+        <div className="vbox" style={{ marginTop: 10 }}>
+          ⛔ {failed}
+        </div>
+      )}
 
       {/* 노트가 나왔더라도 부분적으로 빠진 게 있으면 숨기지 않고 알린다 */}
       {outcome && outcome.reasons.length > 0 && (
         <div className="gen-reasons" role="status">
           <div className="gen-reasons-label">
-            {outcome.note_created ? '확보하지 못한 데이터' : '노트를 만들지 못한 이유'}
+            {outcome.note_created
+              ? '확보하지 못한 데이터'
+              : '노트를 만들지 못한 이유'}
           </div>
           <ul>
             {outcome.reasons.map((r, i) => (
@@ -392,7 +431,11 @@ export default function ResearchCard({
         </div>
       )}
 
-      {msg && <div className="hint" style={{ marginTop: 8 }}>{msg}</div>}
+      {msg && (
+        <div className="hint" style={{ marginTop: 8 }}>
+          {msg}
+        </div>
+      )}
     </section>
   );
 }

@@ -16,42 +16,75 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import './dashboard.css';
-import { api, ago, bizDay, detailStr, fmtDate, fmtKRW, fmtPct, hhmm, isDown } from './api';
+import {
+  api,
+  ago,
+  bizDay,
+  detailStr,
+  fmtDate,
+  fmtKRW,
+  fmtPct,
+  hhmm,
+  isDown,
+} from './api';
 import { BarChart, Donut, GateMini, LineChart, Tip, useTip } from './charts';
 import F1Chat from './F1Chat';
 import ResearchCard from './ResearchCard';
 import { ChatModal, NoteModal } from './ReviewModal';
 import {
-  ACTOR, MY_PB, PILL, RISK,
-  type AgentCalls, type Brief, type Customer, type DashboardAudit,
-  type NoteDetail, type NoteIndex, type QueueChat, type QueueItem, type Role, type Summary,
+  ACTOR,
+  PILL,
+  RISK,
+  type AgentCalls,
+  type Brief,
+  type Customer,
+  type DashboardAudit,
+  type NoteDetail,
+  type NoteIndex,
+  type QueueChat,
+  type QueueItem,
+  type Role,
+  type Summary,
 } from './types';
 
 /* ── 역할(목 로그인)별 화면 구성 ──────────────────────────── */
-const ROLES: Record<Role, {
-  aiTab: boolean;
-  portfolio: boolean;
-  research: boolean;
-  /** 상담 전 브리핑 노출 — 상담 준비는 PB의 일이다. 준법 화면에 띄우면 카드가 자기를
-   *  "내 고객 보유 상위"라고 소개하는데, 그 화면을 보는 사람에게 담당 고객은 없다. */
-  brief: boolean;
-  defaultView: 'cust' | 'ai' | null;
-  queueFilter: ((it: QueueItem) => boolean) | null;
-  custFilter: ((c: Customer) => boolean) | null;
-  qScope: string;
-}> = {
+const ROLES: Record<
+  Role,
+  {
+    aiTab: boolean;
+    portfolio: boolean;
+    research: boolean;
+    /** 상담 전 브리핑 노출 — 상담 준비는 PB의 일이다. 준법 화면에 띄우면 카드가 자기를
+     *  "내 고객 보유 상위"라고 소개하는데, 그 화면을 보는 사람에게 담당 고객은 없다. */
+    brief: boolean;
+    defaultView: 'cust' | 'ai' | null;
+    queueFilter: ((it: QueueItem) => boolean) | null;
+    custFilter: ((c: Customer) => boolean) | null;
+    qScope: string;
+  }
+> = {
   // 이 화면의 주인. 담당 고객·상담은 **백엔드가 이미 걸러서** 보내므로(main.PB_NAME)
   // 여기서 다시 거를 필요가 없다 — 남의 고객은 애초에 브라우저에 도착하지 않는다.
   // 노트도 거르지 않는다: PB가 1명이니 이 대시보드의 노트는 전부 이 사람 것이다.
   // (예전엔 created_by로 걸렀는데, 생성자가 없는 노트 6건이 큐에서 통째로 사라졌다.)
   pb: {
-    aiTab: false, portfolio: true, research: true, brief: true, defaultView: 'cust',
-    queueFilter: null, custFilter: null, qScope: '',
+    aiTab: false,
+    portfolio: true,
+    research: true,
+    brief: true,
+    defaultView: 'cust',
+    queueFilter: null,
+    custFilter: null,
+    qScope: '',
   },
   // 준법은 이 대시보드의 사용자가 아니다 — **다른 사람의 화면**을 데모로 미리 보는 모드다.
   // 그래서 고객 포트폴리오가 안 보이고(정보장벽), 심의 단계 노트만 손댈 수 있다.
   comp: {
-    aiTab: true, portfolio: false, research: false, brief: false, defaultView: 'ai',
+    aiTab: true,
+    portfolio: false,
+    research: false,
+    brief: false,
+    defaultView: 'ai',
     queueFilter: (it) => it.type === 'note' && it.status === 'deliberation',
     custFilter: null,
     qScope: '심의 단계 건만 표시 중',
@@ -95,11 +128,15 @@ const dayKey = (iso: string) => bizDay.format(new Date(iso));
 
 /* ── 상담 준비 메모 ───────────────────────────────────────────
    고객을 고르면, 그 고객이 **실제로 들고 있는 종목**에 대해 이미 수집된 사실만 모아 보여준다.
-   여기서 에이전트를 새로 돌리지 않는다 — 브리프(F2)와 팩트 노트(F3)가 출처와 함께 이미 가진
+   여기서 에이전트를 새로 돌리지 않는다 — 브리프(F2)와 종목 노트(F3)가 출처와 함께 이미 가진
    것을 고객 기준으로 다시 배열할 뿐이다("공통 인프라 1 + 얇은 레이어 N"의 실제 사례).
    확인된 게 없으면 없다고 말한다 — 빈 줄을 그럴듯한 문장으로 채우지 않는다(가드레일 3). */
 function PrepMemo({
-  customer, brief, notes, onAsk, onOpenNote,
+  customer,
+  brief,
+  notes,
+  onAsk,
+  onOpenNote,
 }: {
   customer: Customer;
   brief: Brief | null;
@@ -116,18 +153,25 @@ function PrepMemo({
   return (
     <div className="prep">
       <div className="prep-head">
-        <span className="tag">상담 준비</span>
-        이 고객 보유 종목에서 <strong>출처가 확인된 사실</strong>만 모았습니다 — 링크로 원문을 확인한 뒤 쓰세요.
+        <span className="tag">상담 준비</span>이 고객 보유 종목에서{' '}
+        <strong>출처가 확인된 사실</strong>만 모았습니다 — 링크로 원문을 확인한
+        뒤 쓰세요.
       </div>
       {rows.map(({ h, b, note }) => {
         const q = b?.quote;
         const down = q ? isDown(q.change_pct) : false;
         const lines = [
           ...(b?.disclosures ?? []).slice(0, 2).map((d) => ({
-            tag: '공시', text: d.report_nm.trim(), href: d.viewer_url, meta: fmtDate(d.rcept_dt),
+            tag: '공시',
+            text: d.report_nm.trim(),
+            href: d.viewer_url,
+            meta: fmtDate(d.rcept_dt),
           })),
           ...(b?.news ?? []).slice(0, 1).map((n) => ({
-            tag: '뉴스', text: n.title, href: n.link, meta: fmtDate(n.pub_date),
+            tag: '뉴스',
+            text: n.title,
+            href: n.link,
+            meta: fmtDate(n.pub_date),
           })),
         ];
         return (
@@ -137,17 +181,27 @@ function PrepMemo({
               {q && (
                 <span className="prep-quote">
                   <strong>{Number(q.close).toLocaleString()}원</strong>{' '}
-                  <span className={`delta ${down ? 'down' : 'up'}`}>{down ? '▼' : '▲'}{fmtPct(q.change_pct)}%</span>
+                  <span className={`delta ${down ? 'down' : 'up'}`}>
+                    {down ? '▼' : '▲'}
+                    {fmtPct(q.change_pct)}%
+                  </span>
                   <span className="bcode"> · {fmtDate(q.as_of)} 지연시세</span>
                 </span>
               )}
               <span className="spacer" style={{ flex: 1 }} />
-              <button className="btn mini" onClick={() => onAsk(`${h.name} 최근 실적`)}>이 종목 묻기</button>
+              <button
+                className="btn mini"
+                onClick={() => onAsk(`${h.name} 최근 실적`)}
+              >
+                이 종목 묻기
+              </button>
             </div>
             {lines.map((l, i) => (
               <div className="prep-line" key={i}>
                 <span className="btag">{l.tag}</span>
-                <a href={l.href || '#'} target="_blank" rel="noreferrer">{l.text}</a>
+                <a href={l.href || '#'} target="_blank" rel="noreferrer">
+                  {l.text}
+                </a>
                 <span className="bcode"> {l.meta}</span>
               </div>
             ))}
@@ -155,20 +209,26 @@ function PrepMemo({
               <div className="prep-line">
                 <span className="btag">노트</span>
                 <button className="linklike" onClick={() => onOpenNote(h.code)}>
-                  {note.corp_name} 팩트 노트 열기
+                  {note.corp_name} 종목 노트 열기
                 </button>
-                <span className="bcode"> · {PILL[note.status]?.[0] ?? note.status}</span>
+                <span className="bcode">
+                  {' '}
+                  · {PILL[note.status]?.[0] ?? note.status}
+                </span>
               </div>
             )}
             {!lines.length && !note && (
               <div className="prep-line muted">
-                오늘 브리핑·노트에 이 종목은 없습니다 — 필요하면 &ldquo;이 종목 묻기&rdquo;로 바로 확인하세요.
+                오늘 브리핑·노트에 이 종목은 없습니다 — 필요하면 &ldquo;이 종목
+                묻기&rdquo;로 바로 확인하세요.
               </div>
             )}
           </div>
         );
       })}
-      {!customer.holdings.length && <div className="hint">보유 종목이 없습니다.</div>}
+      {!customer.holdings.length && (
+        <div className="hint">보유 종목이 없습니다.</div>
+      )}
     </div>
   );
 }
@@ -183,7 +243,10 @@ export default function DashboardPage() {
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [modal, setModal] = useState<
-    { kind: 'note'; code: string } | { kind: 'chat'; id: number } | { kind: 'f1'; q?: string } | null
+    | { kind: 'note'; code: string }
+    | { kind: 'chat'; id: number }
+    | { kind: 'f1'; q?: string }
+    | null
   >(null);
   const [toastMsg, setToastMsg] = useState('');
   const { tip, bind } = useTip();
@@ -195,28 +258,42 @@ export default function DashboardPage() {
 
   const load = useCallback(async () => {
     try {
-      const [customers, queue, noteIndex, summary, audit, agents, sessions] = await Promise.all([
-        api<Customer[]>('/api/customers'),
-        api<QueueItem[]>('/api/dashboard/queue'),
-        api<NoteIndex[]>('/api/notes'),
-        api<Summary>('/api/dashboard/summary'),
-        api<DashboardAudit[]>('/api/dashboard/audit?limit=200'),
-        api<AgentCalls[]>('/api/dashboard/agents'),
-        api<Session[]>('/api/sessions'),
-      ]);
+      const [customers, queue, noteIndex, summary, audit, agents, sessions] =
+        await Promise.all([
+          api<Customer[]>('/api/customers'),
+          api<QueueItem[]>('/api/dashboard/queue'),
+          api<NoteIndex[]>('/api/notes'),
+          api<Summary>('/api/dashboard/summary'),
+          api<DashboardAudit[]>('/api/dashboard/audit?limit=200'),
+          api<AgentCalls[]>('/api/dashboard/agents'),
+          api<Session[]>('/api/sessions'),
+        ]);
       // 노트 본문·감사로그는 목록에 없으므로 건별 상세를 따로 받는다.
       // 목록을 큐가 아니라 /api/notes에서 받는 이유: 큐는 발행분을 빼기 때문에, 큐를 쓰면
       // **발행된 노트(= PB가 상담에 써도 되는 유일한 등급)가 상담 준비 메모에서 사라진다.**
       const details = await Promise.all(
-        noteIndex.map((n) => api<NoteDetail>(`/api/notes/${n.id}`).catch(() => null)),
+        noteIndex.map((n) =>
+          api<NoteDetail>(`/api/notes/${n.id}`).catch(() => null),
+        ),
       );
       // 종목별 최신 1건. noteIndex는 id 내림차순이므로 먼저 담긴 것이 최신이다
       // (덮어쓰면 같은 종목의 옛 노트가 이기고, 그게 예전 동작이었다).
       const notes: Record<string, NoteDetail> = {};
-      details.forEach((d) => { if (d && !notes[d.stock_code]) notes[d.stock_code] = d; });
+      details.forEach((d) => {
+        if (d && !notes[d.stock_code]) notes[d.stock_code] = d;
+      });
       // 브리프는 아직 없을 수 있다(404) — 그건 오류가 아니라 상태다.
       const brief = await api<Brief>('/api/briefs/latest').catch(() => null);
-      setData({ customers, queue, notes, summary, audit, agents, sessions, brief });
+      setData({
+        customers,
+        queue,
+        notes,
+        summary,
+        audit,
+        agents,
+        sessions,
+        brief,
+      });
       setError('');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -225,8 +302,10 @@ export default function DashboardPage() {
 
   // 마운트 시 1회 로딩. 이 화면은 역할 전환·검토 액션이 있는 라이브 콘솔이라 서버
   // 컴포넌트로 미리 받지 않고 클라이언트에서 받는다(액션 후 같은 경로로 갱신).
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- 마운트 시 데이터 로딩
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 마운트 시 데이터 로딩
+    void load();
+  }, [load]);
 
   const cfg = ROLES[role];
 
@@ -238,7 +317,10 @@ export default function DashboardPage() {
   }
 
   const pending = useMemo(
-    () => (data?.queue ?? []).filter((it) => !['published', 'done', 'rejected'].includes(it.status)),
+    () =>
+      (data?.queue ?? []).filter(
+        (it) => !['published', 'done', 'rejected'].includes(it.status),
+      ),
     [data],
   );
   const roleQueue = useMemo(
@@ -246,7 +328,10 @@ export default function DashboardPage() {
     [pending, cfg],
   );
   const roleCustomers = useMemo(
-    () => (cfg.custFilter ? (data?.customers ?? []).filter(cfg.custFilter) : data?.customers ?? []),
+    () =>
+      cfg.custFilter
+        ? (data?.customers ?? []).filter(cfg.custFilter)
+        : (data?.customers ?? []),
     [data, cfg],
   );
 
@@ -262,12 +347,27 @@ export default function DashboardPage() {
   const holders = useMemo(() => {
     const m = new Map<string, number>();
     (data?.customers ?? []).forEach((c) =>
-      c.holdings.forEach((h) => m.set(h.code, (m.get(h.code) ?? 0) + 1)));
+      c.holdings.forEach((h) => m.set(h.code, (m.get(h.code) ?? 0) + 1)),
+    );
     return m;
   }, [data]);
   const selected = useMemo(
-    () => visibleCustomers.find((c) => c.id === selectedId) ?? visibleCustomers[0] ?? null,
+    () =>
+      visibleCustomers.find((c) => c.id === selectedId) ??
+      visibleCustomers[0] ??
+      null,
     [visibleCustomers, selectedId],
+  );
+
+  /* 상세에도 표와 **같은 순번**을 보여준다 — 다른 기준으로 세면 왼쪽 표의 3번과
+     오른쪽 상세의 3번이 다른 사람을 가리키게 된다. 그래서 표가 그리는 목록
+     (visibleCustomers)에서 그대로 센다: 검색 중이면 걸러진 목록 기준이다. */
+  const selectedNo = useMemo(
+    () =>
+      selected
+        ? visibleCustomers.findIndex((c) => c.id === selected.id) + 1
+        : 0,
+    [visibleCustomers, selected],
   );
 
   /* 추이 — 하드코딩 대신 감사로그·세션에서 집계한다. 데이터가 쌓이기 전에는 대부분 0이고,
@@ -275,11 +375,18 @@ export default function DashboardPage() {
   const days = useMemo(() => lastDays(14), []);
   const trend = useMemo(() => {
     const noteByDay = new Map<string, number>();
-    (data?.audit ?? []).filter((a) => a.event_type === 'note_created')
-      .forEach((a) => noteByDay.set(dayKey(a.ts), (noteByDay.get(dayKey(a.ts)) ?? 0) + 1));
+    (data?.audit ?? [])
+      .filter((a) => a.event_type === 'note_created')
+      .forEach((a) =>
+        noteByDay.set(dayKey(a.ts), (noteByDay.get(dayKey(a.ts)) ?? 0) + 1),
+      );
     const sessByDay = new Map<string, number>();
     (data?.sessions ?? []).forEach((s) =>
-      sessByDay.set(dayKey(s.started_at), (sessByDay.get(dayKey(s.started_at)) ?? 0) + 1));
+      sessByDay.set(
+        dayKey(s.started_at),
+        (sessByDay.get(dayKey(s.started_at)) ?? 0) + 1,
+      ),
+    );
     return {
       notes: days.map((d) => noteByDay.get(d.key) ?? 0),
       sessions: days.map((d) => sessByDay.get(d.key) ?? 0),
@@ -289,9 +396,12 @@ export default function DashboardPage() {
   /* 컴플라이언스 알림 — 감사로그에서 실제 차단·거부만 뽑는다 */
   const feed = useMemo(() => {
     return (data?.audit ?? [])
-      .filter((a) =>
-        a.event_type === 'publish_blocked' ||
-        (a.event_type === 'permission_check' && (a.detail as { allowed?: boolean }).allowed === false))
+      .filter(
+        (a) =>
+          a.event_type === 'publish_blocked' ||
+          (a.event_type === 'permission_check' &&
+            (a.detail as { allowed?: boolean }).allowed === false),
+      )
       .slice(0, 8)
       .map((a) => {
         const blocked = a.event_type === 'publish_blocked';
@@ -301,33 +411,56 @@ export default function DashboardPage() {
           msg: blocked
             ? `발행 차단 — ${detailStr(a.detail) || '게이트 미통과'}`
             : `허용 외 도구 호출 거부 (${(a.detail as { tool_name?: string }).tool_name ?? '알 수 없음'})`,
-          ref: [a.note_id && `노트 #${a.note_id}`, a.event_type].filter(Boolean).join(' · '),
+          ref: [a.note_id && `노트 #${a.note_id}`, a.event_type]
+            .filter(Boolean)
+            .join(' · '),
           time: hhmm(a.ts),
         };
       });
   }, [data]);
 
   const openItem = (it: QueueItem) =>
-    setModal(it.type === 'note' ? { kind: 'note', code: it.code } : { kind: 'chat', id: it.id });
+    setModal(
+      it.type === 'note'
+        ? { kind: 'note', code: it.code }
+        : { kind: 'chat', id: it.id },
+    );
 
   /* ── 로딩 / 연결 실패 ────────────────────────────────────── */
   if (error) {
     return (
       <div className="wrap">
-        <header className="topbar"><div className="brand">AI PB 어시스턴트<small>상담 전 사실 확인</small></div></header>
-        <section className="card">
-          <div className="card-head"><h2>백엔드에 연결하지 못했습니다</h2></div>
-          <div className="hint" style={{ padding: '8px 0' }}>
-            {error} — <code>docker compose up</code>으로 백엔드(8000)가 떠 있는지 확인하세요.
-            <br />목업 데이터로 화면만 보려면 시안 파일 <code>docs/design/pb-admin-dashboard.html</code>을 직접 열면 됩니다.
+        <header className="topbar">
+          <div className="brand">
+            AI PB 어시스턴트<small>상담 전 사실 확인</small>
           </div>
-          <button className="btn primary" onClick={() => void load()}>다시 시도</button>
+        </header>
+        <section className="card">
+          <div className="card-head">
+            <h2>백엔드에 연결하지 못했습니다</h2>
+          </div>
+          <div className="hint" style={{ padding: '8px 0' }}>
+            {error} — <code>docker compose up</code>으로 백엔드(8000)가 떠
+            있는지 확인하세요.
+            <br />
+            목업 데이터로 화면만 보려면 시안 파일{' '}
+            <code>docs/design/pb-admin-dashboard.html</code>을 직접 열면 됩니다.
+          </div>
+          <button className="btn primary" onClick={() => void load()}>
+            다시 시도
+          </button>
         </section>
       </div>
     );
   }
   if (!data) {
-    return <div className="wrap"><div className="hint" style={{ padding: 40 }}>불러오는 중…</div></div>;
+    return (
+      <div className="wrap">
+        <div className="hint" style={{ padding: 40 }}>
+          불러오는 중…
+        </div>
+      </div>
+    );
   }
 
   const noteCount = roleQueue.filter((i) => i.type === 'note').length;
@@ -338,43 +471,76 @@ export default function DashboardPage() {
      세면 최근 N건 제한 때문에 조용히 적게 세인다). **0인 항목은 아예 적지 않는다** —
      "0건"을 나열하면 아무것도 안 한 날도 일한 것처럼 보인다. */
   const today = data.summary.today;
-  const briefToday = data.brief?.brief_date === days[days.length - 1].key ? data.brief : null;
+  const briefToday =
+    data.brief?.brief_date === days[days.length - 1].key ? data.brief : null;
   const aiwork = [
     briefToday && `상담 전 브리핑 ${briefToday.items.length}종목 수집`,
     today.tool_calls &&
       `에이전트 도구 호출 ${today.tool_calls}건${today.agents ? ` (에이전트 ${today.agents}종)` : ''}`,
     today.chats && `종목 즉답 ${today.chats}건`,
-    today.notes && `팩트 노트 ${today.notes}건`,
+    today.notes && `종목 노트 ${today.notes}건`,
   ].filter((x): x is string => typeof x === 'string');
 
   const tiles =
     role === 'pb'
       ? [
-          { label: '내 담당 고객', value: String(roleCustomers.length), breakdown: `위험 플래그 ${flagged}명 · 팩트 노트 ${noteCount} · 고객 문의 ${chatCount}` },
-          { label: '내 처리 대기', value: String(roleQueue.length), breakdown: 'AI 산출물은 사람 확인 전에는 고객에게 나가지 않습니다' },
+          // 설명줄은 바로 위 숫자를 쪼갠 것이어야 한다 — 종목 노트·고객 문의는 고객 수가
+          // 아니라 처리 대기 건수의 내역이다(6 + 4 = 10).
+          {
+            label: '담당 고객',
+            value: String(roleCustomers.length),
+            breakdown: `위험 플래그 ${flagged}명`,
+          },
+          {
+            label: '처리 대기',
+            value: String(roleQueue.length),
+            breakdown: `종목 노트 ${noteCount} · 고객 문의 ${chatCount}`,
+          },
         ]
       : [
-          { label: '심의 대기', value: String(roleQueue.length), breakdown: '검토를 통과해 준법 심의를 기다리는 노트' },
-          { label: '게이트 차단 (7일)', value: String(data.summary.gate_blocks_7d), breakdown: '건별 상세는 컴플라이언스 알림 카드', gate: true },
+          {
+            label: '심의 대기',
+            value: String(roleQueue.length),
+            breakdown: '검토를 통과해 준법 심의를 기다리는 노트',
+          },
+          {
+            label: '게이트 차단 (7일)',
+            value: String(data.summary.gate_blocks_7d),
+            breakdown: '건별 상세는 컴플라이언스 알림 카드',
+            gate: true,
+          },
         ];
 
   return (
     <div className="wrap">
       <header className="topbar">
-        <div className="brand">AI PB 어시스턴트<small>{MY_PB} · 상담 전 사실 확인</small></div>
+        <div className="brand">
+          AI PB 어시스턴트<small>상담 전 사실 확인</small>
+        </div>
         <span className="env-pill">프로토타입</span>
         <div className="right">
           {/* 역할 전환이 아니라 **화면 전환**이다 — 이 대시보드의 사용자는 PB 한 명이고,
               준법은 이 화면을 같이 쓰는 사람이 아니라 승인 단계를 맡는 다른 사람이다.
               데모에서 그 단계를 보여줘야 해서 미리보기로 남겨 뒀고, 라벨이 그렇게 말한다. */}
-          <div className="role-toggle" role="group" aria-label="화면 전환 (목 로그인)">
+          <div
+            className="role-toggle"
+            role="group"
+            aria-label="화면 전환 (목 로그인)"
+          >
             {(['pb', 'comp'] as Role[]).map((r) => (
-              <button key={r} aria-pressed={role === r} onClick={() => applyRole(r)}>
+              <button
+                key={r}
+                aria-pressed={role === r}
+                onClick={() => applyRole(r)}
+              >
                 {r === 'pb' ? '내 화면' : '준법 화면 (데모)'}
               </button>
             ))}
           </div>
-          <span className="asof">담당 고객 {data.summary.customers_total}명 · 노트 {data.summary.notes_total}건</span>
+          <span className="asof">
+            담당 고객 {data.summary.customers_total}명 · 노트{' '}
+            {data.summary.notes_total}건
+          </span>
         </div>
       </header>
 
@@ -383,35 +549,51 @@ export default function DashboardPage() {
           준법 화면(aiTab)에서는 실제로 두 화면을 오가므로 그대로 필요하다. */}
       {cfg.aiTab && (
         <nav className="cats" aria-label="대시보드 카테고리">
-          <button className="cat" aria-pressed={view === 'cust'} onClick={() => setView('cust')}>
+          <button
+            className="cat"
+            aria-pressed={view === 'cust'}
+            onClick={() => setView('cust')}
+          >
             고객 관리<span className="cat-sub">지금 처리할 일 · 고객 현황</span>
           </button>
-          <button className="cat" aria-pressed={view === 'ai'} onClick={() => setView('ai')}>
-            AI 평가<span className="cat-sub">신뢰도 · 컴플라이언스 · 활동 감사</span>
+          <button
+            className="cat"
+            aria-pressed={view === 'ai'}
+            onClick={() => setView('ai')}
+          >
+            AI 평가
+            <span className="cat-sub">신뢰도 · 컴플라이언스 · 활동 감사</span>
           </button>
         </nav>
       )}
 
       {/* ══════════ 탭 1 · 고객 관리 ══════════ */}
       <div className="view stack" hidden={view !== 'cust'}>
-        {/* AI가 오늘 한 일 — 첫 화면에서 "에이전트가 뭘 했나"가 보여야 한다.
-            숫자는 전부 훅이 남긴 감사로그 실집계다(없으면 없다고 말한다). */}
-        <div className="aiwork">
-          <span className="aiwork-label">AI가 오늘 한 일</span>
-          {aiwork.length ? (
-            <span className="aiwork-body">{aiwork.join(' · ')}</span>
-          ) : (
-            <span className="aiwork-body muted">
-              오늘은 실행 기록이 없습니다 — 브리핑을 생성하면 여기에 표시됩니다.
-            </span>
-          )}
-          {data.summary.today.last_run && (
-            <span className="aiwork-time">마지막 실행 {hhmm(data.summary.today.last_run)}</span>
-          )}
-          <span className="src live">감사로그 실집계</span>
-        </div>
+        {/* AI가 오늘 한 일 — 궁금할 때 열어보는 것이지 늘 보고 있을 내용이 아니라 접어 둔다.
+            숫자는 전부 훅이 남긴 감사로그 실집계다(없으면 없다고 말한다).
+            펼침은 native <details>다 — 직접 만든 토글은 키보드·스크린리더 동작을 다시
+            구현해야 하지만 이건 브라우저가 준다. */}
+        <details className="aiwork">
+          <summary>AI가 오늘 한 일</summary>
+          <div className="aiwork-body">
+            {aiwork.length ? (
+              <span>{aiwork.join(' · ')}</span>
+            ) : (
+              <span className="muted">
+                오늘은 실행 기록이 없습니다 — 브리핑을 생성하면 여기에
+                표시됩니다.
+              </span>
+            )}
+            {data.summary.today.last_run && (
+              <span className="aiwork-time">
+                마지막 실행 {hhmm(data.summary.today.last_run)}
+              </span>
+            )}
+            <span className="src live">감사로그 실집계</span>
+          </div>
+        </details>
 
-        {/* 오늘 규모(내 담당 고객·내 처리 대기) → 바로 만들 수 있는 것(팩트 노트) 순서다.
+        {/* 오늘 규모(내 담당 고객·내 처리 대기) → 바로 만들 수 있는 것(종목 노트) 순서다.
             "AI가 오늘 한 일" 바로 아래에 오늘의 수치와 조작이 붙고, 그 아래로 읽을거리
             (브리핑·처리 대기·고객)가 이어진다. */}
         <div className="tile-row">
@@ -419,22 +601,34 @@ export default function DashboardPage() {
             <div className="tile" key={t.label}>
               <div className="label">{t.label}</div>
               <div className="value">{t.value}</div>
-              {'gate' in t && t.gate && <div className="sub"><GateMini data={data.summary.gate_blocks_daily} /></div>}
-              <div className="breakdown">{t.breakdown}</div>
+              {'gate' in t && t.gate && (
+                <div className="sub">
+                  <GateMini data={data.summary.gate_blocks_daily} />
+                </div>
+              )}
+              {/* 설명줄이 없는 타일은 빈 칸을 남기지 않는다(빈 div도 자리를 차지한다). */}
+              {t.breakdown && <div className="breakdown">{t.breakdown}</div>}
             </div>
           ))}
         </div>
 
-        {cfg.research && <ResearchCard actor={ACTOR[role]} onNoteCreated={() => void load()} />}
+        {cfg.research && (
+          <ResearchCard actor={ACTOR[role]} onNoteCreated={() => void load()} />
+        )}
 
         {/* 상담 전 브리핑 (F2) — 오늘 시장 + 내 고객 보유 상위 종목의 밤사이 변화.
             선정 기준은 내 담당 고객의 보유 수다(backend pb_watchlist) — 배지가 그 근거를 적는다. */}
         <section className="card" aria-labelledby="b-title" hidden={!cfg.brief}>
           <div className="card-head">
             <h2 id="b-title">상담 전 브리핑</h2>
-            <span className="hint">내 고객 보유 상위 종목 · 전일 공시 · 밤사이 뉴스 · 지연시세</span>
-            {data.brief && <span className="hint" style={{ color: 'var(--muted)' }}>{data.brief.brief_date} 생성</span>}
-            <span className="src live">DB 실데이터</span>
+            <span className="hint">
+              내 고객 보유 상위 종목 · 전일 공시 · 밤사이 뉴스 · 지연시세
+            </span>
+            {data.brief && (
+              <span className="hint" style={{ color: 'var(--muted)' }}>
+                {data.brief.brief_date} 생성
+              </span>
+            )}
           </div>
           {data.brief ? (
             <>
@@ -450,9 +644,12 @@ export default function DashboardPage() {
                         <span className="mkt-name">{ix.index_name}</span>
                         <strong>{Number(ix.close).toLocaleString()}</strong>
                         <span className={`delta ${down ? 'down' : 'up'}`}>
-                          {down ? '▼' : '▲'}{fmtPct(ix.change_pct)}%
+                          {down ? '▼' : '▲'}
+                          {fmtPct(ix.change_pct)}%
                         </span>
-                        <span className="bcode">· {fmtDate(ix.as_of)} 지연</span>
+                        <span className="bcode">
+                          · {fmtDate(ix.as_of)} 지연
+                        </span>
                       </span>
                     );
                   })}
@@ -461,7 +658,8 @@ export default function DashboardPage() {
                 <div className="mkt off">
                   <span className="mkt-label">오늘 시장</span>
                   <span className="hint">
-                    {data.brief.market?.note ?? '이 브리프에는 지수가 포함되지 않았습니다.'}
+                    {data.brief.market?.note ??
+                      '이 브리프에는 지수가 포함되지 않았습니다.'}
                   </span>
                 </div>
               )}
@@ -470,8 +668,18 @@ export default function DashboardPage() {
                   const q = it.quote;
                   const down = q ? isDown(q.change_pct) : false;
                   const rows = [
-                    ...it.disclosures.map((d) => ({ tag: '공시', text: d.report_nm.trim(), href: d.viewer_url, meta: fmtDate(d.rcept_dt) })),
-                    ...it.news.map((n) => ({ tag: '뉴스', text: n.title, href: n.link, meta: fmtDate(n.pub_date) })),
+                    ...it.disclosures.map((d) => ({
+                      tag: '공시',
+                      text: d.report_nm.trim(),
+                      href: d.viewer_url,
+                      meta: fmtDate(d.rcept_dt),
+                    })),
+                    ...it.news.map((n) => ({
+                      tag: '뉴스',
+                      text: n.title,
+                      href: n.link,
+                      meta: fmtDate(n.pub_date),
+                    })),
                   ];
                   return (
                     <div className="bcard" key={it.stock_code}>
@@ -481,28 +689,44 @@ export default function DashboardPage() {
                         {/* 선정 근거를 카드가 스스로 말한다 — 이 종목이 위에 있는 이유가
                             "내 고객 N명이 들고 있어서"이고, 그 N이 이 카드를 건너뛰어도
                             되는지를 정한다. 0명이면 배지를 감추지 않고 0명이라고 적는다. */}
-                        <span className="bhold" title="브리프 종목 선정 기준 = 내 담당 고객의 보유 수">
+                        <span
+                          className="bhold"
+                          title="브리프 종목 선정 기준 = 내 담당 고객의 보유 수"
+                        >
                           고객 {holders.get(it.stock_code) ?? 0}명 보유
                         </span>
                       </div>
                       {q ? (
                         <div className="bquote">
                           <strong>{Number(q.close).toLocaleString()}원</strong>
-                          <span className={`delta ${down ? 'down' : 'up'}`}>{down ? '▼' : '▲'}{fmtPct(q.change_pct)}%</span>
-                          <span className="bcode">· {fmtDate(q.as_of)} 지연시세</span>
+                          <span className={`delta ${down ? 'down' : 'up'}`}>
+                            {down ? '▼' : '▲'}
+                            {fmtPct(q.change_pct)}%
+                          </span>
+                          <span className="bcode">
+                            · {fmtDate(q.as_of)} 지연시세
+                          </span>
                         </div>
                       ) : (
                         <div className="bempty">시세 조회 결과 없음</div>
                       )}
-                      {rows.length ? rows.map((r, i) => (
-                        <div className="bline" key={i}>
-                          <span className="btag">{r.tag}</span>
-                          <span style={{ minWidth: 0 }}>
-                            <a href={r.href || '#'} target="_blank" rel="noreferrer">{r.text}</a>
-                            <span className="bcode"> {r.meta}</span>
-                          </span>
-                        </div>
-                      )) : (
+                      {rows.length ? (
+                        rows.map((r, i) => (
+                          <div className="bline" key={i}>
+                            <span className="btag">{r.tag}</span>
+                            <span style={{ minWidth: 0 }}>
+                              <a
+                                href={r.href || '#'}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                {r.text}
+                              </a>
+                              <span className="bcode"> {r.meta}</span>
+                            </span>
+                          </div>
+                        ))
+                      ) : (
                         <div className="bempty">전일 공시·밤사이 뉴스 없음</div>
                       )}
                     </div>
@@ -510,14 +734,19 @@ export default function DashboardPage() {
                 })}
               </div>
               {data.brief.violations.length > 0 && (
-                <div className="hint" style={{ marginTop: 10, color: 'var(--critical)' }}>
-                  ⛔ 컴플라이언스 게이트 미통과 — {data.brief.violations.join(' / ')}
+                <div
+                  className="hint"
+                  style={{ marginTop: 10, color: 'var(--critical)' }}
+                >
+                  ⛔ 컴플라이언스 게이트 미통과 —{' '}
+                  {data.brief.violations.join(' / ')}
                 </div>
               )}
             </>
           ) : (
             <div className="hint" style={{ marginTop: 10 }}>
-              아직 생성된 브리프가 없습니다. <code>POST /api/briefs/run</code>으로 배치를 실행하세요.
+              아직 생성된 브리프가 없습니다. <code>POST /api/briefs/run</code>
+              으로 배치를 실행하세요.
             </div>
           )}
         </section>
@@ -526,37 +755,64 @@ export default function DashboardPage() {
         <section className="card" aria-labelledby="q-title">
           <div className="card-head">
             <h2 id="q-title">처리 대기</h2>
-            <span className="hint">사람 확인 없이는 어떤 산출물도 고객에게 나가지 않습니다</span>
-            {cfg.qScope && <span className="hint" style={{ color: 'var(--accent)', fontWeight: 600 }}>{cfg.qScope}</span>}
-            <span className="src live">DB 실데이터</span>
+            {cfg.qScope && (
+              <span
+                className="hint"
+                style={{ color: 'var(--accent)', fontWeight: 600 }}
+              >
+                {cfg.qScope}
+              </span>
+            )}
           </div>
           <div className="tabs" role="group" aria-label="대기 항목 필터">
             {(['all', 'note', 'chat'] as const).map((f) => (
-              <button key={f} className="tab" aria-pressed={filter === f} onClick={() => setFilter(f)}>
-                {f === 'all' ? <>전체 <span>{roleQueue.length}</span></> : f === 'note' ? '팩트 노트' : '고객 문의'}
+              <button
+                key={f}
+                className="tab"
+                aria-pressed={filter === f}
+                onClick={() => setFilter(f)}
+              >
+                {f === 'all' ? (
+                  <>
+                    전체 <span>{roleQueue.length}</span>
+                  </>
+                ) : f === 'note' ? (
+                  '종목 노트'
+                ) : (
+                  '고객 문의'
+                )}
               </button>
             ))}
           </div>
           <div className="queue">
-            {roleQueue.filter((it) => filter === 'all' || it.type === filter).map((it) => {
-              const [label, cls] = PILL[it.status] ?? [it.status, ''];
-              return (
-                <div className="qrow" key={`${it.type}-${it.id}`}>
-                  <span className={`chip ${it.type}`}>{it.type === 'note' ? '팩트 노트' : '고객 문의'}</span>
-                  <span className="title">{it.title}</span>
-                  {/* 담당자(it.who)는 적지 않는다 — 1인용 대시보드에서 이 큐의 건은 전부
+            {roleQueue
+              .filter((it) => filter === 'all' || it.type === filter)
+              .map((it) => {
+                const [label, cls] = PILL[it.status] ?? [it.status, ''];
+                return (
+                  <div className="qrow" key={`${it.type}-${it.id}`}>
+                    <span className={`chip ${it.type}`}>
+                      {it.type === 'note' ? '종목 노트' : '고객 문의'}
+                    </span>
+                    <span className="title">{it.title}</span>
+                    {/* 담당자(it.who)는 적지 않는다 — 1인용 대시보드에서 이 큐의 건은 전부
                       한 사람 몫이라 "미배정/관리자/박PB"가 구분하는 게 없다. 누가 무엇을
                       했는지는 노트 모달의 확인·심의·발행 줄과 감사로그에 그대로 남는다
                       (거기서는 PB와 준법이 갈리므로 실제로 다른 사람을 가리킨다). */}
-                  <span className="meta">{ago(it.updated_at)} 경과</span>
-                  <span className="spacer" />
-                  <span className={`pill ${cls}`}>{label}</span>
-                  <button className="btn" onClick={() => openItem(it)}>검토</button>
-                </div>
-              );
-            })}
-            {!roleQueue.filter((it) => filter === 'all' || it.type === filter).length && (
-              <div className="hint" style={{ padding: '10px 4px' }}>표시할 대기 건이 없습니다.</div>
+                    <span className="meta">{ago(it.updated_at)} 경과</span>
+                    <span className="spacer" />
+                    <span className={`pill ${cls}`}>{label}</span>
+                    <button className="btn" onClick={() => openItem(it)}>
+                      검토
+                    </button>
+                  </div>
+                );
+              })}
+            {!roleQueue.filter((it) => filter === 'all' || it.type === filter)
+              .length && (
+              <div className="hint" style={{ padding: '10px 4px' }}>
+                표시할 대기 건이 없습니다.
+              </div>
             )}
           </div>
         </section>
@@ -565,59 +821,120 @@ export default function DashboardPage() {
         <section className="card" aria-labelledby="c-title">
           <div className="card-head">
             <h2 id="c-title">고객 포트폴리오</h2>
-            <span className="hint">{cfg.portfolio ? `내 담당 ${roleCustomers.length}명` : '접근 제한'}</span>
-            <span className="src mock">시드 데이터 · 전원 가상 인물</span>
+            <span className="hint">
+              {cfg.portfolio ? `${roleCustomers.length}명` : '접근 제한'}
+            </span>
           </div>
           {!cfg.portfolio ? (
             <div className="hint" style={{ padding: '16px 4px' }}>
-              🔒 준법 화면에서는 고객 개인 포트폴리오(잔고·보유종목)가 표시되지 않습니다 — 위험 플래그·감사로그 요약만 접근 가능합니다.
+              🔒 준법 화면에서는 고객 개인 포트폴리오(잔고·보유종목)가 표시되지
+              않습니다 — 위험 플래그·감사로그 요약만 접근 가능합니다.
             </div>
           ) : (
             <>
               <div className="strip">
                 <div className="kv">
                   <div className="k">담당 고객자산</div>
-                  <div className="v">{fmtKRW(roleCustomers.reduce((a, c) => a + c.balance, 0))}<span className="unit"> 원</span></div>
+                  <div className="v">
+                    {fmtKRW(roleCustomers.reduce((a, c) => a + c.balance, 0))}
+                    <span className="unit"> 원</span>
+                  </div>
                 </div>
                 <div className="kv">
                   <div className="k">평균 수익률 (연초 대비)</div>
-                  <div className={`v delta ${roleCustomers.reduce((a, c) => a + c.ret, 0) >= 0 ? 'up' : 'down'}`} style={{ fontSize: 19 }}>
+                  <div
+                    className={`v delta ${roleCustomers.reduce((a, c) => a + c.ret, 0) >= 0 ? 'up' : 'down'}`}
+                    style={{ fontSize: 19 }}
+                  >
                     {(() => {
-                      const avg = roleCustomers.reduce((a, c) => a + c.ret, 0) / (roleCustomers.length || 1);
+                      const avg =
+                        roleCustomers.reduce((a, c) => a + c.ret, 0) /
+                        (roleCustomers.length || 1);
                       return `${avg >= 0 ? '+' : ''}${avg.toFixed(1)}%`;
                     })()}
                   </div>
                 </div>
                 <div className="kv">
                   <div className="k">위험 플래그</div>
-                  <div className="v">{flagged}<span className="unit">건</span> <span className="flag">▲</span></div>
+                  <div className="v">
+                    {flagged}
+                    <span className="unit">건</span>{' '}
+                    <span className="flag">▲</span>
+                  </div>
                 </div>
               </div>
               <div className="cust-layout">
                 <div>
                   <input
-                    className="search" type="search" placeholder="고객명 검색" aria-label="고객명 검색"
-                    value={search} onChange={(e) => setSearch(e.target.value)}
+                    className="search"
+                    type="search"
+                    placeholder="고객명 검색"
+                    aria-label="고객명 검색"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
                   />
                   <div className="tbl-scroll">
                     <table aria-label="고객 목록">
                       <thead>
-                        <tr><th>고객</th><th className="num">나이</th><th>위험성향</th><th className="num">잔고</th><th className="num">수익률</th><th /></tr>
+                        <tr>
+                          {/* 순번은 고객 id가 아니라 **지금 보이는 목록에서의 자리**다.
+                              검색으로 걸러지면 1부터 다시 매겨진다 — 몇 번째 줄인지
+                              가리키는 용도이지 고객을 식별하는 번호가 아니다. */}
+                          <th className="num rownum">#</th>
+                          <th>고객</th>
+                          <th className="num">나이</th>
+                          <th>위험성향</th>
+                          <th className="num">잔고</th>
+                          <th className="num">수익률</th>
+                          <th />
+                        </tr>
                       </thead>
                       <tbody>
-                        {visibleCustomers.map((c) => (
+                        {visibleCustomers.map((c, i) => (
                           <tr
-                            key={c.id} tabIndex={0}
+                            key={c.id}
+                            tabIndex={0}
                             aria-selected={selected?.id === c.id}
                             onClick={() => setSelectedId(c.id)}
-                            onKeyDown={(e) => { if (e.key === 'Enter') setSelectedId(c.id); }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') setSelectedId(c.id);
+                            }}
                           >
-                            <td><strong>{c.name}</strong> <span style={{ color: 'var(--muted)', fontSize: 11.5 }}>{c.acct}</span></td>
+                            <td className="num rownum">{i + 1}</td>
+                            <td>
+                              <strong>{c.name}</strong>{' '}
+                              <span
+                                style={{
+                                  color: 'var(--muted)',
+                                  fontSize: 11.5,
+                                }}
+                              >
+                                {c.acct}
+                              </span>
+                            </td>
                             <td className="num">{c.age}</td>
-                            <td><span className="risk-chip">{RISK[c.risk]}</span></td>
+                            <td>
+                              <span className="risk-chip">{RISK[c.risk]}</span>
+                            </td>
                             <td className="num">₩{fmtKRW(c.balance)}</td>
-                            <td className={`num delta ${c.ret >= 0 ? 'up' : 'down'}`}>{c.ret >= 0 ? '+' : ''}{c.ret.toFixed(1)}%</td>
-                            <td>{c.flag && <span className="flag" title={c.flagReasons.map((r) => r.text).join(' · ')}>▲</span>}</td>
+                            <td
+                              className={`num delta ${c.ret >= 0 ? 'up' : 'down'}`}
+                            >
+                              {c.ret >= 0 ? '+' : ''}
+                              {c.ret.toFixed(1)}%
+                            </td>
+                            <td>
+                              {c.flag && (
+                                <span
+                                  className="flag"
+                                  title={c.flagReasons
+                                    .map((r) => r.text)
+                                    .join(' · ')}
+                                >
+                                  ▲
+                                </span>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -627,16 +944,36 @@ export default function DashboardPage() {
                 <div className="detail">
                   {selected && (
                     <>
-                      <div className="name">{selected.name} {selected.flag && <span className="flag">▲ 위험 플래그</span>}</div>
-                      <div className="acct">{selected.acct} · {selected.age}세 · {RISK[selected.risk]}</div>
+                      <div className="name">
+                        <span className="rowno">{selectedNo}</span>
+                        {selected.name}{' '}
+                        {selected.flag && (
+                          <span className="flag">▲ 위험 플래그</span>
+                        )}
+                      </div>
+                      <div className="acct">
+                        {selected.acct} · {selected.age}세 ·{' '}
+                        {RISK[selected.risk]}
+                      </div>
                       {selected.flag && (
-                        <div className="flag-reasons">▲ {selected.flagReasons.map((r) => r.text).join(' · ')}</div>
+                        <div className="flag-reasons">
+                          ▲{' '}
+                          {selected.flagReasons.map((r) => r.text).join(' · ')}
+                        </div>
                       )}
                       <div className="row">
-                        <div className="kv"><div className="k">잔고</div><div className="v">₩{fmtKRW(selected.balance)}</div></div>
+                        <div className="kv">
+                          <div className="k">잔고</div>
+                          <div className="v">₩{fmtKRW(selected.balance)}</div>
+                        </div>
                         <div className="kv">
                           <div className="k">수익률 (연초 대비)</div>
-                          <div className={`v delta ${selected.ret >= 0 ? 'up' : 'down'}`}>{selected.ret >= 0 ? '+' : ''}{selected.ret.toFixed(1)}%</div>
+                          <div
+                            className={`v delta ${selected.ret >= 0 ? 'up' : 'down'}`}
+                          >
+                            {selected.ret >= 0 ? '+' : ''}
+                            {selected.ret.toFixed(1)}%
+                          </div>
                         </div>
                       </div>
                       <div className="donut-wrap">
@@ -644,8 +981,19 @@ export default function DashboardPage() {
                         <div className="legend">
                           {Object.entries(selected.alloc).map(([k, v], i) => (
                             <div className="li" key={k}>
-                              <span className="sw" style={{ background: ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)'][i % 4] }} />
-                              {k}<span className="pct">{v}%</span>
+                              <span
+                                className="sw"
+                                style={{
+                                  background: [
+                                    'var(--s1)',
+                                    'var(--s2)',
+                                    'var(--s3)',
+                                    'var(--s4)',
+                                  ][i % 4],
+                                }}
+                              />
+                              {k}
+                              <span className="pct">{v}%</span>
                             </div>
                           ))}
                         </div>
@@ -654,7 +1002,12 @@ export default function DashboardPage() {
                         <tbody>
                           {selected.holdings.map((h) => (
                             <tr key={h.code}>
-                              <td>{h.name} <span style={{ color: 'var(--muted)' }}>{h.code}</span></td>
+                              <td>
+                                {h.name}{' '}
+                                <span style={{ color: 'var(--muted)' }}>
+                                  {h.code}
+                                </span>
+                              </td>
                               <td className="num">₩{fmtKRW(h.amt)}</td>
                             </tr>
                           ))}
@@ -667,7 +1020,10 @@ export default function DashboardPage() {
                         onAsk={(q) => setModal({ kind: 'f1', q })}
                         onOpenNote={(code) => setModal({ kind: 'note', code })}
                       />
-                      <div className="diag"><span className="tag">AI 진단 · 초안·미검증</span>{selected.diag}</div>
+                      <div className="diag">
+                        <span className="tag">AI 진단 · 초안·미검증</span>
+                        {selected.diag}
+                      </div>
                     </>
                   )}
                 </div>
@@ -689,17 +1045,39 @@ export default function DashboardPage() {
               </div>
               <div className="trust">
                 <div>
-                  <div className="t-label">출처 부착률 <span style={{ color: 'var(--muted)' }}>· 사실 주장 문장</span></div>
-                  <div className="t-sub">
-                    <span className="t-value">
-                      {data.summary.citation_rate === null ? '—' : <>{data.summary.citation_rate}<span className="unit">%</span></>}
+                  <div className="t-label">
+                    출처 부착률{' '}
+                    <span style={{ color: 'var(--muted)' }}>
+                      · 사실 주장 문장
                     </span>
                   </div>
-                  <div className="meter" role="img" aria-label={`출처 부착률 ${data.summary.citation_rate ?? '측정 불가'}%, 목표 90% 이상`}>
-                    <div className="fill" style={{ width: `${data.summary.citation_rate ?? 0}%` }} />
+                  <div className="t-sub">
+                    <span className="t-value">
+                      {data.summary.citation_rate === null ? (
+                        '—'
+                      ) : (
+                        <>
+                          {data.summary.citation_rate}
+                          <span className="unit">%</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  <div
+                    className="meter"
+                    role="img"
+                    aria-label={`출처 부착률 ${data.summary.citation_rate ?? '측정 불가'}%, 목표 90% 이상`}
+                  >
+                    <div
+                      className="fill"
+                      style={{ width: `${data.summary.citation_rate ?? 0}%` }}
+                    />
                     <div className="tick" style={{ left: '90%' }} />
                   </div>
-                  <div className="meter-scale"><span>0</span><span>목표 ≥90%</span></div>
+                  <div className="meter-scale">
+                    <span>0</span>
+                    <span>목표 ≥90%</span>
+                  </div>
                   <div className="t-cap">
                     {data.summary.citation_total
                       ? `사실 주장 ${data.summary.citation_total}문장 중 ${data.summary.citation_sourced}문장에 출처 각주가 실제 공시·뉴스와 매칭됨` +
@@ -708,8 +1086,14 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <div>
-                  <div className="t-label">발행 통과율 <span style={{ color: 'var(--muted)' }}>· 누적</span></div>
-                  <div className="t-value">{data.summary.notes_published}<span className="unit"> / {data.summary.notes_total}</span></div>
+                  <div className="t-label">
+                    발행 통과율{' '}
+                    <span style={{ color: 'var(--muted)' }}>· 누적</span>
+                  </div>
+                  <div className="t-value">
+                    {data.summary.notes_published}
+                    <span className="unit"> / {data.summary.notes_total}</span>
+                  </div>
                   <div className="t-cap">
                     {data.summary.notes_total
                       ? `초안 ${data.summary.notes_total}건 중 발행 ${data.summary.notes_published}건 · 대기 ${data.summary.notes_pending}건`
@@ -717,13 +1101,21 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <div>
-                  <div className="t-label">게이트 차단 <span style={{ color: 'var(--muted)' }}>· 7일</span></div>
+                  <div className="t-label">
+                    게이트 차단{' '}
+                    <span style={{ color: 'var(--muted)' }}>· 7일</span>
+                  </div>
                   <div className="t-sub">
-                    <span className="t-value">{data.summary.gate_blocks_7d}</span>
-                    <span style={{ marginLeft: 'auto' }}><GateMini data={data.summary.gate_blocks_daily} /></span>
+                    <span className="t-value">
+                      {data.summary.gate_blocks_7d}
+                    </span>
+                    <span style={{ marginLeft: 'auto' }}>
+                      <GateMini data={data.summary.gate_blocks_daily} />
+                    </span>
                   </div>
                   <div className="t-cap">
-                    미인용·금지표현·MNPI·워터마크 누락으로 발행이 차단된 건수 — 0이 목표가 아니라 게이트가 일한 증거
+                    미인용·금지표현·MNPI·워터마크 누락으로 발행이 차단된 건수 —
+                    0이 목표가 아니라 게이트가 일한 증거
                   </div>
                 </div>
               </div>
@@ -732,27 +1124,55 @@ export default function DashboardPage() {
             <div className="charts2" style={{ marginTop: 16 }}>
               <section className="card chart-box" aria-labelledby="t2">
                 <div className="card-head">
-                  <h2 id="t2">에이전트 호출 <span className="hint">누적</span></h2>
+                  <h2 id="t2">
+                    에이전트 호출 <span className="hint">누적</span>
+                  </h2>
                   <span className="src live">DB 실데이터</span>
                 </div>
-                {data.agents.length
-                  ? <BarChart rows={data.agents.map((a) => [a.agent, a.calls] as [string, number])} bind={bind} />
-                  : <div className="hint" style={{ padding: '20px 4px' }}>아직 에이전트 실행 기록이 없습니다.</div>}
+                {data.agents.length ? (
+                  <BarChart
+                    rows={data.agents.map(
+                      (a) => [a.agent, a.calls] as [string, number],
+                    )}
+                    bind={bind}
+                  />
+                ) : (
+                  <div className="hint" style={{ padding: '20px 4px' }}>
+                    아직 에이전트 실행 기록이 없습니다.
+                  </div>
+                )}
               </section>
               <section className="card chart-box" aria-labelledby="t3">
                 <div className="card-head">
-                  <h2 id="t3">상담·노트 추이 <span className="hint">14일</span></h2>
+                  <h2 id="t3">
+                    상담·노트 추이 <span className="hint">14일</span>
+                  </h2>
                   <span className="src live">실집계</span>
                 </div>
                 <div className="chart-legend">
-                  <span className="li"><span className="key" style={{ background: 'var(--s1)' }} />상담 세션</span>
-                  <span className="li"><span className="key" style={{ background: 'var(--s2)' }} />노트 생성</span>
+                  <span className="li">
+                    <span className="key" style={{ background: 'var(--s1)' }} />
+                    상담 세션
+                  </span>
+                  <span className="li">
+                    <span className="key" style={{ background: 'var(--s2)' }} />
+                    노트 생성
+                  </span>
                 </div>
                 <LineChart
-                  days={days.map((d) => d.label)} bind={bind}
+                  days={days.map((d) => d.label)}
+                  bind={bind}
                   series={[
-                    { name: '상담 세션', data: trend.sessions, color: 'var(--s1)' },
-                    { name: '노트 생성', data: trend.notes, color: 'var(--s2)' },
+                    {
+                      name: '상담 세션',
+                      data: trend.sessions,
+                      color: 'var(--s1)',
+                    },
+                    {
+                      name: '노트 생성',
+                      data: trend.notes,
+                      color: 'var(--s2)',
+                    },
                   ]}
                 />
               </section>
@@ -771,7 +1191,9 @@ export default function DashboardPage() {
                     <span className={`ficon sev ${f.sev}`}>{f.icon}</span>
                     <div className="fbody">
                       <div className="fhead">
-                        <span className={`sev ${f.sev}`}>{f.sev.toUpperCase()}</span>
+                        <span className={`sev ${f.sev}`}>
+                          {f.sev.toUpperCase()}
+                        </span>
                         <span className="ftime">{f.time}</span>
                       </div>
                       <div className="fmsg">{f.msg}</div>
@@ -779,13 +1201,19 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 ))}
-                {!feed.length && <div className="hint" style={{ padding: '10px 4px' }}>차단·거부 기록이 없습니다.</div>}
+                {!feed.length && (
+                  <div className="hint" style={{ padding: '10px 4px' }}>
+                    차단·거부 기록이 없습니다.
+                  </div>
+                )}
               </div>
             </section>
 
             <section className="card" aria-labelledby="a-title">
               <div className="card-head">
-                <h2 id="a-title">감사로그 <span className="hint">append-only · 최근 12건</span></h2>
+                <h2 id="a-title">
+                  감사로그 <span className="hint">append-only · 최근 12건</span>
+                </h2>
                 <span className="src live">DB 실데이터</span>
               </div>
               <div className="audit">
@@ -794,8 +1222,13 @@ export default function DashboardPage() {
                     <span className="ats">{hhmm(a.ts)}</span>
                     <span className="aev">{a.event_type}</span>
                     <span className="adet">
-                      {[a.note_id && `노트 #${a.note_id}`, a.actor && `actor: ${a.actor}`, detailStr(a.detail)]
-                        .filter(Boolean).join(' · ')}
+                      {[
+                        a.note_id && `노트 #${a.note_id}`,
+                        a.actor && `actor: ${a.actor}`,
+                        detailStr(a.detail),
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </span>
                   </div>
                 ))}
@@ -807,13 +1240,18 @@ export default function DashboardPage() {
 
       {/* ── 전체 고지 (맨 아래) ──────────────────────────────
           화면 전체에 걸리는 고지다. 개별 산출물은 각자 자기 고지를 달고 다닌다 —
-          팩트 노트=워터마크(ReviewModal) · F1 답변=지연시세 고지(F1Chat).
+          종목 노트=워터마크(ReviewModal) · F1 답변=지연시세 고지(F1Chat).
           ⚠ 상담 전 브리핑 카드만 예외다: 백엔드가 만든 "ℹ 내부 참고용" 고지가
           content_md에 있는데 화면 타입(Brief)에 그 필드가 없어 카드가 그리지 않는다.
           이 줄이 위에 있을 땐 그게 가려졌지만, 아래로 내린 지금은 브리핑이 첫 화면에서
           고지 없이 보인다 — 카드 자체 고지를 붙이는 게 맞다(미결). */}
       <p className="disclaimer" role="note">
-        <span className="dot" aria-hidden="true">⚠</span> 투자권유·광고가 아닙니다. AI는 공개 공시·뉴스·지연시세에서 출처 있는 사실만 모읍니다. 고객에게 나가는 말은 PB가 직접 쓰고, AI 산출물은 전부 초안·미검증이며 발행·전달은 사람의 검토·심의·승인 후에만 가능합니다.
+        <span className="dot" aria-hidden="true">
+          ⚠
+        </span>{' '}
+        투자권유·광고가 아닙니다. AI는 공개 공시·뉴스·지연시세에서 출처 있는
+        사실만 모읍니다. 고객에게 나가는 말은 PB가 직접 쓰고, AI 산출물은 전부
+        초안·미검증이며, 발행·전달은 사람의 검토·심의·승인 후에만 가능합니다.
       </p>
 
       {/* ── 종목 즉답(F1) 입구 ────────────────────────────────
@@ -830,8 +1268,18 @@ export default function DashboardPage() {
 
       {/* ── 모달 ─────────────────────────────────────────────── */}
       {modal && (
-        <div id="overlay" onClick={(e) => { if (e.target === e.currentTarget) setModal(null); }}>
-          <div className="modal" role="dialog" aria-modal="true" aria-label="검토 화면">
+        <div
+          id="overlay"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setModal(null);
+          }}
+        >
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="검토 화면"
+          >
             {modal.kind === 'note' && data.notes[modal.code] && (
               <NoteModal
                 key={modal.code}
@@ -841,23 +1289,32 @@ export default function DashboardPage() {
                 onClose={() => setModal(null)}
                 onChanged={async () => {
                   await load();
-                  return api<NoteDetail>(`/api/notes/${data.notes[modal.code].id}`).catch(() => null);
+                  return api<NoteDetail>(
+                    `/api/notes/${data.notes[modal.code].id}`,
+                  ).catch(() => null);
                 }}
               />
             )}
             {modal.kind === 'f1' && <F1Chat initial={modal.q} />}
-            {modal.kind === 'chat' && (() => {
-              const it = data.queue.find((q): q is QueueChat => q.type === 'chat' && q.id === modal.id);
-              const c = it && data.customers.find((x) => x.id === it.customer_id);
-              if (!it || !c) return null;
-              return (
-                <ChatModal
-                  item={it} customer={c} role={role} toast={toast}
-                  onClose={() => setModal(null)}
-                  onChanged={() => void load()}
-                />
-              );
-            })()}
+            {modal.kind === 'chat' &&
+              (() => {
+                const it = data.queue.find(
+                  (q): q is QueueChat => q.type === 'chat' && q.id === modal.id,
+                );
+                const c =
+                  it && data.customers.find((x) => x.id === it.customer_id);
+                if (!it || !c) return null;
+                return (
+                  <ChatModal
+                    item={it}
+                    customer={c}
+                    role={role}
+                    toast={toast}
+                    onClose={() => setModal(null)}
+                    onChanged={() => void load()}
+                  />
+                );
+              })()}
           </div>
         </div>
       )}
