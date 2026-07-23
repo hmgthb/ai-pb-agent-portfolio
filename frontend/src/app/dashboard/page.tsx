@@ -378,25 +378,19 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      <div className="notice" role="note">
-        <span className="dot">⚠</span>
-        <span>
-          <strong>PB 상담 준비용 내부 참고 자료</strong> — 투자권유·광고가 아닙니다. AI는 공개 공시·뉴스·
-          지연시세에서 <strong>출처 있는 사실만</strong> 모읍니다. 고객에게 나가는 말은 PB가 직접 쓰고,
-          AI 산출물은 전부 <strong>초안·미검증</strong>이며 발행·전달은 사람의 검토·심의·승인 후에만 가능합니다.
-        </span>
-      </div>
-
-      <nav className="cats" aria-label="대시보드 카테고리">
-        <button className="cat" aria-pressed={view === 'cust'} onClick={() => setView('cust')}>
-          고객 관리<span className="cat-sub">지금 처리할 일 · 고객 현황</span>
-        </button>
-        {cfg.aiTab && (
+      {/* 탭 줄은 **고를 게 둘 이상일 때만** 낸다. PB 화면에는 AI 평가 탭이 없어 "고객 관리"
+          하나만 남는데, 선택지가 하나뿐인 탭은 고르는 장치가 아니라 제목일 뿐이다.
+          준법 화면(aiTab)에서는 실제로 두 화면을 오가므로 그대로 필요하다. */}
+      {cfg.aiTab && (
+        <nav className="cats" aria-label="대시보드 카테고리">
+          <button className="cat" aria-pressed={view === 'cust'} onClick={() => setView('cust')}>
+            고객 관리<span className="cat-sub">지금 처리할 일 · 고객 현황</span>
+          </button>
           <button className="cat" aria-pressed={view === 'ai'} onClick={() => setView('ai')}>
             AI 평가<span className="cat-sub">신뢰도 · 컴플라이언스 · 활동 감사</span>
           </button>
-        )}
-      </nav>
+        </nav>
+      )}
 
       {/* ══════════ 탭 1 · 고객 관리 ══════════ */}
       <div className="view stack" hidden={view !== 'cust'}>
@@ -416,6 +410,22 @@ export default function DashboardPage() {
           )}
           <span className="src live">감사로그 실집계</span>
         </div>
+
+        {/* 오늘 규모(내 담당 고객·내 처리 대기) → 바로 만들 수 있는 것(팩트 노트) 순서다.
+            "AI가 오늘 한 일" 바로 아래에 오늘의 수치와 조작이 붙고, 그 아래로 읽을거리
+            (브리핑·처리 대기·고객)가 이어진다. */}
+        <div className="tile-row">
+          {tiles.map((t) => (
+            <div className="tile" key={t.label}>
+              <div className="label">{t.label}</div>
+              <div className="value">{t.value}</div>
+              {'gate' in t && t.gate && <div className="sub"><GateMini data={data.summary.gate_blocks_daily} /></div>}
+              <div className="breakdown">{t.breakdown}</div>
+            </div>
+          ))}
+        </div>
+
+        {cfg.research && <ResearchCard actor={ACTOR[role]} onNoteCreated={() => void load()} />}
 
         {/* 상담 전 브리핑 (F2) — 오늘 시장 + 내 고객 보유 상위 종목의 밤사이 변화.
             선정 기준은 내 담당 고객의 보유 수다(backend pb_watchlist) — 배지가 그 근거를 적는다. */}
@@ -511,20 +521,6 @@ export default function DashboardPage() {
             </div>
           )}
         </section>
-
-        {/* 타일은 브리핑 다음이다 — PB에게 먼저 필요한 건 카운터가 아니라 오늘 모인 사실이다. */}
-        <div className="tile-row">
-          {tiles.map((t) => (
-            <div className="tile" key={t.label}>
-              <div className="label">{t.label}</div>
-              <div className="value">{t.value}</div>
-              {'gate' in t && t.gate && <div className="sub"><GateMini data={data.summary.gate_blocks_daily} /></div>}
-              <div className="breakdown">{t.breakdown}</div>
-            </div>
-          ))}
-        </div>
-
-        {cfg.research && <ResearchCard actor={ACTOR[role]} onNoteCreated={() => void load()} />}
 
         {/* 검토·승인 대기 */}
         <section className="card" aria-labelledby="q-title">
@@ -808,6 +804,17 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* ── 전체 고지 (맨 아래) ──────────────────────────────
+          화면 전체에 걸리는 고지다. 개별 산출물은 각자 자기 고지를 달고 다닌다 —
+          팩트 노트=워터마크(ReviewModal) · F1 답변=지연시세 고지(F1Chat).
+          ⚠ 상담 전 브리핑 카드만 예외다: 백엔드가 만든 "ℹ 내부 참고용" 고지가
+          content_md에 있는데 화면 타입(Brief)에 그 필드가 없어 카드가 그리지 않는다.
+          이 줄이 위에 있을 땐 그게 가려졌지만, 아래로 내린 지금은 브리핑이 첫 화면에서
+          고지 없이 보인다 — 카드 자체 고지를 붙이는 게 맞다(미결). */}
+      <p className="disclaimer" role="note">
+        <span className="dot" aria-hidden="true">⚠</span> 투자권유·광고가 아닙니다. AI는 공개 공시·뉴스·지연시세에서 출처 있는 사실만 모읍니다. 고객에게 나가는 말은 PB가 직접 쓰고, AI 산출물은 전부 초안·미검증이며 발행·전달은 사람의 검토·심의·승인 후에만 가능합니다.
+      </p>
 
       {/* ── 종목 즉답(F1) 입구 ────────────────────────────────
           화면에서 이것만 성격이 다르다 — 나머지는 상담 **전** 준비인데 F1은 상담 **중**
