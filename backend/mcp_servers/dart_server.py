@@ -10,8 +10,9 @@ import io
 import os
 import zipfile
 import xml.etree.ElementTree as ET
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 import requests
 from dotenv import load_dotenv
@@ -21,6 +22,17 @@ load_dotenv()
 
 API_KEY = os.environ["DART_API_KEY"]
 mcp = FastMCP("dart")
+
+# DART는 한국 거래일 기준으로 접수된다. 컨테이너는 UTC라 `date.today()`를 쓰면 KST 09:00
+# 전에 하루가 밀려, **그날 아침 접수된 공시가 조회 창 밖으로 빠진다**(아침 브리핑에서 실제
+# 누락). 기준 타임존의 정본 선언은 backend/db.py의 BIZ_TZ — 여기서 import하지 않는 이유는
+# MCP 서버가 스크립트로 직접 실행돼 `backend` 패키지를 못 찾기 때문이다(모듈 헤더 참고).
+BIZ_TZ = ZoneInfo("Asia/Seoul")
+
+
+def _today():
+    """영업 타임존(KST) 기준 오늘."""
+    return datetime.now(BIZ_TZ).date()
 
 # 손익계산서는 회사마다 IS(손익계산서)/CIS(포괄손익계산서)로 신고 방식이 다르고,
 # 계정명도 회사·업종마다 표기가 제각각이다(예: "영업이익(손실)"처럼 흑자·적자를 한 계정명으로
@@ -84,7 +96,7 @@ def dart_search(
     """
     corp_code, corp_name = _get_corp_code(stock_code)
 
-    end = date.today()
+    end = _today()
     start = end - timedelta(days=days)
     items: list[dict] = []
     page_no = 1

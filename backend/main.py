@@ -4,7 +4,6 @@ import logging
 import re
 import uuid
 from contextlib import asynccontextmanager
-from datetime import date
 from pathlib import Path
 
 from claude_agent_sdk import (
@@ -26,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from backend import brief, citations, compliance, db, f1, market, session_store
+from backend import bizdate, brief, citations, compliance, db, f1, market, session_store
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 logger = logging.getLogger(__name__)
@@ -1275,7 +1274,7 @@ async def run_brief(body: BriefRunBody):
     content_md, sentences = brief.assemble(items, indices)
     violations = brief.check(content_md, sentences)
     brief_id = await db.create_brief(
-        date.today(), content_md, items, sentences, violations, market_payload
+        bizdate.biz_today(), content_md, items, sentences, violations, market_payload
     )
     await db.append_audit(
         "brief_created", None, None,

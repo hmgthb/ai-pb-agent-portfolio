@@ -14,7 +14,7 @@
 
 import os
 import sys
-from datetime import date, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 import requests
@@ -29,6 +29,7 @@ from mcp.server.fastmcp import FastMCP
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend import market  # noqa: E402  (위 sys.path 부트스트랩 뒤여야 한다)
+from backend.bizdate import biz_today  # noqa: E402  (조회 창을 한국 거래일로 자른다)
 
 load_dotenv()
 
@@ -54,7 +55,7 @@ def krx_quote(stock_code: str) -> dict:
     실시간 시세가 아니라 일별 종가 기준이다. 반환값의 as_of(기준일자)를 출처 시점으로
     쓰고, 인용 시 지연시세임을 반드시 함께 밝힌다.
     """
-    today = date.today()
+    today = biz_today()
     resp = requests.get(
         ENDPOINT,
         params={

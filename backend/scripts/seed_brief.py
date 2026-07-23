@@ -14,9 +14,8 @@
 
 import asyncio
 import sys
-from datetime import date
 
-from backend import brief, db, market
+from backend import bizdate, brief, db, market
 from backend.main import MAX_DISCLOSURES_PER_STOCK, MAX_NEWS_PER_STOCK, _recent, pb_watchlist
 from backend.mcp_servers.dart_server import dart_search
 from backend.mcp_servers.krx_server import krx_quote
@@ -62,7 +61,7 @@ async def main() -> None:
     violations = brief.check(content_md, sentences)
 
     brief_id = await db.create_brief(
-        date.today(), content_md, items, sentences, violations,
+        bizdate.biz_today(), content_md, items, sentences, violations,
         {"indices": indices, "note": market_note},
     )
     await db.append_audit(

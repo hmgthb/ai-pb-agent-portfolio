@@ -14,10 +14,12 @@
 """
 
 import os
-from datetime import date, timedelta
+from datetime import timedelta
 
 import requests
 from dotenv import load_dotenv
+
+from backend.bizdate import biz_today
 
 load_dotenv()
 
@@ -46,7 +48,8 @@ def fetch_index(index_name: str) -> dict:
     if not api_key:
         raise MarketDataUnavailable("KRX_API_KEY가 설정되지 않았습니다.")
 
-    today = date.today()
+    # 조회 창은 한국 거래일 기준 — UTC로 자르면 KST 09:00 전에 종료일이 하루 밀린다.
+    today = biz_today()
     try:
         resp = requests.get(
             ENDPOINT,

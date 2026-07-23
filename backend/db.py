@@ -9,6 +9,9 @@ import os
 
 import asyncpg
 
+# 아래 집계 쿼리의 "오늘"은 UTC가 아니라 사용자의 영업일이다 — 정본은 backend/bizdate.py.
+from backend.bizdate import biz_date_sql as _biz_date
+
 _pool: asyncpg.Pool | None = None
 
 SCHEMA = """
@@ -262,7 +265,7 @@ async def today_activity() -> asyncpg.Record:
     그 API가 최근 N건만 주기 때문이다(도구호출이 하루 수백 건이라 조용히 적게 세인다).
     """
     return await pool().fetchrow(
-        """SELECT
+        f"""SELECT
              count(*) FILTER (WHERE event_type = 'tool_use_start') AS tool_calls,
              count(DISTINCT detail->>'agent_type')
                FILTER (WHERE event_type = 'tool_use_start'
@@ -271,17 +274,18 @@ async def today_activity() -> asyncpg.Record:
              count(*) FILTER (WHERE event_type = 'note_created') AS notes,
              count(*) FILTER (WHERE event_type = 'chat_answered') AS chats,
              max(ts) FILTER (WHERE event_type = 'tool_use_start') AS last_run
-           FROM audit_log WHERE ts::date = now()::date"""
+           FROM audit_log WHERE {_biz_date('ts')} = {_biz_date('now()')}"""
     )
 
 
 async def gate_blocks_daily(days: int) -> list[asyncpg.Record]:
     """최근 N일 게이트 차단 건수(발행 시도가 막힌 날). 0건인 날도 행으로 채워 반환한다."""
     return await pool().fetch(
-        """SELECT d::date AS day, count(a.id) AS blocks
-           FROM generate_series(now()::date - ($1::int - 1), now()::date, '1 day') d
+        f"""SELECT d::date AS day, count(a.id) AS blocks
+           FROM generate_series({_biz_date('now()')} - ($1::int - 1),
+                                {_biz_date('now()')}, '1 day') d
            LEFT JOIN audit_log a
-             ON a.event_type = 'publish_blocked' AND a.ts::date = d::date
+             ON a.event_type = 'publish_blocked' AND {_biz_date('a.ts')} = d::date
            GROUP BY d ORDER BY d""",
         days,
     )

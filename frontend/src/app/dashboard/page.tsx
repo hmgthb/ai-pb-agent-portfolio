@@ -80,20 +80,25 @@ type Data = {
   brief: Brief | null;
 };
 
-/* ── 최근 14일 라벨 + 날짜별 집계 ─────────────────────────── */
+/* ── 최근 14일 라벨 + 날짜별 집계 ───────────────────────────
+   하루 경계는 브라우저 위치와 무관하게 KST 고정 — 백엔드 집계(db.py의 BIZ_TZ)와 같은
+   기준이어야 추이 막대가 "AI가 오늘 한 일"과 어긋나지 않는다. 예전엔 라벨은 로컬 날짜로
+   만들고 데이터는 ISO를 slice(0,10)해 UTC 날짜로 담아서, KST 00~09시에 생긴 건이 하루
+   앞 칸에 꽂혔다. */
+const BIZ_TZ = 'Asia/Seoul';
+const bizDay = new Intl.DateTimeFormat('en-CA', { timeZone: BIZ_TZ }); // → YYYY-MM-DD
+
 function lastDays(n: number) {
   const out: { key: string; label: string }[] = [];
   for (let i = n - 1; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    out.push({
-      key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
-      label: `${d.getMonth() + 1}/${d.getDate()}`,
-    });
+    // KST는 DST가 없어 24h 고정 감산으로 날짜가 정확히 하나씩 물러난다.
+    const key = bizDay.format(new Date(Date.now() - i * 86_400_000));
+    const [, m, d] = key.split('-');
+    out.push({ key, label: `${Number(m)}/${Number(d)}` });
   }
   return out;
 }
-const dayKey = (iso: string) => iso.slice(0, 10);
+const dayKey = (iso: string) => bizDay.format(new Date(iso));
 
 /* ── 상담 준비 메모 ───────────────────────────────────────────
    고객을 고르면, 그 고객이 **실제로 들고 있는 종목**에 대해 이미 수집된 사실만 모아 보여준다.
