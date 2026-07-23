@@ -8,7 +8,7 @@
  */
 
 import { useState } from 'react';
-import { apiPost, errorMessage, fmtKRW, hhmm, detailStr } from './api';
+import { apiPost, errorMessage, fmtDate, fmtKRW, hhmm, detailStr } from './api';
 import {
   ACK_REASONS, ACTOR, MY_PB, PILL, RISK, WATERMARK,
   type Customer, type NoteAck, type NoteDetail, type NoteSentence, type NoteSource,
@@ -17,22 +17,25 @@ import {
 
 type Result = { ok?: string; blocked?: string };
 
-/* ── 문장 출처 배지 ───────────────────────────────────────── */
+/* ── 문장 출처 배지 ─────────────────────────────────────────
+   날짜는 출처 종류와 무관하게 같은 규칙으로 찍는다(fmtDate) — 공시는 `20260722`,
+   뉴스는 RFC 2822로 원본 형식이 다른데, 그대로 두면 같은 줄에서 표기가 갈리고
+   뉴스는 `.slice()`에 요일이 잘려 "Wed, 22 Ju"로 나갔다. */
 function SourceBadge({ src }: { src: NoteSource | null }) {
   if (!src) return <span className="sbadge un">UNSOURCED</span>;
   if (src.type === 'dart') {
     return (
       <span className="sbadge src" title={`rcpNo ${src.rcept_no}`}>
-        공시 {src.rcept_dt ?? '접수일 미상'}
+        공시 {fmtDate(src.rcept_dt) || '접수일 미상'}
       </span>
     );
   }
   if (src.type === 'krx') {
-    return <span className="sbadge src" title={src.label}>시세 {src.as_of}</span>;
+    return <span className="sbadge src" title={src.label}>시세 {fmtDate(src.as_of)}</span>;
   }
   return (
     <span className="sbadge src" title={src.url}>
-      뉴스 {(src.pub_date || '').slice(0, 10) || '시점 미상'}
+      뉴스 {fmtDate(src.pub_date) || '시점 미상'}
     </span>
   );
 }
@@ -151,28 +154,32 @@ export function NoteModal({
     return {};
   };
 
+  /* 노트를 만든 사람이 PB이므로 사실 확인도 PB가 한다 — 예전엔 두 단계가 '관리자'
+     권한이었는데, 1인용 대시보드에는 관리자가 없다. 마지막 단계(발행)만 준법에게 남긴다:
+     **만드는 사람과 통과시키는 사람이 갈리는 지점이 여기 하나**이고, 그게 이 제품의 핵심이다.
+     그래서 PB 화면에서 심의중 노트는 상태만 보이고 버튼이 없다(아래 deny 문구가 이유를 말한다). */
   const actions: Action[] =
     current.status === 'draft'
       ? [{
-          label: '검토 시작 (내가 담당)', ok: role === 'admin',
-          deny: '검토 시작은 관리자(작성부서 대행) 권한입니다',
+          label: '사실 확인 시작', ok: role === 'pb',
+          deny: '노트의 사실 확인은 담당 PB가 합니다',
           run: () => act('review'),
         }]
       : current.status === 'review'
       ? [{
-          label: '검토 완료 → 심의 요청', ok: role === 'admin',
-          deny: '심의 요청은 검토자(작성부서) 권한입니다',
+          label: '확인 완료 → 준법 심의 요청', ok: role === 'pb',
+          deny: '심의 요청은 확인한 PB가 합니다',
           run: () => act('deliberate'),
         }]
       : current.status === 'deliberation'
       ? [{
           label: '발행', ok: role === 'comp',
-          deny: '발행은 준법 권한 필요',
+          deny: '준법 심의 중입니다 — 발행은 준법 권한입니다',
           run: () => act('publish'),
         }]
       : [];
 
-  const people = ([['검토자', current.reviewer], ['심의자', current.deliberator], ['발행자', current.publisher]] as const)
+  const people = ([['확인', current.reviewer], ['심의 요청', current.deliberator], ['발행', current.publisher]] as const)
     .map(([k, v]) => `${k} ${v || '—'}`)
     .join(' · ');
 

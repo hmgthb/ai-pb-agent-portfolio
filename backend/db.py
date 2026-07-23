@@ -254,19 +254,34 @@ async def latest_brief() -> asyncpg.Record | None:
 # 지어내지 않는다 (가드레일 3: 확인할 수 없는 수치를 임의로 채우지 않는다).
 
 
-async def list_customers() -> list[asyncpg.Record]:
-    return await pool().fetch("SELECT * FROM pb_customers ORDER BY id")
+# pb 인자는 "이 PB의 담당 고객만"으로 좁히는 축이다 — 시드에는 3명의 PB가 들어 있지만
+# 이 제품은 PB 1인용 대시보드이므로(main.PB_NAME) 남의 고객은 조회 단계에서 빠진다.
+# None이면 전사 — 지금은 쓰는 곳이 없지만 집계·이관 같은 감독 용도를 위해 남겨 둔다.
+async def list_customers(pb: str | None = None) -> list[asyncpg.Record]:
+    if pb is None:
+        return await pool().fetch("SELECT * FROM pb_customers ORDER BY id")
+    return await pool().fetch(
+        "SELECT * FROM pb_customers WHERE pb = $1 ORDER BY id", pb
+    )
 
 
 async def get_customer(customer_id: int) -> asyncpg.Record | None:
     return await pool().fetchrow("SELECT * FROM pb_customers WHERE id = $1", customer_id)
 
 
-async def list_sessions() -> list[asyncpg.Record]:
+async def list_sessions(pb: str | None = None) -> list[asyncpg.Record]:
+    if pb is None:
+        return await pool().fetch(
+            """SELECT s.*, c.name AS customer_name, c.pb, c.account_no
+               FROM pb_sessions s JOIN pb_customers c ON c.id = s.customer_id
+               ORDER BY s.started_at DESC"""
+        )
     return await pool().fetch(
         """SELECT s.*, c.name AS customer_name, c.pb, c.account_no
            FROM pb_sessions s JOIN pb_customers c ON c.id = s.customer_id
-           ORDER BY s.started_at DESC"""
+           WHERE c.pb = $1
+           ORDER BY s.started_at DESC""",
+        pb,
     )
 
 

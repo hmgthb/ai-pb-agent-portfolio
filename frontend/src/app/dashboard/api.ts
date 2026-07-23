@@ -56,9 +56,31 @@ export const fmtPct = (v: string | number) => {
 /** 등락률이 음수인가 — 표시(화살표·색)의 단일 판단 지점 */
 export const isDown = (v: string | number) => Number(v) < 0;
 
-/** "20260713" → "2026-07-13" (이미 하이픈이 있으면 그대로) */
-export const fmtDate = (s: string | null | undefined) =>
-  (s ?? '').replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+/* 하루 경계는 브라우저 위치와 무관하게 KST 고정 — 백엔드(bizdate.py)와 같은 기준이어야
+   집계·표기가 어긋나지 않는다. **프론트에서는 여기가 유일한 정의다**(page.tsx가 가져다 쓴다).
+   같은 상수가 backend/bizdate.py·dart_server.py에도 있다 — 늘리지 말 것(HANDOFF §2). */
+export const BIZ_TZ = 'Asia/Seoul';
+export const bizDay = new Intl.DateTimeFormat('en-CA', { timeZone: BIZ_TZ }); // → YYYY-MM-DD
+
+/** 화면의 날짜 표기는 `YYYY-MM-DD`(KST) 하나다. 들어오는 값이 세 가지라 여기서 흡수한다:
+ *   - DART 접수일 `20260722` (8자리)
+ *   - 이미 `2026-07-22…`인 값 (ISO 앞 10자리)
+ *   - 뉴스 발행시각 `Wed, 22 Jul 2026 21:34:00 +0900` (RFC 2822, 네이버 API)
+ *
+ *  마지막 것을 `.slice()`로 자르면 **요일이 잘린 "Wed, 22 Ju"가 그대로 화면에 나간다** —
+ *  노트 인용 배지와 F1 채팅에서 실제로 그렇게 나가고 있었다. 파싱해서 KST 날짜로 찍는다.
+ *  UTC로 찍으면 안 되는 이유: KST 00~09시 뉴스가 전날로 밀린다. 브리핑이 내세우는 게
+ *  하필 "밤사이 뉴스"라 그 창이 정확히 밀리는 구간이다.
+ *  못 읽는 값은 지어내지 않고 원문을 그대로 돌려준다. */
+export const fmtDate = (s: string | null | undefined) => {
+  const v = (s ?? '').trim();
+  if (!v) return '';
+  const packed = v.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (packed) return `${packed[1]}-${packed[2]}-${packed[3]}`;
+  if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
+  const t = new Date(v);
+  return Number.isNaN(t.getTime()) ? v : bizDay.format(t);
+};
 
 export const hhmm = (iso: string) =>
   new Date(iso).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });

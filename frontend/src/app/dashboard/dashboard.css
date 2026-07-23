@@ -135,24 +135,24 @@
   .notice .dot { color: var(--warning); }
   .notice strong { color: var(--ink); font-weight: 600; }
 
-  /* ── 기능 레일 (H1: 5기능이 한 플랫폼 위에 있다는 인상) ── */
-  .rail { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
-  .rail .f {
-    flex: 1 1 150px; min-width: 0;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-    padding: 9px 12px 10px;
+  /* ── 종목 즉답(F1) 고정 버튼 ─────────────────
+     기능 레일(.rail)이 있던 자리다. 레일은 5장 중 F1만 눌렸고 F4·F5는 없는 기능을
+     광고해서 걷어냈다 — 남은 유일한 조작(F1)을 여기로 옮겼다.
+     상담 **중** 쓰는 기능이라 스크롤과 무관하게 떠 있어야 한다. */
+  .fab {
+    position: fixed; right: 22px; bottom: 22px; z-index: 40;
+    display: inline-flex; align-items: center; gap: 7px;
+    font: inherit; font-size: 13px; font-weight: 600; color: #fff;
+    background: var(--accent); border: 0; border-radius: 22px;
+    padding: 11px 18px; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
   }
-  .rail .f .fname { font-size: 12.5px; font-weight: 600; color: var(--ink); }
-  .rail .f .fsub { font-size: 11px; color: var(--muted); margin-top: 1px; }
-  .rail .f .fstate {
-    display: inline-block; margin-top: 6px; font-size: 10.5px; font-weight: 600;
-    padding: 1px 7px; border-radius: 10px;
+  .fab:hover { filter: brightness(1.06); }
+  .fab:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  /* 좁은 화면에서는 본문 위로 덜 덮이게 살짝 당긴다. */
+  @media (max-width: 560px) {
+    .fab { right: 12px; bottom: 12px; padding: 10px 15px; }
   }
-  /* 동작하는 기능만 강조하고 나머지는 로드맵으로 낮춘다 — 안 되는 걸 되는 것처럼 보이지 않게. */
-  .rail .f.on { border-color: var(--accent); }
-  .rail .f.on .fstate { background: var(--accent); color: #fff; }
-  .rail .f.off { opacity: 0.62; }
-  .rail .f.off .fstate { background: var(--grid); color: var(--muted); }
 
   /* ── 오늘의 브리프 (F2) ───────────────────── */
   .brief-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
@@ -505,8 +505,6 @@
   .gen-reasons li { font-size: 12.5px; line-height: 1.7; color: var(--ink-2); }
 
   /* ── F1 대화형 Q&A (시안에 없는 추가분) ─────────────────────────────── */
-  .rail .f.clickable { cursor: pointer; }
-  .rail .f.clickable:hover { border-color: var(--accent); }
   .chat-hint { font-size: 12.5px; line-height: 1.6; color: var(--muted); margin: 6px 0 10px; }
   .chat-hint em { color: var(--accent); font-style: normal; }
   .chat-log {
@@ -565,7 +563,8 @@
      시안(docs/design/pb-admin-dashboard.html)에는 없다 — 대상 사용자를 PB로 확정하면서
      "오늘 시장 → 내 고객 종목 → 고객별 상담 준비" 흐름을 위해 실화면에만 더한 것들이다.
      기존 토큰(--accent/--grid/--muted)만 쓰고 새 색을 만들지 않는다. */
-  .fname .fcode, .m-head h3 .fcode {
+  /* .fname은 기능 레일과 함께 사라졌다 — 지금 이 배지가 붙는 곳은 F1 모달 제목뿐이다. */
+  .m-head h3 .fcode {
     font-size: 10px; font-weight: 600; color: var(--muted);
     border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 2px;
     vertical-align: 1px;

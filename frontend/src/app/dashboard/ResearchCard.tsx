@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { streamUrl } from './api';
+import { fmtDate, streamUrl } from './api';
 
 type StepState = 'idle' | 'run' | 'done' | 'fail';
 type Agent = 'a1' | 'a2' | 'a4' | 'a5';
@@ -327,7 +327,7 @@ export default function ResearchCard({
                   <span className="btag">공시</span>
                   <span style={{ minWidth: 0 }}>
                     <a href={s.viewer_url} target="_blank" rel="noreferrer">원문 {s.rcept_no}</a>
-                    <span className="bcode"> {s.rcept_dt ?? '접수일 미상'}</span>
+                    <span className="bcode"> {fmtDate(s.rcept_dt) || '접수일 미상'}</span>
                   </span>
                 </div>
               ))}
@@ -357,7 +357,7 @@ export default function ResearchCard({
                   <span className="btag">뉴스</span>
                   <span style={{ minWidth: 0 }}>
                     <a href={n.link} target="_blank" rel="noreferrer">{n.title}</a>
-                    <span className="bcode"> {(n.pub_date || '').slice(0, 16)}</span>
+                    <span className="bcode"> {fmtDate(n.pub_date)}</span>
                   </span>
                 </div>
               ))}

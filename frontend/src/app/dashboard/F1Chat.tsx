@@ -13,21 +13,21 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { chatStreamUrl } from './api';
+import { chatStreamUrl, fmtDate } from './api';
 import type { ChatAnswer, ChatRouting, NoteSource } from './types';
 
 const AGENT_LABEL: Record<string, string> = {
   a1: '공시(a1)', a2: '재무(a2)', a4: '뉴스(a4)', krx: '시세(KRX)',
 };
 
-/** 문장 출처 배지 — 노트 모달과 같은 규칙에 시세(krx)를 더한다. */
+/** 문장 출처 배지 — 노트 모달과 같은 규칙(날짜 표기 포함)에 시세(krx)를 더한다. */
 function SrcBadge({ src }: { src: NoteSource | null }) {
   if (!src) return <span className="sbadge un">UNSOURCED</span>;
   if (src.type === 'dart')
-    return <span className="sbadge src" title={`rcpNo ${src.rcept_no}`}>공시 {src.rcept_dt ?? ''}</span>;
+    return <span className="sbadge src" title={`rcpNo ${src.rcept_no}`}>공시 {fmtDate(src.rcept_dt)}</span>;
   if (src.type === 'krx')
-    return <span className="sbadge src" title={src.label}>시세 {src.as_of}</span>;
-  return <span className="sbadge src" title={src.url}>뉴스 {(src.pub_date || '').slice(0, 10)}</span>;
+    return <span className="sbadge src" title={src.label}>시세 {fmtDate(src.as_of)}</span>;
+  return <span className="sbadge src" title={src.url}>뉴스 {fmtDate(src.pub_date)}</span>;
 }
 
 type Turn = {

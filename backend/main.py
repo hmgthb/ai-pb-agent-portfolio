@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import uuid
 from contextlib import asynccontextmanager
@@ -29,6 +30,13 @@ from backend import bizdate, brief, citations, compliance, db, f1, market, sessi
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 logger = logging.getLogger(__name__)
+
+# ── 이 대시보드는 PB **1인용**이다 (2026-07-23 확정) ──────────────────────────
+# 여러 PB가 공유하는 감독 콘솔이 아니다. 그래서 고객·상담·브리핑 유니버스를 전부 이 한
+# 사람 기준으로 좁힌다. 시드에 PB 3명이 들어 있는 건 "남의 고객은 내 화면에 안 보인다"를
+# 실제로 확인하기 위한 것이고, **여기서 거르므로 다른 PB의 고객 정보는 브라우저까지 가지
+# 않는다**(역할을 클라이언트 필터로만 두면 정보장벽이 아니라 표시 규칙일 뿐이다).
+PB_NAME = os.getenv("PB_NAME", "박PB")
 
 
 @asynccontextmanager
@@ -1002,13 +1010,15 @@ def _citation_stats(note_rows) -> tuple[int, int, int]:
 
 @app.get("/api/customers")
 async def get_customers():
-    return [_customer_to_dict(r) for r in await db.list_customers()]
+    """담당 고객만 반환한다 — 남의 고객은 여기서 빠진다(PB_NAME 주석 참조)."""
+    return [_customer_to_dict(r) for r in await db.list_customers(PB_NAME)]
 
 
 @app.get("/api/customers/{customer_id}")
 async def get_customer_detail(customer_id: int):
     row = await db.get_customer(customer_id)
-    if row is None:
+    # 담당이 아니면 "없음"으로 답한다 — 403으로 존재를 알려주면 목록을 거른 의미가 없다.
+    if row is None or row["pb"] != PB_NAME:
         raise HTTPException(404, "고객을 찾을 수 없습니다.")
     return _customer_to_dict(row)
 
@@ -1026,14 +1036,17 @@ async def get_sessions():
             "question": r["question"],
             "started_at": r["started_at"].isoformat(),
         }
-        for r in await db.list_sessions()
+        for r in await db.list_sessions(PB_NAME)
     ]
 
 
 async def _decide_session(session_id: int, decision: str, body: SessionDecisionBody):
     """승인/반려는 담당 PB의 1회성 결정이다 — 이미 결정된 건은 409로 막는다."""
     row = await db.get_session(session_id)
-    if row is None:
+    # 읽기(`/api/sessions`)를 담당 고객으로 좁혔으면 쓰기도 같이 좁혀야 한다 —
+    # 한쪽만 막으면 id를 아는 것만으로 남의 고객 건을 처리할 수 있다.
+    customer = await db.get_customer(row["customer_id"]) if row else None
+    if row is None or customer is None or customer["pb"] != PB_NAME:
         raise HTTPException(404, "상담 세션을 찾을 수 없습니다.")
     if row["status"] != db.SESSION_PENDING:
         raise HTTPException(
@@ -1066,7 +1079,7 @@ async def reject_session(session_id: int, body: SessionDecisionBody):
 @app.get("/api/dashboard/summary")
 async def dashboard_summary():
     notes = await db.list_notes()
-    sessions = await db.list_sessions()
+    sessions = await db.list_sessions(PB_NAME)
     sourced, total, interpretations = _citation_stats(notes)
     published = [n for n in notes if n["status"] == "published"]
     pending_notes = [n for n in notes if n["status"] != "published"]
@@ -1089,7 +1102,7 @@ async def dashboard_summary():
         "queue_pending": len(pending_notes) + len(pending_sessions),
         "gate_blocks_7d": sum(b["blocks"] for b in blocks),
         "gate_blocks_daily": [b["blocks"] for b in blocks],
-        "customers_total": len(await db.list_customers()),
+        "customers_total": len(await db.list_customers(PB_NAME)),
         # "AI가 오늘 한 일" 줄 — 훅이 남긴 오늘치 흔적만 센다(없으면 0이고, 그게 사실이다).
         "today": {
             k: (v.isoformat() if k == "last_run" and v else v)
@@ -1114,14 +1127,14 @@ async def dashboard_queue():
                 "status": n["status"],
                 # 셀프 클레임 — 아직 아무도 집지 않은 건은 '미배정'으로 남긴다.
                 "who": n["deliberator"] or n["reviewer"] or "미배정",
-                # 담당(who)과 생성자는 다르다. PB는 노트를 만들 수 있지만 검토·발행은 못 하므로
-                # who로는 자기 노트를 영영 못 찾는다 — 화면이 "내가 만든 건"을 거를 축이다.
+                # 담당(who)과 생성자는 다르다. 화면은 이 축으로 "누가 만든 건인지"를 적는다
+                # (1인용이 된 뒤로 거르는 축은 아니다 — 노트는 전부 이 PB의 것이다).
                 "created_by": n["created_by"],
                 "violations": json.loads(n["violations_json"]),
                 "updated_at": n["updated_at"].isoformat(),
             }
         )
-    for s in await db.list_sessions():
+    for s in await db.list_sessions(PB_NAME):
         if s["status"] != db.SESSION_PENDING:
             continue
         items.append(
@@ -1176,19 +1189,19 @@ BRIEF_MAX_STOCKS = 3
 
 
 async def pb_watchlist(limit: int = BRIEF_MAX_STOCKS) -> list[str]:
-    """보유 고객 수가 많은 순(동수면 보유금액 합계 순) 상위 N 종목코드.
+    """**이 PB의 담당 고객** 중 보유 고객 수가 많은 순(동수면 보유금액 합계 순) 상위 N 종목코드.
 
     "몇 명에게 영향이 있나"가 우선이고 금액은 동점 처리다 — 한 명의 큰 계좌보다 여러
     고객이 걸린 종목이 상담 준비에서 먼저 필요하다.
 
-    ⚠️ 집계 범위는 **전사 고객 전체**다(PB별이 아니다). 브리핑은 하루 한 번 도는 배치라
-    로그인 사용자가 없고, PB마다 따로 돌리면 실행·크레딧이 PB 수만큼 늘어난다. 그래서
-    **화면이 이걸 "내 고객 보유 상위"라고 말하면 안 된다** — 선정 근거(전사 보유 고객 수)와
-    내 담당 몇 명이 걸렸는지를 따로 보여준다(frontend `page.tsx`의 브리핑 카드 배지).
+    집계 범위는 `PB_NAME`의 담당 고객이다. 예전에는 전사 전체로 집계했는데(배치라 로그인
+    사용자가 없고 PB마다 돌리면 크레딧이 PB 수만큼 는다는 이유), **1인용 대시보드에서는 그
+    이유가 성립하지 않고 선정 결과도 실제로 틀렸다** — 시드 기준 전사 1위(SK하이닉스, 21명)는
+    박PB에게는 5명짜리 4위권 밖 종목이고, 정작 내 고객 8명이 든 셀트리온보다 위에 올라왔다.
     """
     holders: dict[str, int] = {}
     amounts: dict[str, int] = {}
-    for row in await db.list_customers():
+    for row in await db.list_customers(PB_NAME):
         for h in json.loads(row["holdings"]):
             code = h.get("code")
             if not code or not re.fullmatch(r"\d{6}", code):

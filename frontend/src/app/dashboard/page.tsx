@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import './dashboard.css';
-import { api, ago, detailStr, fmtDate, fmtKRW, fmtPct, hhmm, isDown } from './api';
+import { api, ago, bizDay, detailStr, fmtDate, fmtKRW, fmtPct, hhmm, isDown } from './api';
 import { BarChart, Donut, GateMini, LineChart, Tip, useTip } from './charts';
 import F1Chat from './F1Chat';
 import ResearchCard from './ResearchCard';
@@ -32,43 +32,36 @@ const ROLES: Record<Role, {
   aiTab: boolean;
   portfolio: boolean;
   research: boolean;
+  /** 상담 전 브리핑 노출 — 상담 준비는 PB의 일이다. 준법 화면에 띄우면 카드가 자기를
+   *  "내 고객 보유 상위"라고 소개하는데, 그 화면을 보는 사람에게 담당 고객은 없다. */
+  brief: boolean;
   defaultView: 'cust' | 'ai' | null;
   queueFilter: ((it: QueueItem) => boolean) | null;
   custFilter: ((c: Customer) => boolean) | null;
   qScope: string;
 }> = {
-  admin: {
-    aiTab: true, portfolio: true, research: true, defaultView: null,
+  // 이 화면의 주인. 담당 고객·상담은 **백엔드가 이미 걸러서** 보내므로(main.PB_NAME)
+  // 여기서 다시 거를 필요가 없다 — 남의 고객은 애초에 브라우저에 도착하지 않는다.
+  // 노트도 거르지 않는다: PB가 1명이니 이 대시보드의 노트는 전부 이 사람 것이다.
+  // (예전엔 created_by로 걸렀는데, 생성자가 없는 노트 6건이 큐에서 통째로 사라졌다.)
+  pb: {
+    aiTab: false, portfolio: true, research: true, brief: true, defaultView: 'cust',
     queueFilter: null, custFilter: null, qScope: '',
   },
-  // PB도 팩트 노트를 **생성**할 수 있다(상담 준비 자료). 검토·심의·발행은 여전히
-  // 리서치·준법 권한이다 — 만드는 것과 내보내는 것을 분리하는 게 이 제품의 핵심이다.
-  //
-  // 그래서 노트를 담당자(who=검토자·심의자)로만 거르면 PB는 **자기가 만든 노트를 영영
-  // 못 본다** — 만들 수는 있는데 담당자가 될 수는 없기 때문이다. 생성자(created_by)로 건다.
-  pb: {
-    aiTab: false, portfolio: true, research: true, defaultView: 'cust',
-    queueFilter: (it) => (it.type === 'chat' ? it.who : it.created_by) === MY_PB,
-    custFilter: (c) => c.pb === MY_PB,
-    qScope: `${MY_PB}(나) 담당·생성 건만 표시 중`,
-  },
+  // 준법은 이 대시보드의 사용자가 아니다 — **다른 사람의 화면**을 데모로 미리 보는 모드다.
+  // 그래서 고객 포트폴리오가 안 보이고(정보장벽), 심의 단계 노트만 손댈 수 있다.
   comp: {
-    aiTab: true, portfolio: false, research: false, defaultView: 'ai',
+    aiTab: true, portfolio: false, research: false, brief: false, defaultView: 'ai',
     queueFilter: (it) => it.type === 'note' && it.status === 'deliberation',
     custFilter: null,
     qScope: '심의 단계 건만 표시 중',
   },
 };
 
-/** 기능 레일은 PB가 읽는 말로 적는다 — F1~F5는 내부 코드명이라 이름만으로는 무엇을
- *  해주는지 알 수 없다. 코드는 뒤에 작게 붙여 문서·발표와 대응이 유지되게 한다. */
-const FEATURES = [
-  { id: 'F1', name: '종목 즉답', sub: '상담 중 질문에 출처와 함께', on: false },
-  { id: 'F2', name: '상담 전 브리핑', sub: '고객 보유 종목의 밤사이 변화', on: true },
-  { id: 'F3', name: '종목 팩트 노트', sub: '실적·공시를 출처와 함께 정리', on: true },
-  { id: 'F4', name: '피어·섹터 비교', sub: '"경쟁사 대비" 질문 대응', on: false },
-  { id: 'F5', name: '규정 확인', sub: '상담 화법·고지 의무', on: false },
-];
+/* 기능 레일(F1~F5 카드 5장)은 뺐다. 5장 중 눌러서 뭔가 일어나는 건 F1 하나였고, F2·F3는
+   같은 파란 테두리를 두르고도 클릭에 반응하지 않아 고장으로 읽혔다(실제 기능은 아래 각자의
+   카드에 있다). F4·F5는 만들지 않은 기능의 자리표시였다 — 로드맵은 발표 자료가 할 일이지
+   PB가 매일 보는 화면이 할 일이 아니다. F1 입구는 우하단 고정 버튼으로 옮겼다. */
 
 type Session = { id: number; started_at: string };
 
@@ -87,10 +80,7 @@ type Data = {
    하루 경계는 브라우저 위치와 무관하게 KST 고정 — 백엔드 집계(db.py의 BIZ_TZ)와 같은
    기준이어야 추이 막대가 "AI가 오늘 한 일"과 어긋나지 않는다. 예전엔 라벨은 로컬 날짜로
    만들고 데이터는 ISO를 slice(0,10)해 UTC 날짜로 담아서, KST 00~09시에 생긴 건이 하루
-   앞 칸에 꽂혔다. */
-const BIZ_TZ = 'Asia/Seoul';
-const bizDay = new Intl.DateTimeFormat('en-CA', { timeZone: BIZ_TZ }); // → YYYY-MM-DD
-
+   앞 칸에 꽂혔다. 기준(bizDay)은 api.ts에 한 벌만 두고 여기서 가져다 쓴다. */
 function lastDays(n: number) {
   const out: { key: string; label: string }[] = [];
   for (let i = n - 1; i >= 0; i--) {
@@ -137,7 +127,7 @@ function PrepMemo({
             tag: '공시', text: d.report_nm.trim(), href: d.viewer_url, meta: fmtDate(d.rcept_dt),
           })),
           ...(b?.news ?? []).slice(0, 1).map((n) => ({
-            tag: '뉴스', text: n.title, href: n.link, meta: (n.pub_date || '').slice(0, 16),
+            tag: '뉴스', text: n.title, href: n.link, meta: fmtDate(n.pub_date),
           })),
         ];
         return (
@@ -265,18 +255,16 @@ export default function DashboardPage() {
     [roleCustomers, search],
   );
 
-  /* 종목코드 → 이 종목을 보유한 고객 수. 브리프가 "왜 이 종목인가"를 화면에서 스스로
-     설명하게 만든다 — 종목 선정 기준이 고객 포트폴리오이기 때문이다.
-     두 벌을 만든다: 선정 근거는 **전사 전체**(backend pb_watchlist가 그렇게 고른다)이고,
-     PB에게 필요한 건 그중 **내 담당 몇 명**인가다. 예전엔 역할로 거른 수 하나만 보여줘서,
-     전사 기준으로 뽑은 종목이 "내 고객 상위"처럼 읽혔다. */
-  const countHolders = (list: Customer[]) => {
+  /* 종목코드 → 이 종목을 보유한 **내 고객** 수. 브리프가 "왜 이 종목인가"를 화면에서 스스로
+     설명하게 만든다 — 종목 선정 기준이 내 고객 포트폴리오이기 때문이다(backend pb_watchlist).
+     한 벌이면 충분하다: /api/customers가 이미 담당 고객만 주므로 전사 수라는 게 없다.
+     예전엔 선정이 전사 기준이라 "보유 21명 · 내 담당 5명"처럼 두 수를 나란히 적어야 했다. */
+  const holders = useMemo(() => {
     const m = new Map<string, number>();
-    list.forEach((c) => c.holdings.forEach((h) => m.set(h.code, (m.get(h.code) ?? 0) + 1)));
+    (data?.customers ?? []).forEach((c) =>
+      c.holdings.forEach((h) => m.set(h.code, (m.get(h.code) ?? 0) + 1)));
     return m;
-  };
-  const holders = useMemo(() => countHolders(data?.customers ?? []), [data]);
-  const myHolders = useMemo(() => countHolders(roleCustomers), [roleCustomers]);
+  }, [data]);
   const selected = useMemo(
     () => visibleCustomers.find((c) => c.id === selectedId) ?? visibleCustomers[0] ?? null,
     [visibleCustomers, selectedId],
@@ -360,14 +348,9 @@ export default function DashboardPage() {
   ].filter((x): x is string => typeof x === 'string');
 
   const tiles =
-    role === 'admin'
+    role === 'pb'
       ? [
-          { label: '처리 대기', value: String(roleQueue.length), breakdown: `팩트 노트 ${noteCount} · 고객 문의 ${chatCount}` },
-          { label: '위험 플래그 고객', value: String(flagged), breakdown: `전체 ${roleCustomers.length}명 중 규칙 3종으로 도출` },
-        ]
-      : role === 'pb'
-      ? [
-          { label: '내 담당 고객', value: String(roleCustomers.length), breakdown: `위험 플래그 ${flagged}명` },
+          { label: '내 담당 고객', value: String(roleCustomers.length), breakdown: `위험 플래그 ${flagged}명 · 팩트 노트 ${noteCount} · 고객 문의 ${chatCount}` },
           { label: '내 처리 대기', value: String(roleQueue.length), breakdown: 'AI 산출물은 사람 확인 전에는 고객에게 나가지 않습니다' },
         ]
       : [
@@ -378,17 +361,20 @@ export default function DashboardPage() {
   return (
     <div className="wrap">
       <header className="topbar">
-        <div className="brand">AI PB 어시스턴트<small>상담 전 사실 확인</small></div>
+        <div className="brand">AI PB 어시스턴트<small>{MY_PB} · 상담 전 사실 확인</small></div>
         <span className="env-pill">프로토타입</span>
         <div className="right">
-          <div className="role-toggle" role="group" aria-label="역할 전환 (목 로그인)">
-            {(['admin', 'pb', 'comp'] as Role[]).map((r) => (
+          {/* 역할 전환이 아니라 **화면 전환**이다 — 이 대시보드의 사용자는 PB 한 명이고,
+              준법은 이 화면을 같이 쓰는 사람이 아니라 승인 단계를 맡는 다른 사람이다.
+              데모에서 그 단계를 보여줘야 해서 미리보기로 남겨 뒀고, 라벨이 그렇게 말한다. */}
+          <div className="role-toggle" role="group" aria-label="화면 전환 (목 로그인)">
+            {(['pb', 'comp'] as Role[]).map((r) => (
               <button key={r} aria-pressed={role === r} onClick={() => applyRole(r)}>
-                {r === 'admin' ? '관리자' : r === 'pb' ? 'PB' : '준법'}
+                {r === 'pb' ? '내 화면' : '준법 화면 (데모)'}
               </button>
             ))}
           </div>
-          <span className="asof">고객 {data.summary.customers_total}명 · 노트 {data.summary.notes_total}건</span>
+          <span className="asof">담당 고객 {data.summary.customers_total}명 · 노트 {data.summary.notes_total}건</span>
         </div>
       </header>
 
@@ -400,27 +386,6 @@ export default function DashboardPage() {
           AI 산출물은 전부 <strong>초안·미검증</strong>이며 발행·전달은 사람의 검토·심의·승인 후에만 가능합니다.
         </span>
       </div>
-
-      <nav className="rail" aria-label="기능 레일">
-        {FEATURES.map((f) => {
-          const live = f.on || f.id === 'F1';  // F1은 이제 대화형 슬라이스가 동작한다
-          const openChat = f.id === 'F1' ? () => setModal({ kind: 'f1' }) : undefined;
-          return (
-            <div
-              className={`f ${live ? 'on' : 'off'}${openChat ? ' clickable' : ''}`}
-              key={f.id}
-              role={openChat ? 'button' : undefined}
-              tabIndex={openChat ? 0 : undefined}
-              onClick={openChat}
-              onKeyDown={openChat ? (e) => { if (e.key === 'Enter') openChat(); } : undefined}
-            >
-              <div className="fname">{f.name} <span className="fcode">{f.id}</span></div>
-              <div className="fsub">{f.sub}</div>
-              <span className="fstate">{f.id === 'F1' ? '열기 →' : f.on ? '동작' : '로드맵'}</span>
-            </div>
-          );
-        })}
-      </nav>
 
       <nav className="cats" aria-label="대시보드 카테고리">
         <button className="cat" aria-pressed={view === 'cust'} onClick={() => setView('cust')}>
@@ -452,12 +417,12 @@ export default function DashboardPage() {
           <span className="src live">감사로그 실집계</span>
         </div>
 
-        {/* 상담 전 브리핑 (F2) — 오늘 시장 + 고객 보유 상위 종목의 밤사이 변화.
-            선정은 전사 기준이고(backend pb_watchlist), 카드 배지가 "그중 내 담당 N명"을 말한다. */}
-        <section className="card" aria-labelledby="b-title">
+        {/* 상담 전 브리핑 (F2) — 오늘 시장 + 내 고객 보유 상위 종목의 밤사이 변화.
+            선정 기준은 내 담당 고객의 보유 수다(backend pb_watchlist) — 배지가 그 근거를 적는다. */}
+        <section className="card" aria-labelledby="b-title" hidden={!cfg.brief}>
           <div className="card-head">
             <h2 id="b-title">상담 전 브리핑</h2>
-            <span className="hint">전사 고객 보유 상위 종목 · 전일 공시 · 밤사이 뉴스 · 지연시세</span>
+            <span className="hint">내 고객 보유 상위 종목 · 전일 공시 · 밤사이 뉴스 · 지연시세</span>
             {data.brief && <span className="hint" style={{ color: 'var(--muted)' }}>{data.brief.brief_date} 생성</span>}
             <span className="src live">DB 실데이터</span>
           </div>
@@ -496,28 +461,19 @@ export default function DashboardPage() {
                   const down = q ? isDown(q.change_pct) : false;
                   const rows = [
                     ...it.disclosures.map((d) => ({ tag: '공시', text: d.report_nm.trim(), href: d.viewer_url, meta: fmtDate(d.rcept_dt) })),
-                    ...it.news.map((n) => ({ tag: '뉴스', text: n.title, href: n.link, meta: (n.pub_date || '').slice(0, 16) })),
+                    ...it.news.map((n) => ({ tag: '뉴스', text: n.title, href: n.link, meta: fmtDate(n.pub_date) })),
                   ];
                   return (
                     <div className="bcard" key={it.stock_code}>
                       <div className="bh">
                         <span className="bname">{it.corp_name}</span>
                         <span className="bcode">{it.stock_code}</span>
-                        {!!holders.get(it.stock_code) && (
-                          <span
-                            className="bhold"
-                            title="브리프 종목 선정 기준 = 전사 보유 고객 수 (PB별로 따로 뽑지 않는다)"
-                          >
-                            보유 고객 {holders.get(it.stock_code)}명
-                            {/* PB로 보고 있으면 "그중 내 담당 몇 명"까지 — 0명이면 0명이라고
-                                말한다. 이 카드를 건너뛰어도 되는지는 그 숫자가 결정한다. */}
-                            {cfg.custFilter && (
-                              <span className="bhold-mine">
-                                {' '}· 내 담당 {myHolders.get(it.stock_code) ?? 0}명
-                              </span>
-                            )}
-                          </span>
-                        )}
+                        {/* 선정 근거를 카드가 스스로 말한다 — 이 종목이 위에 있는 이유가
+                            "내 고객 N명이 들고 있어서"이고, 그 N이 이 카드를 건너뛰어도
+                            되는지를 정한다. 0명이면 배지를 감추지 않고 0명이라고 적는다. */}
+                        <span className="bhold" title="브리프 종목 선정 기준 = 내 담당 고객의 보유 수">
+                          고객 {holders.get(it.stock_code) ?? 0}명 보유
+                        </span>
                       </div>
                       {q ? (
                         <div className="bquote">
@@ -592,7 +548,11 @@ export default function DashboardPage() {
                 <div className="qrow" key={`${it.type}-${it.id}`}>
                   <span className={`chip ${it.type}`}>{it.type === 'note' ? '팩트 노트' : '고객 문의'}</span>
                   <span className="title">{it.title}</span>
-                  <span className="meta">{it.who} · {ago(it.updated_at)} 경과</span>
+                  {/* 담당자(it.who)는 적지 않는다 — 1인용 대시보드에서 이 큐의 건은 전부
+                      한 사람 몫이라 "미배정/관리자/박PB"가 구분하는 게 없다. 누가 무엇을
+                      했는지는 노트 모달의 확인·심의·발행 줄과 감사로그에 그대로 남는다
+                      (거기서는 PB와 준법이 갈리므로 실제로 다른 사람을 가리킨다). */}
+                  <span className="meta">{ago(it.updated_at)} 경과</span>
                   <span className="spacer" />
                   <span className={`pill ${cls}`}>{label}</span>
                   <button className="btn" onClick={() => openItem(it)}>검토</button>
@@ -609,18 +569,18 @@ export default function DashboardPage() {
         <section className="card" aria-labelledby="c-title">
           <div className="card-head">
             <h2 id="c-title">고객 포트폴리오</h2>
-            <span className="hint">{cfg.portfolio ? (role === 'pb' ? `내 담당 ${roleCustomers.length}명` : `${roleCustomers.length}명`) : '접근 제한'}</span>
+            <span className="hint">{cfg.portfolio ? `내 담당 ${roleCustomers.length}명` : '접근 제한'}</span>
             <span className="src mock">시드 데이터 · 전원 가상 인물</span>
           </div>
           {!cfg.portfolio ? (
             <div className="hint" style={{ padding: '16px 4px' }}>
-              🔒 준법 권한에서는 고객 개인 포트폴리오(잔고·보유종목)가 표시되지 않습니다 — 위험 플래그·감사로그 요약만 접근 가능합니다.
+              🔒 준법 화면에서는 고객 개인 포트폴리오(잔고·보유종목)가 표시되지 않습니다 — 위험 플래그·감사로그 요약만 접근 가능합니다.
             </div>
           ) : (
             <>
               <div className="strip">
                 <div className="kv">
-                  <div className="k">{role === 'pb' ? '담당 고객자산' : '총 고객자산 (AUM)'}</div>
+                  <div className="k">담당 고객자산</div>
                   <div className="v">{fmtKRW(roleCustomers.reduce((a, c) => a + c.balance, 0))}<span className="unit"> 원</span></div>
                 </div>
                 <div className="kv">
@@ -848,6 +808,18 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* ── 종목 즉답(F1) 입구 ────────────────────────────────
+          화면에서 이것만 성격이 다르다 — 나머지는 상담 **전** 준비인데 F1은 상담 **중**
+          쓴다. 그래서 스크롤 위치와 무관하게 고정이고(고객 표를 보다가도 바로 누른다),
+          본문 흐름에는 끼지 않으며, 모달로 열려 보고 있던 화면을 잃지 않는다.
+          준법 화면에는 띄우지 않는다 — 에이전트를 돌려 산출물을 만드는 쪽은 PB고,
+          준법은 그걸 통과시키는 쪽이다(cfg.research와 같은 경계). */}
+      {cfg.research && !modal && (
+        <button className="fab" onClick={() => setModal({ kind: 'f1' })}>
+          <span aria-hidden="true">💬</span> 종목 즉답
+        </button>
+      )}
 
       {/* ── 모달 ─────────────────────────────────────────────── */}
       {modal && (

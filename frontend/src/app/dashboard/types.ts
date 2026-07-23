@@ -1,6 +1,9 @@
 /** 백엔드 응답 타입. 필드명은 backend/main.py의 직렬화 함수와 1:1로 맞춘다. */
 
-export type Role = 'admin' | 'pb' | 'comp';
+/** 이 대시보드는 **PB 1인용**이다 — 'pb'가 이 화면의 주인이고, 'comp'는 같은 화면의
+ *  감독 뷰가 아니라 **다른 사람(준법)이 보는 화면**을 데모용으로 미리 보는 모드다.
+ *  (관리자 역할은 삭제했다 — 여러 사람이 공유하는 콘솔이라는 전제에서만 의미가 있었다.) */
+export type Role = 'pb' | 'comp';
 
 export type FlagReason = { key: string; text: string };
 
@@ -211,10 +214,11 @@ export const PILL: Record<string, [label: string, cls: string]> = {
 
 export const RISK = ['안정형', '안정추구형', '위험중립형', '적극투자형', '공격투자형'];
 
-/** PB 역할로 전환하면 "이 사람으로 로그인한 것"으로 간주한다 (목 로그인) */
+/** 이 대시보드의 주인 (목 로그인). 백엔드 `main.PB_NAME`과 같아야 한다 —
+ *  어긋나면 화면은 "내 고객"이라 적는데 서버는 다른 사람의 고객을 보낸다. */
 export const MY_PB = '박PB';
 
-export const ACTOR: Record<Role, string> = { admin: '관리자', pb: MY_PB, comp: '정준법' };
+export const ACTOR: Record<Role, string> = { pb: MY_PB, comp: '정준법' };
 
 export const WATERMARK =
   '⚠ AI 초안 · 미검증 — 사람의 검토·심의·승인 없이는 발행되지 않습니다.';
