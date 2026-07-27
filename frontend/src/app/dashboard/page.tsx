@@ -395,7 +395,11 @@ export default function DashboardPage() {
       (
         [
           // 축은 "읽기 / 하기"다. 상담 준비 = 무엇을 알아야 하나(브리핑·고객),
-          // 노트·승인 = 내가 손대야 하는 것(생성·처리 대기).
+          // 작성·검토 = 내가 손대야 하는 것(생성·처리 대기).
+          // "노트·승인"이었다 — ①승인(발행)은 준법의 일이라 PB 화면에서 못 하는 동작을
+          // 이름으로 걸고 있었고 ②큐 절반이 고객 문의라 "노트"가 그 절반을 못 덮었다.
+          // 지금 이름은 PB가 실제로 하는 두 동작이고 카드 순서(생성 → 큐)와 같으며
+          // 큐 행의 버튼 라벨("검토")과도 이어진다.
           // 준법은 고객을 관리하지 않는다 — 이 탭이 하는 일은 심의 큐 처리뿐이라
           // "심의"로 부른다(예전 "고객 관리"는 없는 고객 카드를 기대하게 만들었다).
           {
@@ -403,7 +407,7 @@ export default function DashboardPage() {
             label: cfg.research ? '상담 준비' : '심의',
             on: true,
           },
-          { id: 'note', label: '노트·승인', on: cfg.research },
+          { id: 'note', label: '작성·검토', on: cfg.research },
           // 준법감시인의 두 일 = 심의(통과시키기) / 감시(지켜보기). "AI 평가"는 준법이
           // AI 성능을 채점하는 것처럼 읽혀서 바꿨다 — 실제 내용은 산출물의 규정 준수 감시다.
           { id: 'ai', label: '감시', on: cfg.aiTab },
@@ -604,19 +608,19 @@ export default function DashboardPage() {
         [];
 
   /* 처리 대기 카드 — 두 화면이 나눠 갖는다.
-     PB에게는 「노트·승인」 탭(만드는 것과 처리하는 것을 같이 두는 곳)에,
+     PB에게는 「작성·검토」 탭(만드는 것과 처리하는 것을 같이 두는 곳)에,
      준법에게는 그 탭이 없으므로 원래 자리에 남긴다 — 준법이 큐를 잃으면
      심의할 노트를 화면에서 찾을 방법이 아예 없어진다. */
   const queueCard = (
     <section className="card" aria-labelledby="q-title">
       <div className="card-head">
         <h2 id="q-title">처리 대기</h2>
-        {/* 준법은 타입 필터가 없어 건수를 헤더에 둔다(PB는 필터 줄 오른쪽에 있다). */}
-        {!showTypeTabs && (
-          <span className="hint" aria-live="polite">
-            {shownQueue.length}건
-          </span>
-        )}
+        {/* 건수는 두 화면 모두 **제목 옆**에 둔다 — 필터 줄 오른쪽 끝에 있으면 세는 대상
+            (제목)에서 멀어져 표 헤더처럼 읽혔다. 필터를 바꾸면 이 수도 같이 바뀐다.
+            aria-live: 목록이 갈리는 변화가 스크린리더에는 안 들리므로 수를 읽어 준다. */}
+        <span className="hint" aria-live="polite">
+          {shownQueue.length}건
+        </span>
       </div>
       {showTypeTabs && (
         <div className="tabs" role="group" aria-label="대기 항목 필터">
@@ -630,12 +634,8 @@ export default function DashboardPage() {
               {f === 'all' ? '전체' : f === 'note' ? '종목 노트' : '고객 문의'}
             </button>
           ))}
-          {/* 건수는 탭마다 붙이지 않고 **선택된 탭의 것 하나만** 낸다 — 세 개를 늘어놓으면
-              지금 보고 있는 게 어느 수인지가 오히려 흐려진다.
-              aria-live: 탭을 바꾸면 목록이 갈리는데 스크린리더에는 그 변화가 안 들린다. */}
-          <span className="tab-count" aria-live="polite">
-            {shownQueue.length}건
-          </span>
+          {/* 건수는 탭마다 붙이지 않고 **선택된 탭의 것 하나만** 낸다(위 헤더) — 세 개를
+              늘어놓으면 지금 보고 있는 게 어느 수인지가 오히려 흐려진다. */}
         </div>
       )}
       <div className="queue">
@@ -696,7 +696,7 @@ export default function DashboardPage() {
       </header>
 
       {/* 탭 줄은 **고를 게 둘 이상일 때만** 낸다 — 선택지가 하나뿐인 탭은 고르는 장치가
-          아니라 제목일 뿐이다. PB는 상담 준비 + 노트·승인, 준법은 심의 + 감시. */}
+          아니라 제목일 뿐이다. PB는 상담 준비 + 작성·검토, 준법은 심의 + 감시. */}
       {tabs.length > 1 && (
         <nav className="cats" aria-label="대시보드 카테고리">
           {tabs.map((t) => (
@@ -912,7 +912,7 @@ export default function DashboardPage() {
           )}
         </section>
 
-        {/* 처리 대기는 노트·승인 탭으로 옮겼다(PB). 준법은 그 탭이 없어 여기 남는다. */}
+        {/* 처리 대기는 작성·검토 탭으로 옮겼다(PB). 준법은 그 탭이 없어 여기 남는다. */}
         {!cfg.research && queueCard}
 
         {/* 고객 포트폴리오 — PB 전용. 준법은 정보장벽으로 고객 개인정보를 안 보므로 카드

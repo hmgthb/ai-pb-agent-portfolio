@@ -299,7 +299,7 @@ tr:focus-visible,
   padding: 6px 0;
 }
 
-/* ── 카테고리 탭 (PB: 상담 준비/노트·승인 · 준법: 심의/감시) ────── */
+/* ── 카테고리 탭 (PB: 상담 준비/작성·검토 · 준법: 심의/감시) ────── */
 .cats {
   display: flex;
   gap: 6px;
@@ -592,14 +592,6 @@ tr:focus-visible,
   align-items: center;
   gap: 4px;
   margin-bottom: 10px;
-}
-/* 선택된 탭의 건수 — 탭 줄 오른쪽 끝. 탭 자체와 헷갈리지 않게 흐리게 두고
-   버튼처럼 보이지 않도록 테두리를 주지 않는다. */
-.tabs .tab-count {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
 }
 .tab {
   font: inherit;
