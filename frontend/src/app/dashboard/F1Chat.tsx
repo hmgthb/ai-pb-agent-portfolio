@@ -17,17 +17,32 @@ import { chatStreamUrl, fmtDate } from './api';
 import type { ChatAnswer, ChatRouting, NoteSource } from './types';
 
 const AGENT_LABEL: Record<string, string> = {
-  a1: '공시(a1)', a2: '재무(a2)', a4: '뉴스(a4)', krx: '시세(KRX)',
+  a1: '공시(a1)',
+  a2: '재무(a2)',
+  a4: '뉴스(a4)',
+  krx: '시세(KRX)',
 };
 
 /** 문장 출처 배지 — 노트 모달과 같은 규칙(날짜 표기 포함)에 시세(krx)를 더한다. */
 function SrcBadge({ src }: { src: NoteSource | null }) {
   if (!src) return <span className="sbadge un">UNSOURCED</span>;
   if (src.type === 'dart')
-    return <span className="sbadge src" title={`rcpNo ${src.rcept_no}`}>공시 {fmtDate(src.rcept_dt)}</span>;
+    return (
+      <span className="sbadge src" title={`rcpNo ${src.rcept_no}`}>
+        공시 {fmtDate(src.rcept_dt)}
+      </span>
+    );
   if (src.type === 'krx')
-    return <span className="sbadge src" title={src.label}>시세 {fmtDate(src.as_of)}</span>;
-  return <span className="sbadge src" title={src.url}>뉴스 {fmtDate(src.pub_date)}</span>;
+    return (
+      <span className="sbadge src" title={src.label}>
+        시세 {fmtDate(src.as_of)}
+      </span>
+    );
+  return (
+    <span className="sbadge src" title={src.url}>
+      뉴스 {fmtDate(src.pub_date)}
+    </span>
+  );
 }
 
 type Turn = {
@@ -40,7 +55,21 @@ type Turn = {
   running: boolean;
 };
 
-export default function F1Chat({ initial }: { initial?: string } = {}) {
+/** 입력창에 질문을 채워 넣는 신호. 같은 종목을 두 번 눌러도 다시 채워져야 하므로
+ *  문자열이 아니라 **눌린 횟수(n)를 같이** 들고 다닌다 — 값이 같으면 effect가 안 돈다. */
+export type ChatPrefill = { q: string; n: number };
+
+export default function F1Chat({
+  initial,
+  prefill,
+  compact,
+}: {
+  initial?: string;
+  /** 마운트 뒤에도 입력창을 채우는 경로(고객 카드의 보유 종목 칩). */
+  prefill?: ChatPrefill | null;
+  /** 카드 안에 인라인으로 놓을 때. 모달용 큰 머리말·안내문을 접고 높이를 부모에 맞춘다. */
+  compact?: boolean;
+} = {}) {
   // 상담 준비 메모에서 종목을 눌러 열면 질문이 채워진 채로 시작한다. **보내지는 않는다** —
   // 실행은 크레딧을 쓰고 답변은 고객 앞에서 쓰일 수 있으니, 시작 버튼은 사람이 누른다.
   const [input, setInput] = useState(initial ?? '');
@@ -52,10 +81,23 @@ export default function F1Chat({ initial }: { initial?: string } = {}) {
   const running = turns.length > 0 && turns[turns.length - 1].running;
 
   useEffect(() => () => esRef.current?.close(), []);
-  useEffect(() => { scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight); }, [turns]);
+  useEffect(() => {
+    scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
+  }, [turns]);
+  // 칩을 누르면 입력창만 채운다(보내지 않는 건 위와 같은 이유다).
+  // effect가 아니라 **렌더 중 조정**이다 — 프리필은 화면에 그려지기 전에 반영돼야 하고,
+  // effect로 하면 빈 입력창이 한 번 그려졌다가 채워진다. 신호는 n으로 소비 여부를
+  // 판단한다: 같은 종목을 두 번 눌러도 q는 같으므로 문자열로는 구분되지 않는다.
+  const [seenPrefill, setSeenPrefill] = useState(prefill?.n ?? 0);
+  if (prefill && prefill.n !== seenPrefill) {
+    setSeenPrefill(prefill.n);
+    setInput(prefill.q);
+  }
 
   const patchLast = (p: Partial<Turn>) =>
-    setTurns((ts) => ts.map((t, i) => (i === ts.length - 1 ? { ...t, ...p } : t)));
+    setTurns((ts) =>
+      ts.map((t, i) => (i === ts.length - 1 ? { ...t, ...p } : t)),
+    );
 
   function send() {
     const q = input.trim();
@@ -67,33 +109,74 @@ export default function F1Chat({ initial }: { initial?: string } = {}) {
     esRef.current = es;
     let done = false;
 
-    es.addEventListener('session', (e) => { sessionRef.current = JSON.parse((e as MessageEvent).data).session; });
-    es.addEventListener('routing', (e) => patchLast({ routing: JSON.parse((e as MessageEvent).data) }));
-    es.addEventListener('blocked', (e) => patchLast({ blocked: JSON.parse((e as MessageEvent).data).violations }));
-    es.addEventListener('answer_token', (e) =>
-      setTurns((ts) => ts.map((t, i) => (i === ts.length - 1 ? { ...t, streaming: t.streaming + JSON.parse((e as MessageEvent).data).text } : t))),
+    es.addEventListener('session', (e) => {
+      sessionRef.current = JSON.parse((e as MessageEvent).data).session;
+    });
+    es.addEventListener('routing', (e) =>
+      patchLast({ routing: JSON.parse((e as MessageEvent).data) }),
     );
-    es.addEventListener('answer', (e) => patchLast({ answer: JSON.parse((e as MessageEvent).data) }));
-    es.addEventListener('run_error', (e) => patchLast({ error: JSON.parse((e as MessageEvent).data).message }));
+    es.addEventListener('blocked', (e) =>
+      patchLast({ blocked: JSON.parse((e as MessageEvent).data).violations }),
+    );
+    es.addEventListener('answer_token', (e) =>
+      setTurns((ts) =>
+        ts.map((t, i) =>
+          i === ts.length - 1
+            ? {
+                ...t,
+                streaming:
+                  t.streaming + JSON.parse((e as MessageEvent).data).text,
+              }
+            : t,
+        ),
+      ),
+    );
+    es.addEventListener('answer', (e) =>
+      patchLast({ answer: JSON.parse((e as MessageEvent).data) }),
+    );
+    es.addEventListener('run_error', (e) =>
+      patchLast({ error: JSON.parse((e as MessageEvent).data).message }),
+    );
 
-    es.addEventListener('done', () => { done = true; es.close(); patchLast({ running: false }); });
-    es.onerror = () => { es.close(); if (!done) patchLast({ running: false, error: '스트림이 끊겼습니다 (백엔드 확인).' }); };
+    es.addEventListener('done', () => {
+      done = true;
+      es.close();
+      patchLast({ running: false });
+    });
+    es.onerror = () => {
+      es.close();
+      if (!done)
+        patchLast({
+          running: false,
+          error: '스트림이 끊겼습니다 (백엔드 확인).',
+        });
+    };
   }
 
   return (
     <>
-      <div className="m-head">
-        <h3>종목 즉답 <span className="fcode">F1</span></h3>
-        <span className="pill on" style={{ marginLeft: 8 }}>규칙 라우팅 · 멀티턴</span>
-      </div>
-      <div className="chat-hint">
-        상담 중 나온 질문을 그대로 물어보세요 — 규칙 라우팅으로 알맞은 에이전트가 공개데이터만
-        조회해 답합니다(고객에게 그대로 읽어주는 답변이 아니라, PB가 확인할 사실입니다). 예: <em>삼성전자 최근 실적</em> → <em>주가는?</em> → <em>관련 뉴스는?</em>
-        <br />후속 질문은 <b>이전 종목을 이어받습니다</b>(멀티턴).
-      </div>
+      {/* 인라인(고객 카드)에서는 머리말·안내를 내지 않는다 — 부모가 이미 한 줄로 설명했고,
+          좁은 칸에서 그 위에 안내문을 더 얹으면 정작 대화가 밀린다.
+          ⚠️ 지우는 건 이 안내문뿐이다. 답변마다 붙는 F1 고지(chat-notice)는 백엔드가
+          강제하는 것이라 여기와 무관하게 그대로 나온다. */}
+      {!compact && (
+        <>
+          <div className="m-head">
+            <h3>종목 질문</h3>
+          </div>
+          <div className="chat-hint">
+            상담 중 나온 질문을 물어보세요. (예: 삼성전자 최근 실적 → 주가는? →
+            관련 뉴스는?)
+            <br />
+            후속 질문은 이전 종목을 이어받습니다.
+          </div>
+        </>
+      )}
 
       <div className="chat-log" ref={scrollRef}>
-        {turns.length === 0 && <div className="chat-empty">질문을 입력하면 대화가 시작됩니다.</div>}
+        {turns.length === 0 && (
+          <div className="chat-empty">질문을 입력하면 대화가 시작됩니다.</div>
+        )}
         {turns.map((t, i) => (
           <div key={i} className="chat-turn">
             <div className="bubble me">{t.q}</div>
@@ -101,16 +184,30 @@ export default function F1Chat({ initial }: { initial?: string } = {}) {
             <div className="bubble ai">
               {t.routing && !t.routing.need_clarify && (
                 <div className="route-badge" title={t.routing.reason}>
-                  라우팅 → <b>{t.routing.agent ? AGENT_LABEL[t.routing.agent] : '—'}</b>
-                  <span className="route-entity">{t.routing.entity_name ?? t.routing.entity_code}</span>
-                  {t.routing.inherited && <span className="route-carry" title="이전 질문의 종목을 이어받았습니다">↩ 이어받음</span>}
+                  라우팅 →{' '}
+                  <b>{t.routing.agent ? AGENT_LABEL[t.routing.agent] : '—'}</b>
+                  <span className="route-entity">
+                    {t.routing.entity_name ?? t.routing.entity_code}
+                  </span>
+                  {t.routing.inherited && (
+                    <span
+                      className="route-carry"
+                      title="이전 질문의 종목을 이어받았습니다"
+                    >
+                      ↩ 이어받음
+                    </span>
+                  )}
                 </div>
               )}
 
               {t.blocked && (
                 <div className="chat-blocked">
                   ⛔ 입력이 차단됐습니다 (에이전트를 실행하지 않았습니다)
-                  <ul>{t.blocked.map((v, j) => <li key={j}>{v}</li>)}</ul>
+                  <ul>
+                    {t.blocked.map((v, j) => (
+                      <li key={j}>{v}</li>
+                    ))}
+                  </ul>
                 </div>
               )}
 
@@ -120,26 +217,45 @@ export default function F1Chat({ initial }: { initial?: string } = {}) {
                   {t.answer.sentences.map((s, j) => (
                     <div className="chat-sent" key={j}>
                       <span>{s.text}</span>
-                      {(s.sources?.length ? s.sources : s.source ? [s.source] : []).map((src, k) => (
+                      {(s.sources?.length
+                        ? s.sources
+                        : s.source
+                          ? [s.source]
+                          : []
+                      ).map((src, k) => (
                         <SrcBadge key={k} src={src} />
                       ))}
-                      {!s.source && !s.sources?.length && (
-                        s.kind === 'interpretation'
-                          ? <span className="sbadge itp" title="해석·전망 문장은 각주 대상이 아닙니다">해석</span>
-                          : <SrcBadge src={null} />
-                      )}
+                      {!s.source &&
+                        !s.sources?.length &&
+                        (s.kind === 'interpretation' ? (
+                          <span
+                            className="sbadge itp"
+                            title="해석·전망 문장은 각주 대상이 아닙니다"
+                          >
+                            해석
+                          </span>
+                        ) : (
+                          <SrcBadge src={null} />
+                        ))}
                     </div>
                   ))}
-                  {t.answer.notice && <div className="chat-notice">{t.answer.notice}</div>}
+                  {t.answer.notice && (
+                    <div className="chat-notice">{t.answer.notice}</div>
+                  )}
                 </div>
               )}
 
               {/* clarify: 종목 되묻기 */}
-              {t.answer?.clarify && <div className="chat-clarify">{t.answer.text}</div>}
+              {t.answer?.clarify && (
+                <div className="chat-clarify">{t.answer.text}</div>
+              )}
 
               {/* 스트리밍 중(최종 answer 도착 전) */}
               {!t.answer && !t.blocked && t.streaming && (
-                <div className="chat-streaming">{t.streaming}{t.running && <span className="gen-caret">▌</span>}</div>
+                <div className="chat-streaming">
+                  {t.streaming}
+                  {t.running && <span className="gen-caret">▌</span>}
+                </div>
               )}
               {!t.answer && !t.blocked && !t.streaming && t.running && (
                 <div className="chat-thinking">조회 중…</div>
@@ -153,13 +269,21 @@ export default function F1Chat({ initial }: { initial?: string } = {}) {
       <div className="chat-input">
         <input
           className="search"
-          placeholder="예: 삼성전자 최근 실적 어때?"
+          placeholder={
+            compact ? '질문을 입력하세요.' : '최근 이 회사 실적 어때?'
+          }
           value={input}
           disabled={running}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') send(); }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') send();
+          }}
         />
-        <button className="btn primary" onClick={send} disabled={running || !input.trim()}>
+        <button
+          className="btn primary"
+          onClick={send}
+          disabled={running || !input.trim()}
+        >
           {running ? '…' : '보내기'}
         </button>
       </div>

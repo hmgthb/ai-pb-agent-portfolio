@@ -708,9 +708,13 @@ tr:focus-visible,
   font-weight: 500;
   color: var(--ink-2);
 }
+/* 고객 카드는 세 칸이다: 찾기(리스트) · 읽기(상세) · 묻기(채팅).
+   리스트는 고정 260px이다 — 고객을 고르는 데 필요한 건 이름·수익률·플래그뿐이고
+   fr로 두면 나머지 둘의 자리를 뺏는다. 상세와 채팅은 남는 폭을 반씩 나눈다.
+   minmax(0,1fr)이 아니면 긴 뉴스 제목이 칸을 밀어 넓힌다. */
 .cust-layout {
   display: grid;
-  grid-template-columns: 1.2fr 1fr;
+  grid-template-columns: 260px minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
 }
 .search {
@@ -821,6 +825,71 @@ tbody tr[aria-selected='true'] {
   border-left: 1px solid var(--grid);
   padding-left: 16px;
   min-width: 0;
+}
+
+/* ── 3열: 보유 종목에 묻기(F1 인라인) ──────────────────────────────
+   리스트와 같은 기둥 구조다: 머리말·칩은 제 높이대로 두고 대화 로그가 남는 높이를
+   전부 먹는다. 여기서도 flex 축약형(basis 0%)을 쓰면 안 된다 — 그러면 대화가
+   길어질수록 카드 전체가 늘어난다(§.tbl-scroll의 같은 함정). */
+.cust-chat {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--grid);
+  padding-left: 16px;
+}
+/* 제목 + 근거를 한 줄에 둔다. 제목은 옆 칸의 고객 이름(.detail .name, 16px/700)과
+   같은 줄에 서므로 한 급 아래인 15px로 둔다 — 이 카드의 주인공은 고객이고 이 칸은
+   그 고객의 보유 종목을 묻는 곳이다. 근거는 같은 줄 뒤에 작게 붙여 높이를 늘리지 않는다. */
+.cust-chat .cchat-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cust-chat .cchat-head strong {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.cust-chat .cchat-src {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.cust-chat .cchat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+.cust-chat .chip {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.cust-chat .chip:hover {
+  border-color: var(--accent);
+}
+/* 로그가 남는 높이를 먹는다. 모달용 min/max(300px·52vh)는 카드 안에서 의미가 없다 —
+   높이는 옆 상세 칸이 정한다. */
+.cust-chat .chat-log {
+  flex-grow: 1;
+  height: 0;
+  min-height: 180px;
+  max-height: none;
+}
+.cust-chat .chat-empty {
+  padding: 20px 0;
+}
+.cust-chat .chat-input {
+  margin-top: 8px;
 }
 .detail .name {
   font-size: 16px;
@@ -1444,6 +1513,25 @@ tbody tr[aria-selected='true'] {
 }
 
 @media (max-width: 1080px) {
+  /* 세 칸을 나란히 두기엔 좁다 — 채팅을 아래 한 줄로 내린다. 리스트·상세는 그대로
+     나란히 둔다(고객을 고르면서 사실을 보는 게 이 카드의 기본 동작이다). */
+  .cust-layout {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+  .cust-chat {
+    grid-column: 1 / -1;
+    border-left: 0;
+    padding-left: 0;
+    border-top: 1px solid var(--grid);
+    padding-top: 14px;
+  }
+  /* 제 줄로 내려오면 높이를 정해줄 옆 칸이 없다 — 늘어나는 대신 제 내용만큼 잡는다. */
+  .cust-chat .chat-log {
+    flex-grow: 0;
+    height: auto;
+    min-height: 260px;
+    max-height: 40vh;
+  }
   .oprow {
     grid-template-columns: 1fr;
   }
@@ -1818,18 +1906,6 @@ tbody tr[aria-selected='true'] {
   border-top: 1px solid var(--grid);
   padding-top: 10px;
 }
-.prep .prep-head {
-  font-size: 12px;
-  color: var(--ink-2);
-  margin-bottom: 6px;
-}
-.prep .prep-head .tag {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--accent);
-  margin-right: 6px;
-}
 .prep .prep-row {
   padding: 7px 0;
   border-top: 1px solid var(--grid);
@@ -1886,10 +1962,6 @@ tbody tr[aria-selected='true'] {
   border: 0;
   padding: 0;
   cursor: pointer;
-}
-.btn.mini {
-  font-size: 11px;
-  padding: 2px 8px;
 }
 
 /* AI가 오늘 한 일 — 카드가 아니라 접어 둔 한 줄(기본 닫힘, 감사로그 실집계).

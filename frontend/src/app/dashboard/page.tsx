@@ -28,7 +28,7 @@ import {
   isDown,
 } from './api';
 import { Donut, GateMini, Tip, useTip } from './charts';
-import F1Chat from './F1Chat';
+import F1Chat, { type ChatPrefill } from './F1Chat';
 import ResearchCard from './ResearchCard';
 import { ChatModal, NoteModal } from './ReviewModal';
 import {
@@ -171,13 +171,11 @@ function PrepMemo({
   customer,
   brief,
   notes,
-  onAsk,
   onOpenNote,
 }: {
   customer: Customer;
   brief: Brief | null;
   notes: Record<string, NoteDetail>;
-  onAsk: (q: string) => void;
   onOpenNote: (code: string) => void;
 }) {
   const rows = customer.holdings.map((h) => ({
@@ -186,11 +184,11 @@ function PrepMemo({
     note: notes[h.code] ?? null,
   }));
 
+  // 라벨을 두지 않는다. 이 구역의 이름이 될 만한 말은 전부 화면 어딘가가 이미 쓰고 있었다 —
+  // "상담 준비"는 PB 탭 이름이고, "보유 종목"은 바로 위 표(aria-label)와 오른쪽 채팅 머리말이
+  // 쓴다. 두 블록의 경계는 .prep의 border-top이 이미 만들고 있어서 라벨이 없어도 섞이지 않는다.
   return (
     <div className="prep">
-      <div className="prep-head">
-        <span className="tag">상담 준비</span>
-      </div>
       {rows.map(({ h, b, note }) => {
         const q = b?.quote;
         const down = q ? isDown(q.change_pct) : false;
@@ -222,13 +220,6 @@ function PrepMemo({
                   <span className="bcode"> · {fmtDate(q.as_of)} 지연시세</span>
                 </span>
               )}
-              <span className="spacer" style={{ flex: 1 }} />
-              <button
-                className="btn mini"
-                onClick={() => onAsk(`${h.name} 최근 실적`)}
-              >
-                이 종목 묻기
-              </button>
             </div>
             {lines.map((l, i) => (
               <div className="prep-line" key={i}>
@@ -253,8 +244,7 @@ function PrepMemo({
             )}
             {!lines.length && !note && (
               <div className="prep-line muted">
-                오늘 브리핑·노트에 이 종목은 없습니다. 필요하면 &ldquo;이 종목
-                묻기&rdquo;로 바로 확인하세요.
+                오늘 브리핑·노트에 이 종목은 없습니다.
               </div>
             )}
           </div>
@@ -287,6 +277,13 @@ export default function DashboardPage() {
     | null
   >(null);
   const [toastMsg, setToastMsg] = useState('');
+  /** 고객 카드 안 채팅의 입력창을 채우는 신호(보유 종목 칩).
+   *  같은 종목을 두 번 눌러도 다시 채워지도록 n을 올린다 — q만 보면 값이 같아 구분되지 않는다.
+   *  상담 준비 메모에도 같은 일을 하는 "이 종목 묻기" 버튼이 있었는데, 칩이 보유 종목
+   *  전부를 이미 덮어(둘 다 customer.holdings) 같은 동작이 두 곳에 있었다 → 버튼을 뺐다. */
+  const [prefill, setPrefill] = useState<ChatPrefill | null>(null);
+  const askHolding = (q: string) =>
+    setPrefill((p) => ({ q, n: (p?.n ?? 0) + 1 }));
   /** 새로고침 후에도 마지막으로 보던 화면(역할·탭)을 유지하려고 localStorage에 저장한다.
    *  SSR 초기 렌더는 기본값('pb'/'cust')이어야 하이드레이션이 어긋나지 않으므로, 복원은
    *  마운트 뒤에 한다. 이 플래그가 서기 전에는 저장하지 않는다 — 첫 렌더의 기본값이
@@ -997,10 +994,11 @@ export default function DashboardPage() {
                               검색으로 걸러지면 1부터 다시 매겨진다 — 몇 번째 줄인지
                               가리키는 용도이지 고객을 식별하는 번호가 아니다. */}
                           <th className="num rownum">#</th>
+                          {/* 이 표는 고객을 **찾는** 곳이다. 계좌·나이·위험성향·잔고는
+                              오른쪽 상세에 전부 있으므로 여기서 뺐다 — 같은 값을 두 번
+                              보여주느라 폭을 쓰면 채팅 자리가 없다. 남긴 건 이름(식별)과
+                              수익률·플래그(훑을 때의 분류 신호)뿐이다. */}
                           <th>고객</th>
-                          <th className="num">나이</th>
-                          <th>위험성향</th>
-                          <th className="num">잔고</th>
                           <th className="num">수익률</th>
                           <th />
                         </tr>
@@ -1018,21 +1016,8 @@ export default function DashboardPage() {
                           >
                             <td className="num rownum">{i + 1}</td>
                             <td>
-                              <strong>{c.name}</strong>{' '}
-                              <span
-                                style={{
-                                  color: 'var(--muted)',
-                                  fontSize: 11.5,
-                                }}
-                              >
-                                {c.acct}
-                              </span>
+                              <strong>{c.name}</strong>
                             </td>
-                            <td className="num">{c.age}</td>
-                            <td>
-                              <span className="risk-chip">{RISK[c.risk]}</span>
-                            </td>
-                            <td className="num">₩{fmtKRW(c.balance)}</td>
                             <td
                               className={`num delta ${c.ret >= 0 ? 'up' : 'down'}`}
                             >
@@ -1133,14 +1118,64 @@ export default function DashboardPage() {
                         customer={selected}
                         brief={data.brief}
                         notes={data.notes}
-                        onAsk={(q) => setModal({ kind: 'f1', q })}
                         onOpenNote={(code) => setModal({ kind: 'note', code })}
                       />
                       <div className="diag">
-                        <span className="tag">AI 진단 · 초안·미검증</span>
+                        <span className="tag">AI 진단</span>
                         {selected.diag}
                       </div>
                     </>
+                  )}
+                </div>
+
+                {/* ── 3열: 이 고객의 보유 종목에 묻기 ─────────────────────────
+                    **"고객에 대해 묻는 챗봇"이 아니다.** 백엔드가 부를 수 있는 건
+                    공시·뉴스·시세뿐이라 고객 자체에 대해 답할 경로가 없고, 고객
+                    식별정보는 산출물에 들어가면 안 된다(가드레일 1). 회신문 대필도
+                    금지다(가드레일 4). 그래서 이 칸은 **보유 종목으로 좁힌 F1**이고,
+                    머리말·칩·placeholder 전부 종목을 주어로 말한다.
+                    ⚠️ 입력 가드(compliance.PII_PATTERNS)는 주민·계좌번호 '숫자 형식'만
+                    잡는다 — 한글 이름은 안 걸린다. 이름을 안 쓰게 만드는 건 지금은
+                    이 UI의 몫이다. */}
+                <div className="cust-chat">
+                  {selected ? (
+                    <>
+                      {/* 제목 + 근거를 한 줄에. 이름은 이 기능의 화면 이름(`종목 즉답`,
+                          FAB 라벨·CLAUDE.md 기능표와 같다)에 범위만 붙인 것이다 —
+                          한 화면에서 같은 기능을 두 이름으로 부르면 다른 물건처럼 읽힌다.
+                          **주어는 종목이어야 한다**: "이 고객에게 묻기"로 읽히면 답할 수
+                          없는 질문(고객 자체)과 해서는 안 되는 질문(회신문 대필)을 부른다. */}
+                      <div className="cchat-head">
+                        <strong>보유 종목 질문</strong>
+                        <span className="cchat-src">
+                          공시 · 뉴스 · 지연시세
+                        </span>
+                      </div>
+                      <div className="cchat-chips">
+                        {selected.holdings.length ? (
+                          selected.holdings.map((h) => (
+                            <button
+                              key={h.code}
+                              className="chip"
+                              onClick={() => askHolding(`${h.name} 최근 실적`)}
+                              title={`${h.name}(${h.code}) 질문 채우기`}
+                            >
+                              {h.name}
+                            </button>
+                          ))
+                        ) : (
+                          <span className="hint">보유 종목이 없습니다.</span>
+                        )}
+                      </div>
+                      {/* 고객이 바뀌면 대화를 새로 시작한다(key). 세션을 이어가면 다음
+                          질문이 **앞 고객의 종목을 이어받아**(멀티턴 last_entity) 이
+                          고객이 갖고 있지도 않은 종목을 답해 버린다. */}
+                      <F1Chat key={selected.id} compact prefill={prefill} />
+                    </>
+                  ) : (
+                    <div className="hint">
+                      고객을 선택하면 질문할 수 있습니다.
+                    </div>
                   )}
                 </div>
               </div>
@@ -1342,9 +1377,9 @@ export default function DashboardPage() {
         <span className="dot" aria-hidden="true">
           ⚠
         </span>{' '}
-        투자권유·광고가 아닙니다. AI는 공개 공시·뉴스·지연시세에서 출처 있는
-        사실만 모읍니다. 고객에게 나가는 말은 PB가 직접 쓰고, AI 산출물은 전부
-        초안·미검증이며, 발행·전달은 사람의 검토·심의·승인 후에만 가능합니다.
+        본 화면의 AI 산출물은 공개 공시·뉴스·지연시세에 근거한 내부 참고용
+        미검증 초안이며, 투자권유·광고가 아닙니다. 대고객 문안 작성과 발행은
+        사람의 검토·심의·승인을 거칩니다.
       </p>
 
       {/* ── 종목 즉답(F1) 입구 ────────────────────────────────
