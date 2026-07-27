@@ -33,6 +33,7 @@ import ResearchCard from './ResearchCard';
 import { ChatModal, NoteModal } from './ReviewModal';
 import {
   ACTOR,
+  actorLabel,
   PILL,
   RISK,
   type AgentCalls,
@@ -60,7 +61,8 @@ const ROLES: Record<
     defaultView: 'cust' | 'ai' | null;
     queueFilter: ((it: QueueItem) => boolean) | null;
     custFilter: ((c: Customer) => boolean) | null;
-    qScope: string;
+    /** 큐 제목 옆 범위 라벨. 준법의 "심의 단계 건만" 라벨을 뗀 뒤로는 아무도 안 쓴다(선택). */
+    qScope?: string;
   }
 > = {
   // 이 화면의 주인. 담당 고객·상담은 **백엔드가 이미 걸러서** 보내므로(main.PB_NAME)
@@ -89,7 +91,6 @@ const ROLES: Record<
     defaultView: 'cust',
     queueFilter: (it) => it.type === 'note' && it.status === 'deliberation',
     custFilter: null,
-    qScope: '심의 단계 건만 표시 중',
   },
 };
 
@@ -224,7 +225,7 @@ function PrepMemo({
             )}
             {!lines.length && !note && (
               <div className="prep-line muted">
-                오늘 브리핑·노트에 이 종목은 없습니다 — 필요하면 &ldquo;이 종목
+                오늘 브리핑·노트에 이 종목은 없습니다. 필요하면 &ldquo;이 종목
                 묻기&rdquo;로 바로 확인하세요.
               </div>
             )}
@@ -257,12 +258,54 @@ export default function DashboardPage() {
     | null
   >(null);
   const [toastMsg, setToastMsg] = useState('');
+  /** 새로고침 후에도 마지막으로 보던 화면(역할·탭)을 유지하려고 localStorage에 저장한다.
+   *  SSR 초기 렌더는 기본값('pb'/'cust')이어야 하이드레이션이 어긋나지 않으므로, 복원은
+   *  마운트 뒤에 한다. 이 플래그가 서기 전에는 저장하지 않는다 — 첫 렌더의 기본값이
+   *  저장된 값을 덮어쓰지 않게. */
+  const [restored, setRestored] = useState(false);
   const { tip, bind } = useTip();
 
   const toast = useCallback((m: string) => {
     setToastMsg(m);
     setTimeout(() => setToastMsg(''), 2800);
   }, []);
+
+  // 마운트 시 저장된 역할·탭을 복원한다. 저장된 탭이 그 역할에 실제로 없으면(예: 준법인데
+  // 'note') 빈 화면이 되므로, 유효할 때만 복원하고 아니면 기본 화면으로 돌린다.
+  /* eslint-disable react-hooks/set-state-in-effect --
+     마운트 1회 복원이다. localStorage는 SSR에서 못 읽으니 하이드레이션 불일치를 피하려면
+     초기 렌더는 기본값으로 두고 마운트 뒤 여기서 복원해야 한다(브라우저 전용 상태의 정석). */
+  useEffect(() => {
+    try {
+      const savedRole = localStorage.getItem('pb-dash-role');
+      const r: Role =
+        savedRole === 'comp' || savedRole === 'pb' ? savedRole : 'pb';
+      setRole(r);
+      const cfgR = ROLES[r];
+      const savedView = localStorage.getItem('pb-dash-view');
+      const viewOk =
+        savedView === 'cust' ||
+        (savedView === 'note' && cfgR.research) ||
+        (savedView === 'ai' && cfgR.aiTab);
+      if (viewOk) setView(savedView as View);
+      else setView(cfgR.defaultView ?? 'cust');
+    } catch {
+      /* localStorage 접근 불가(프라이빗 모드 등) — 기본값 유지 */
+    }
+    setRestored(true);
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  // 역할·탭이 바뀌면 저장한다(복원 이후에만).
+  useEffect(() => {
+    if (!restored) return;
+    try {
+      localStorage.setItem('pb-dash-role', role);
+      localStorage.setItem('pb-dash-view', view);
+    } catch {
+      /* 무시 */
+    }
+  }, [restored, role, view]);
 
   const load = useCallback(async () => {
     try {
@@ -324,10 +367,11 @@ export default function DashboardPage() {
         [
           // 축은 "읽기 / 하기"다. 상담 준비 = 무엇을 알아야 하나(브리핑·고객),
           // 노트·승인 = 내가 손대야 하는 것(생성·처리 대기).
-          // 준법 화면은 그 축이 없어(만들지 않는다) 원래 이름을 쓴다.
+          // 준법은 고객을 관리하지 않는다 — 이 탭이 하는 일은 심의 큐 처리뿐이라
+          // "심의"로 부른다(예전 "고객 관리"는 없는 고객 카드를 기대하게 만들었다).
           {
             id: 'cust',
-            label: cfg.research ? '상담 준비' : '고객 관리',
+            label: cfg.research ? '상담 준비' : '심의',
             on: true,
           },
           { id: 'note', label: '노트·승인', on: cfg.research },
@@ -536,12 +580,10 @@ export default function DashboardPage() {
           {
             label: '심의 대기',
             value: String(roleQueue.length),
-            breakdown: '검토를 통과해 준법 심의를 기다리는 노트',
           },
           {
             label: '게이트 차단 (7일)',
             value: String(data.summary.gate_blocks_7d),
-            breakdown: '건별 상세는 컴플라이언스 알림 카드',
             gate: true,
           },
         ];
@@ -674,7 +716,7 @@ export default function DashboardPage() {
               <span>{aiwork.join(' · ')}</span>
             ) : (
               <span className="muted">
-                오늘은 실행 기록이 없습니다 — 브리핑을 생성하면 여기에
+                오늘은 실행 기록이 없습니다. 브리핑을 생성하면 여기에
                 표시됩니다.
               </span>
             )}
@@ -715,8 +757,11 @@ export default function DashboardPage() {
                     <GateMini data={data.summary.gate_blocks_daily} />
                   </div>
                 )}
-                {/* 설명줄이 없는 타일은 빈 칸을 남기지 않는다(빈 div도 자리를 차지한다). */}
-                {t.breakdown && <div className="breakdown">{t.breakdown}</div>}
+                {/* 설명줄이 없는 타일은 빈 칸을 남기지 않는다(빈 div도 자리를 차지한다).
+                    준법 타일엔 breakdown 자체가 없으므로 in 가드로 좁힌다(gate와 같은 패턴). */}
+                {'breakdown' in t && t.breakdown && (
+                  <div className="breakdown">{t.breakdown}</div>
+                )}
               </Tag>
             );
           })}
@@ -857,20 +902,15 @@ export default function DashboardPage() {
         {/* 처리 대기는 노트·승인 탭으로 옮겼다(PB). 준법은 그 탭이 없어 여기 남는다. */}
         {!cfg.research && queueCard}
 
-        {/* 고객 포트폴리오 */}
-        <section className="card" aria-labelledby="c-title">
-          <div className="card-head">
-            <h2 id="c-title">고객 포트폴리오</h2>
-            <span className="hint">
-              {cfg.portfolio ? `${roleCustomers.length}명` : '접근 제한'}
-            </span>
-          </div>
-          {!cfg.portfolio ? (
-            <div className="hint" style={{ padding: '16px 4px' }}>
-              🔒 준법 화면에서는 고객 개인 포트폴리오(잔고·보유종목)가 표시되지
-              않습니다 — 위험 플래그·감사로그 요약만 접근 가능합니다.
+        {/* 고객 포트폴리오 — PB 전용. 준법은 정보장벽으로 고객 개인정보를 안 보므로 카드
+            자체를 렌더하지 않는다(예전엔 "접근 제한"만 든 빈 카드가 화면 최하단을 차지했다).
+            정보장벽 자체는 서버 스코핑(남의 고객 404)이 보장한다 — 빈 카드로 광고할 게 아니다. */}
+        {cfg.portfolio && (
+          <section className="card" aria-labelledby="c-title">
+            <div className="card-head">
+              <h2 id="c-title">고객 포트폴리오</h2>
+              <span className="hint">{roleCustomers.length}명</span>
             </div>
-          ) : (
             <>
               <div className="strip">
                 <div className="kv">
@@ -1068,8 +1108,8 @@ export default function DashboardPage() {
                 </div>
               </div>
             </>
-          )}
-        </section>
+          </section>
+        )}
       </div>
 
       {/* ══════════ 탭 2 · 종목 노트 (F3) ══════════
@@ -1283,7 +1323,7 @@ export default function DashboardPage() {
                 <span className="adet">
                   {[
                     a.note_id && `노트 #${a.note_id}`,
-                    a.actor && `actor: ${a.actor}`,
+                    a.actor && `actor: ${actorLabel(a.actor)}`,
                     detailStr(a.detail),
                   ]
                     .filter(Boolean)

@@ -292,7 +292,7 @@ export default function ResearchCard({
           }}
         />
         <button className="btn primary" onClick={start} disabled={running}>
-          {running ? '생성 중…' : '노트 생성'}
+          {running ? '생성 중…' : '생성'}
         </button>
       </div>
 

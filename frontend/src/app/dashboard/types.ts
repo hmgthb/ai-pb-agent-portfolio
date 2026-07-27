@@ -219,7 +219,19 @@ export const RISK = ['안정형', '안정추구형', '위험중립형', '적극�
  *  사용자가 한 명뿐이라 사람 이름이 아니라 역할명을 쓴다(구분할 상대가 없다). */
 export const MY_PB = 'PB';
 
-export const ACTOR: Record<Role, string> = { pb: MY_PB, comp: '정준법' };
+/** 준법도 사람 이름이 아니라 역할명을 쓴다 — 1 PB · 1 준법 전제라 구분할 상대가 없다.
+ *  (예전엔 '정준법'이었다. 그 이름으로 남은 과거 기록은 actorLabel로 역할로 보인다.) */
+export const ACTOR: Record<Role, string> = { pb: MY_PB, comp: '준법' };
+
+/** 감사로그·노트에 남은 actor 문자열을 화면용 역할 라벨로 정규화한다.
+ *  DB 기록은 append-only라 손대지 않고(감사 이력 소급 수정 금지, HANDOFF §0-1) 화면에서만
+ *  역할로 보여준다. 1 PB · 1 준법 전제라 사람 이름을 역할로 바꿔도 가리키는 대상은 같다.
+ *  관리자·김애널 등 지난 체제의 기록은 매핑이 모호하고 화면 밖(최근 12건 밖)이라 원본대로 둔다. */
+export function actorLabel(actor: string): string {
+  if (actor === '준법' || actor === '정준법') return '준법';
+  if (actor === 'PB' || actor.endsWith('PB')) return 'PB'; // PB · 박PB · 이PB · 최PB
+  return actor;
+}
 
 export const WATERMARK =
   '⚠ AI 초안 · 미검증 — 사람의 검토·심의·승인 없이는 발행되지 않습니다.';

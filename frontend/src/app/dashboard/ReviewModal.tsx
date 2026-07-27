@@ -10,9 +10,20 @@
 import { useState } from 'react';
 import { apiPost, errorMessage, fmtDate, fmtKRW, hhmm, detailStr } from './api';
 import {
-  ACK_REASONS, ACTOR, MY_PB, PILL, RISK, WATERMARK,
-  type Customer, type NoteAck, type NoteDetail, type NoteSentence, type NoteSource,
-  type QueueChat, type Role,
+  ACK_REASONS,
+  ACTOR,
+  actorLabel,
+  MY_PB,
+  PILL,
+  RISK,
+  WATERMARK,
+  type Customer,
+  type NoteAck,
+  type NoteDetail,
+  type NoteSentence,
+  type NoteSource,
+  type QueueChat,
+  type Role,
 } from './types';
 
 type Result = { ok?: string; blocked?: string };
@@ -31,7 +42,11 @@ function SourceBadge({ src }: { src: NoteSource | null }) {
     );
   }
   if (src.type === 'krx') {
-    return <span className="sbadge src" title={src.label}>시세 {fmtDate(src.as_of)}</span>;
+    return (
+      <span className="sbadge src" title={src.label}>
+        시세 {fmtDate(src.as_of)}
+      </span>
+    );
   }
   return (
     <span className="sbadge src" title={src.url}>
@@ -43,7 +58,10 @@ function SourceBadge({ src }: { src: NoteSource | null }) {
 /** 문장 목록. `rows`의 i는 **원본 sentences 배열의 인덱스**다 — 확인 기록(ack)이 그
  *  인덱스로 저장되므로, 소제목·고지문구를 걸러낸 뒤의 순번을 쓰면 다른 문장을 가리킨다. */
 function SentenceRows({
-  rows, acks, canAck, onAck,
+  rows,
+  acks,
+  canAck,
+  onAck,
 }: {
   rows: { s: NoteSentence; i: number }[];
   acks: NoteAck[];
@@ -66,13 +84,21 @@ function SentenceRows({
               srcs.map((src, j) => <SourceBadge key={j} src={src} />)
             ) : ack ? (
               // 사람이 확인한 문장 — 누가·언제·무슨 사유였는지가 배지에 남는다.
-              <span className="sbadge ack" title={`${ack.actor} · ${hhmm(ack.ts)} 확인`}>
+              <span
+                className="sbadge ack"
+                title={`${actorLabel(ack.actor)} · ${hhmm(ack.ts)} 확인`}
+              >
                 확인함 · {ack.reason}
               </span>
             ) : s.kind === 'interpretation' ? (
               // 각주가 없는 게 규칙대로인 문장. UNSOURCED로 칠하면 검토자가 위반으로
               // 오해한다 — 다만 판단은 사람이 하도록 큐에는 그대로 올라간다.
-              <span className="sbadge itp" title="해석·전망 문장은 출처 각주 대상이 아닙니다">해석</span>
+              <span
+                className="sbadge itp"
+                title="해석·전망 문장은 출처 각주 대상이 아닙니다"
+              >
+                해석
+              </span>
             ) : (
               <SourceBadge src={null} />
             )}
@@ -87,7 +113,9 @@ function SentenceRows({
               >
                 <option value="">확인 안 함</option>
                 {ACK_REASONS.map((r) => (
-                  <option key={r} value={r}>{r}(으)로 확인</option>
+                  <option key={r} value={r}>
+                    {r}(으)로 확인
+                  </option>
                 ))}
               </select>
             )}
@@ -99,9 +127,21 @@ function SentenceRows({
 }
 
 /* ── 노트 모달 ────────────────────────────────────────────── */
-type Action = { label: string; ok: boolean; deny?: string; danger?: boolean; run: () => Promise<Result> };
+type Action = {
+  label: string;
+  ok: boolean;
+  deny?: string;
+  danger?: boolean;
+  run: () => Promise<Result>;
+};
 
-function ActionsRow({ acts, onDone }: { acts: Action[]; onDone: (r: Result) => void }) {
+function ActionsRow({
+  acts,
+  onDone,
+}: {
+  acts: Action[];
+  onDone: (r: Result) => void;
+}) {
   const [busy, setBusy] = useState(false);
   if (!acts.length) return null;
   return (
@@ -127,7 +167,11 @@ function ActionsRow({ acts, onDone }: { acts: Action[]; onDone: (r: Result) => v
 }
 
 export function NoteModal({
-  note, role, onClose, onChanged, toast,
+  note,
+  role,
+  onClose,
+  onChanged,
+  toast,
 }: {
   note: NoteDetail;
   role: Role;
@@ -160,27 +204,42 @@ export function NoteModal({
      그래서 PB 화면에서 심의중 노트는 상태만 보이고 버튼이 없다(아래 deny 문구가 이유를 말한다). */
   const actions: Action[] =
     current.status === 'draft'
-      ? [{
-          label: '사실 확인 시작', ok: role === 'pb',
-          deny: '노트의 사실 확인은 담당 PB가 합니다',
-          run: () => act('review'),
-        }]
+      ? [
+          {
+            label: '사실 확인 시작',
+            ok: role === 'pb',
+            deny: '노트의 사실 확인은 담당 PB가 합니다',
+            run: () => act('review'),
+          },
+        ]
       : current.status === 'review'
-      ? [{
-          label: '확인 완료 → 준법 심의 요청', ok: role === 'pb',
-          deny: '심의 요청은 확인한 PB가 합니다',
-          run: () => act('deliberate'),
-        }]
-      : current.status === 'deliberation'
-      ? [{
-          label: '발행', ok: role === 'comp',
-          deny: '준법 심의 중입니다 — 발행은 준법 권한입니다',
-          run: () => act('publish'),
-        }]
-      : [];
+        ? [
+            {
+              label: '확인 완료 → 준법 심의 요청',
+              ok: role === 'pb',
+              deny: '심의 요청은 확인한 PB가 합니다',
+              run: () => act('deliberate'),
+            },
+          ]
+        : current.status === 'deliberation'
+          ? [
+              {
+                label: '발행',
+                ok: role === 'comp',
+                deny: '준법 심의 중입니다 — 발행은 준법 권한입니다',
+                run: () => act('publish'),
+              },
+            ]
+          : [];
 
-  const people = ([['확인', current.reviewer], ['심의 요청', current.deliberator], ['발행', current.publisher]] as const)
-    .map(([k, v]) => `${k} ${v || '—'}`)
+  const people = (
+    [
+      ['확인', current.reviewer],
+      ['심의 요청', current.deliberator],
+      ['발행', current.publisher],
+    ] as const
+  )
+    .map(([k, v]) => `${k} ${v ? actorLabel(v) : '—'}`)
     .join(' · ');
 
   // 소제목과 고지문구·구분선은 검토 대상 문장이 아니다(백엔드 게이트와 같은 기준).
@@ -200,7 +259,11 @@ export function NoteModal({
   ).length;
 
   const ack = async (index: number, reason: string | null) => {
-    const r = await apiPost(`/api/notes/${current.id}/ack`, { actor, index, reason });
+    const r = await apiPost(`/api/notes/${current.id}/ack`, {
+      actor,
+      index,
+      reason,
+    });
     if (!r.ok) {
       setRes({ blocked: errorMessage(r.body) });
       return;
@@ -212,11 +275,17 @@ export function NoteModal({
   return (
     <>
       <div className="m-head">
-        <h3>{current.corp_name}({current.stock_code}) 실적·공시 노트</h3>
+        <h3>
+          {current.corp_name}({current.stock_code}) 실적·공시 노트
+        </h3>
         <span className={`pill ${cls}`}>{label}</span>
-        <button className="m-close" aria-label="닫기" onClick={onClose}>×</button>
+        <button className="m-close" aria-label="닫기" onClick={onClose}>
+          ×
+        </button>
       </div>
-      <div className="m-meta">노트 #{current.id} · {people}</div>
+      <div className="m-meta">
+        노트 #{current.id} · {people}
+      </div>
       <div className="wm">{WATERMARK}</div>
       {res.blocked && <div className="vbox">⛔ {res.blocked}</div>}
       {res.ok && <div className="okbox">✓ {res.ok}</div>}
@@ -225,13 +294,18 @@ export function NoteModal({
       {current.status === 'deliberation' && (
         <div className={blocking ? 'ackbar' : 'ackbar done'}>
           {blocking
-            ? `출처 없는 문장 ${blocking}개가 발행을 막고 있습니다 — 각주를 붙일 수 없는 문장이면 사유를 골라 확인하세요.`
+            ? `출처 없는 문장 ${blocking}개가 발행을 막고 있습니다. 각주를 붙일 수 없는 문장이면 사유를 골라 확인하세요.`
             : '미인용 문장이 모두 확인되었습니다 — 발행할 수 있습니다.'}
-          {current.acks.length > 0 && ` (확인 ${current.acks.length}개, 감사로그에 기록됨)`}
-          {!canAck && <span className="hint"> · 🔒 확인은 준법 권한입니다</span>}
+          {current.acks.length > 0 &&
+            ` (확인 ${current.acks.length}개, 감사로그에 기록됨)`}
         </div>
       )}
-      <SentenceRows rows={body} acks={current.acks} canAck={canAck} onAck={ack} />
+      <SentenceRows
+        rows={body}
+        acks={current.acks}
+        canAck={canAck}
+        onAck={ack}
+      />
       <ActionsRow
         acts={actions}
         onDone={async (r) => {
@@ -247,7 +321,9 @@ export function NoteModal({
             <span className="ats">{hhmm(a.ts)}</span>
             <span className="aev">{a.event_type}</span>
             <span className="adet">
-              {[a.actor && `actor: ${a.actor}`, detailStr(a.detail)].filter(Boolean).join(' · ')}
+              {[a.actor && `actor: ${actorLabel(a.actor)}`, detailStr(a.detail)]
+                .filter(Boolean)
+                .join(' · ')}
             </span>
           </div>
         ))}
@@ -266,13 +342,19 @@ function prepFacts(c: Customer) {
   return [
     {
       text: `등록 투자성향 ${RISK[c.risk]} · 국내주식 비중 ${c.alloc['국내주식'] ?? 0}% · 잔고 ₩${fmtKRW(c.balance)}.`,
-      badge: <span className="sbadge acct" title={c.acct}>계좌 데이터</span>,
+      badge: (
+        <span className="sbadge acct" title={c.acct}>
+          계좌 데이터
+        </span>
+      ),
     },
     ...(c.flag
-      ? [{
-          text: `위험 플래그: ${c.flagReasons.map((r) => r.text).join(' · ')}.`,
-          badge: <span className="sbadge acct">규칙 판정</span>,
-        }]
+      ? [
+          {
+            text: `위험 플래그: ${c.flagReasons.map((r) => r.text).join(' · ')}.`,
+            badge: <span className="sbadge acct">규칙 판정</span>,
+          },
+        ]
       : []),
     {
       text: '회신 시 고지: 정보 제공 목적이며 투자권유가 아님을 밝히고, 매매 판단은 고객 확인을 거칩니다.',
@@ -282,7 +364,12 @@ function prepFacts(c: Customer) {
 }
 
 export function ChatModal({
-  item, customer, role, onClose, onChanged, toast,
+  item,
+  customer,
+  role,
+  onClose,
+  onChanged,
+  toast,
 }: {
   item: QueueChat;
   customer: Customer;
@@ -294,16 +381,23 @@ export function ChatModal({
   const [res, setRes] = useState<Result>({});
   const [status, setStatus] = useState(item.status);
   const mine = role === 'pb' && customer.pb === MY_PB;
-  const deny = role === 'comp' ? '이 건의 처리는 담당 PB 권한입니다' : '담당 PB만 처리할 수 있습니다';
+  const deny =
+    role === 'comp'
+      ? '이 건의 처리는 담당 PB 권한입니다'
+      : '담당 PB만 처리할 수 있습니다';
   const [label, cls] = PILL[status] ?? [status, ''];
 
   const decide = async (action: 'approve' | 'reject'): Promise<Result> => {
-    const r = await apiPost(`/api/sessions/${item.id}/${action}`, { actor: MY_PB });
+    const r = await apiPost(`/api/sessions/${item.id}/${action}`, {
+      actor: MY_PB,
+    });
     if (!r.ok) return { blocked: errorMessage(r.body) };
     setStatus(action === 'approve' ? 'done' : 'rejected');
     if (action === 'approve') {
       toast(`확인 완료 — ${customer.name} 고객 회신은 PB가 직접 작성합니다`);
-      return { ok: '확인 완료 — 회신 작성은 사람이 합니다(AI가 대신 보내지 않습니다).' };
+      return {
+        ok: '확인 완료 — 회신 작성은 사람이 합니다(AI가 대신 보내지 않습니다).',
+      };
     }
     toast('보류됨 — 추가 확인 필요로 표시했습니다');
     return { blocked: '보류됨 — 사실 확인이 더 필요한 건으로 표시했습니다.' };
@@ -312,8 +406,14 @@ export function ChatModal({
   const actions: Action[] =
     status === 'pending'
       ? [
-          { label: '확인 완료 (회신은 PB가 직접)', ok: mine, deny, run: () => decide('approve') },
-          { label: '보류 (추가 확인 필요)', ok: mine, deny, danger: true, run: () => decide('reject') },
+          { label: '확인', ok: mine, deny, run: () => decide('approve') },
+          {
+            label: '보류',
+            ok: mine,
+            deny,
+            danger: true,
+            run: () => decide('reject'),
+          },
         ]
       : [];
 
@@ -322,16 +422,26 @@ export function ChatModal({
       <div className="m-head">
         <h3>고객 문의 대응 준비 — {customer.name}</h3>
         <span className={`pill ${cls}`}>{label}</span>
-        <button className="m-close" aria-label="닫기" onClick={onClose}>×</button>
+        <button className="m-close" aria-label="닫기" onClick={onClose}>
+          ×
+        </button>
       </div>
       <div className="m-meta">
-        {customer.acct} · {customer.age}세 · {RISK[customer.risk]} · 잔고 ₩{fmtKRW(customer.balance)} · 담당 {customer.pb}
+        {customer.acct} · {customer.age}세 · {RISK[customer.risk]} · 잔고 ₩
+        {fmtKRW(customer.balance)} · 담당 {customer.pb}
         {customer.flag && (
-          <> · <span className="flag">▲ {customer.flagReasons.map((r) => r.text).join(' · ')}</span></>
+          <>
+            {' '}
+            ·{' '}
+            <span className="flag">
+              ▲ {customer.flagReasons.map((r) => r.text).join(' · ')}
+            </span>
+          </>
         )}
       </div>
       <div className="wm">
-        {WATERMARK} AI는 고객 회신을 대신 쓰지 않습니다 — 아래는 PB가 회신 전에 확인할 사실입니다.
+        {WATERMARK} AI는 고객 회신을 대신 쓰지 않습니다 — 아래는 PB가 회신 전에
+        확인할 사실입니다.
       </div>
       {res.blocked && <div className="vbox">⛔ {res.blocked}</div>}
       {res.ok && <div className="okbox">✓ {res.ok}</div>}
@@ -342,7 +452,9 @@ export function ChatModal({
       <div className="bubble">
         <div className="blabel">
           회신 전 확인할 사실
-          <span className="src mock" style={{ marginLeft: 6 }}>계좌는 시드 데이터 · 가상 고객</span>
+          <span className="src mock" style={{ marginLeft: 6 }}>
+            계좌는 시드 데이터 · 가상 고객
+          </span>
         </div>
         <div className="srows">
           {prepFacts(customer).map((s, i) => (
