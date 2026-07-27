@@ -943,93 +943,191 @@ tbody tr[aria-selected='true'] {
 }
 
 /* ── 사이드: 알림 피드 & 감사로그 ─────────── */
+/* 알림은 접이식 요약이다 — 감사로그(전체 원장)와 무게를 확 다르게 둔다. 요약 한 줄만
+   보이고 위반 상세는 클릭해서 편다(native <details> — 키보드·스크린리더가 공짜다). */
 .feed {
   display: flex;
   flex-direction: column;
 }
 .fitem {
-  display: flex;
-  gap: 10px;
-  padding: 9px 2px;
   border-top: 1px solid var(--grid);
 }
 .fitem:first-child {
   border-top: 0;
 }
+.fitem > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 2px;
+  cursor: pointer;
+  list-style: none; /* Firefox 기본 삼각형 제거 */
+}
+.fitem > summary::-webkit-details-marker {
+  display: none; /* Safari 기본 삼각형 제거 */
+}
+.fitem > summary::before {
+  content: '▸';
+  flex: none;
+  color: var(--muted);
+  font-size: 10px;
+  transition: transform 0.12s ease;
+}
+.fitem[open] > summary::before {
+  transform: rotate(90deg);
+}
+.fitem > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 3px;
+}
 .ficon {
   flex: none;
-  width: 18px;
+  width: 16px;
   text-align: center;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 12px;
 }
-.fitem .fbody {
-  flex: 1;
-  min-width: 0;
-}
-.fitem .fhead {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-.sev {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-}
-.sev.critical {
+.ficon.critical {
   color: var(--critical);
 }
-.sev.serious {
-  color: var(--serious);
-}
-.sev.warning {
+.ficon.warning {
   color: color-mix(in srgb, var(--warning) 70%, var(--ink));
+}
+.flabel {
+  flex: none;
+  font-size: 12.5px;
+  font-weight: 650;
+}
+.flabel.critical {
+  color: var(--critical);
+}
+.flabel.warning {
+  color: color-mix(in srgb, var(--warning) 70%, var(--ink));
+}
+.fitem .fref {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--muted);
 }
 .fitem .ftime {
   margin-left: auto;
+  flex: none;
   font-size: 11px;
   color: var(--muted);
   white-space: nowrap;
 }
-.fitem .fmsg {
+.fitem .fdetail {
+  padding: 0 2px 11px 26px;
   font-size: 12.5px;
+  line-height: 1.5;
   color: var(--ink);
 }
-.fitem .fref {
-  font-size: 11.5px;
-  color: var(--muted);
-}
 
+/* 감사로그는 이벤트 종류를 색 점·색 이름으로 한눈에 구분하고, 자세한 detail은 접어 둔다
+   (native <details>). 요약 줄 = 점 + 날짜·시각 + 이벤트명, 펼침 = 노트·actor·detail. */
 .audit {
   display: flex;
   flex-direction: column;
 }
 .aitem {
-  display: flex;
-  gap: 10px;
-  padding: 6px 2px;
-  font-size: 12px;
   border-top: 1px solid var(--grid);
 }
 .aitem:first-child {
   border-top: 0;
 }
+.aitem > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 2px;
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none; /* Firefox 기본 삼각형 제거 */
+}
+.aitem > summary::-webkit-details-marker {
+  display: none; /* Safari 기본 삼각형 제거 */
+}
+.aitem > summary::before {
+  content: '▸';
+  flex: none;
+  color: var(--muted);
+  font-size: 10px;
+  transition: transform 0.12s ease;
+}
+.aitem[open] > summary::before {
+  transform: rotate(90deg);
+}
+.aitem > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 3px;
+}
+.adot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.adot.block {
+  background: var(--critical);
+}
+.adot.publish {
+  background: var(--good);
+}
+.adot.human {
+  background: var(--accent);
+}
 .aitem .ats {
   flex: none;
-  width: 42px;
+  width: 78px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-.aitem .aev {
+.aev {
   font-weight: 600;
   color: var(--ink-2);
 }
-.aitem .adet {
-  color: var(--muted);
+.aev.block {
+  color: var(--critical);
+}
+.aev.publish {
+  color: var(--good-text);
+}
+.aev.human {
+  color: var(--accent);
+}
+.aitem .aref {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--muted);
+}
+.aitem .adet-full {
+  padding: 0 2px 8px 32px;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+/* 페이지 넘김 — 감사로그는 최근 200건을 20건씩 나눠 본다. */
+.apage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 10px 2px 2px;
+  margin-top: 4px;
+  border-top: 1px solid var(--grid);
+}
+.apage-info {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── 리서치 노트 생성 (파이프라인 진행) ──── */

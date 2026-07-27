@@ -130,6 +130,38 @@ function lastDays(n: number) {
   return out;
 }
 
+/* ── 감사로그 표시 도우미 ─────────────────────────────────────
+   이벤트를 성격별로 묶어(차단/발행/사람/도구) 색으로 구분한다 — 한눈에 스캔되게.
+   permission_check는 거부된 것만 '차단'이고 통과는 일상(도구)이라 detail로 가른다. */
+type AuditCat = 'block' | 'publish' | 'human' | 'tool';
+const AUDIT_CAT: Record<string, AuditCat> = {
+  publish_blocked: 'block',
+  mnpi_warning: 'block',
+  published: 'publish',
+  review_started: 'human',
+  deliberation_started: 'human',
+  note_created: 'human',
+  ack_added: 'human',
+  ack_removed: 'human',
+  session_approved: 'human',
+  session_rejected: 'human',
+  brief_created: 'tool',
+  chat_answered: 'tool',
+  tool_use_start: 'tool',
+  tool_use_end: 'tool',
+};
+function auditCat(a: DashboardAudit): AuditCat {
+  if (a.event_type === 'permission_check')
+    return (a.detail as { allowed?: boolean } | null)?.allowed === false
+      ? 'block'
+      : 'tool';
+  return AUDIT_CAT[a.event_type] ?? 'tool';
+}
+/** 감사로그 행의 "언제" — 시간만 있으면 언제적인지 모른다. KST 날짜(M/D)+시각. */
+const auditWhen = (iso: string) =>
+  `${fmtDate(iso).slice(5).replace('-', '/')} ${hhmm(iso)}`;
+const AUDIT_PAGE = 20;
+
 /* ── 상담 준비 메모 ───────────────────────────────────────────
    고객을 고르면, 그 고객이 **실제로 들고 있는 종목**에 대해 이미 수집된 사실만 모아 보여준다.
    여기서 에이전트를 새로 돌리지 않는다 — 브리프(F2)와 종목 노트(F3)가 출처와 함께 이미 가진
@@ -245,6 +277,7 @@ export default function DashboardPage() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<'all' | 'note' | 'chat'>('all');
+  const [auditPage, setAuditPage] = useState(0);
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [modal, setModal] = useState<
@@ -478,9 +511,13 @@ export default function DashboardPage() {
         return {
           sev: blocked ? 'critical' : 'warning',
           icon: blocked ? '⛔' : '◆',
-          msg: blocked
-            ? `발행 차단 — ${detailStr(a.detail) || '게이트 미통과'}`
-            : `허용 외 도구 호출 거부 (${(a.detail as { tool_name?: string }).tool_name ?? '알 수 없음'})`,
+          // 요약 줄엔 짧은 라벨만, 긴 위반 상세는 펼쳤을 때만 보인다(카드 무게를 가볍게).
+          label: blocked ? '발행 차단' : '허용 외 도구 호출 거부',
+          detail: blocked
+            ? detailStr(a.detail) || '게이트 미통과'
+            : `도구 ${
+                (a.detail as { tool_name?: string }).tool_name ?? '알 수 없음'
+              } · 허용 목록 외 (permission_check)`,
           ref: [a.note_id && `노트 #${a.note_id}`, a.event_type]
             .filter(Boolean)
             .join(' · '),
@@ -1109,98 +1146,89 @@ export default function DashboardPage() {
           세 카드의 타고난 폭(넓음/넓음/넓음)이 달라 억지로 나란히 둘 이유가 없다. */}
       <div className="view stack" hidden={view !== 'ai'}>
         <section className="card" aria-labelledby="tr-title">
-              <div className="card-head">
-                <h2 id="tr-title">AI 신뢰도</h2>
+          <div className="card-head">
+            <h2 id="tr-title">AI 신뢰도</h2>
+          </div>
+          <div className="trust">
+            <div>
+              <div className="t-label">
+                출처 부착률{' '}
+                <span style={{ color: 'var(--muted)' }}>· 사실 주장 문장</span>
               </div>
-              <div className="trust">
-                <div>
-                  <div className="t-label">
-                    출처 부착률{' '}
-                    <span style={{ color: 'var(--muted)' }}>
-                      · 사실 주장 문장
-                    </span>
-                  </div>
-                  <div className="t-sub">
-                    <span className="t-value">
-                      {data.summary.citation_rate === null ? (
-                        '—'
-                      ) : (
-                        <>
-                          {data.summary.citation_rate}
-                          <span className="unit">%</span>
-                        </>
-                      )}
-                    </span>
-                  </div>
-                  <div
-                    className="meter"
-                    role="img"
-                    aria-label={`출처 부착률 ${data.summary.citation_rate ?? '측정 불가'}%, 목표 90% 이상`}
-                  >
-                    <div
-                      className="fill"
-                      style={{ width: `${data.summary.citation_rate ?? 0}%` }}
-                    />
-                    <div className="tick" style={{ left: '90%' }} />
-                  </div>
-                  <div className="meter-scale">
-                    <span>0</span>
-                    <span>목표 ≥90%</span>
-                  </div>
-                </div>
-                <div>
-                  <div className="t-label">
-                    발행 통과율{' '}
-                    <span style={{ color: 'var(--muted)' }}>· 누적</span>
-                  </div>
-                  <div className="t-value">
-                    {data.summary.notes_published}
-                    <span className="unit"> / {data.summary.notes_total}</span>
-                  </div>
-                </div>
-                <div>
-                  <div className="t-label">
-                    게이트 차단{' '}
-                    <span style={{ color: 'var(--muted)' }}>· 7일</span>
-                  </div>
-                  <div className="t-sub">
-                    <span className="t-value">
-                      {data.summary.gate_blocks_7d}
-                    </span>
-                    <span style={{ marginLeft: 'auto' }}>
-                      <GateMini data={data.summary.gate_blocks_daily} />
-                    </span>
-                  </div>
-                </div>
+              <div className="t-sub">
+                <span className="t-value">
+                  {data.summary.citation_rate === null ? (
+                    '—'
+                  ) : (
+                    <>
+                      {data.summary.citation_rate}
+                      <span className="unit">%</span>
+                    </>
+                  )}
+                </span>
               </div>
+              <div
+                className="meter"
+                role="img"
+                aria-label={`출처 부착률 ${data.summary.citation_rate ?? '측정 불가'}%, 목표 90% 이상`}
+              >
+                <div
+                  className="fill"
+                  style={{ width: `${data.summary.citation_rate ?? 0}%` }}
+                />
+                <div className="tick" style={{ left: '90%' }} />
+              </div>
+              <div className="meter-scale">
+                <span>0</span>
+                <span>목표 ≥90%</span>
+              </div>
+            </div>
+            <div>
+              <div className="t-label">
+                발행 통과율{' '}
+                <span style={{ color: 'var(--muted)' }}>· 누적</span>
+              </div>
+              <div className="t-value">
+                {data.summary.notes_published}
+                <span className="unit"> / {data.summary.notes_total}</span>
+              </div>
+            </div>
+            <div>
+              <div className="t-label">
+                게이트 차단 <span style={{ color: 'var(--muted)' }}>· 7일</span>
+              </div>
+              <div className="t-sub">
+                <span className="t-value">{data.summary.gate_blocks_7d}</span>
+                <span style={{ marginLeft: 'auto' }}>
+                  <GateMini data={data.summary.gate_blocks_daily} />
+                </span>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section className="card" aria-labelledby="f-title">
-              <div className="card-head">
-                <h2 id="f-title">컴플라이언스 알림</h2>
+          <div className="card-head">
+            <h2 id="f-title">컴플라이언스 알림</h2>
+          </div>
+          <div className="feed">
+            {feed.map((f, i) => (
+              <details className="fitem" key={i}>
+                <summary>
+                  <span className={`ficon ${f.sev}`}>{f.icon}</span>
+                  <span className={`flabel ${f.sev}`}>{f.label}</span>
+                  <span className="fref">{f.ref}</span>
+                  <span className="ftime">{f.time}</span>
+                </summary>
+                <div className="fdetail">{f.detail}</div>
+              </details>
+            ))}
+            {!feed.length && (
+              <div className="hint" style={{ padding: '10px 4px' }}>
+                차단·거부 기록이 없습니다.
               </div>
-              <div className="feed">
-                {feed.map((f, i) => (
-                  <div className="fitem" key={i}>
-                    <span className={`ficon sev ${f.sev}`}>{f.icon}</span>
-                    <div className="fbody">
-                      <div className="fhead">
-                        <span className={`sev ${f.sev}`}>
-                          {f.sev.toUpperCase()}
-                        </span>
-                        <span className="ftime">{f.time}</span>
-                      </div>
-                      <div className="fmsg">{f.msg}</div>
-                      <div className="fref">{f.ref}</div>
-                    </div>
-                  </div>
-                ))}
-                {!feed.length && (
-                  <div className="hint" style={{ padding: '10px 4px' }}>
-                    차단·거부 기록이 없습니다.
-                  </div>
-                )}
-              </div>
+            )}
+          </div>
         </section>
 
         {/* 감사로그는 좁은 사이드바에 두면 event_type·detail이 잘린다 —
@@ -1208,26 +1236,74 @@ export default function DashboardPage() {
         <section className="card" aria-labelledby="a-title">
           <div className="card-head">
             <h2 id="a-title">
-              감사로그 <span className="hint">append-only · 최근 12건</span>
+              감사로그 <span className="hint">최근 {data.audit.length}건</span>
             </h2>
           </div>
-          <div className="audit">
-            {data.audit.slice(0, 12).map((a) => (
-              <div className="aitem" key={a.id}>
-                <span className="ats">{hhmm(a.ts)}</span>
-                <span className="aev">{a.event_type}</span>
-                <span className="adet">
-                  {[
-                    a.note_id && `노트 #${a.note_id}`,
-                    a.actor && `actor: ${actorLabel(a.actor)}`,
-                    detailStr(a.detail),
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </span>
-              </div>
-            ))}
-          </div>
+          {(() => {
+            // 최근 200건을 20건씩 넘겨 본다(클라이언트 페이징). page는 데이터가 줄어도
+            // 범위를 벗어나지 않게 클램프한다.
+            const pages = Math.max(
+              1,
+              Math.ceil(data.audit.length / AUDIT_PAGE),
+            );
+            const page = Math.min(auditPage, pages - 1);
+            const shown = data.audit.slice(
+              page * AUDIT_PAGE,
+              (page + 1) * AUDIT_PAGE,
+            );
+            return (
+              <>
+                <div className="audit">
+                  {shown.map((a) => {
+                    const cat = auditCat(a);
+                    // 요약 줄은 점·날짜시각·이벤트명만. 노트·actor·detail은 펼쳤을 때.
+                    const body = [
+                      a.note_id && `노트 #${a.note_id}`,
+                      a.actor && `actor: ${actorLabel(a.actor)}`,
+                      detailStr(a.detail),
+                    ]
+                      .filter(Boolean)
+                      .join(' · ');
+                    return (
+                      <details className="aitem" key={a.id}>
+                        <summary>
+                          <span className={`adot ${cat}`} aria-hidden="true" />
+                          <span className="ats">{auditWhen(a.ts)}</span>
+                          <span className={`aev ${cat}`}>{a.event_type}</span>
+                        </summary>
+                        <div className="adet-full">
+                          {body || '추가 상세 없음'}
+                        </div>
+                      </details>
+                    );
+                  })}
+                </div>
+                {pages > 1 && (
+                  <div className="apage">
+                    <button
+                      className="btn"
+                      disabled={page === 0}
+                      onClick={() => setAuditPage(page - 1)}
+                    >
+                      ← 이전
+                    </button>
+                    <span className="apage-info">
+                      {page * AUDIT_PAGE + 1}–
+                      {Math.min((page + 1) * AUDIT_PAGE, data.audit.length)} /{' '}
+                      {data.audit.length}건
+                    </span>
+                    <button
+                      className="btn"
+                      disabled={page >= pages - 1}
+                      onClick={() => setAuditPage(page + 1)}
+                    >
+                      다음 →
+                    </button>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </section>
       </div>
 
