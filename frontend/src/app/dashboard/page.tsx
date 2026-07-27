@@ -576,6 +576,17 @@ export default function DashboardPage() {
   const today = data.summary.today;
   const briefToday =
     data.brief?.brief_date === days[days.length - 1].key ? data.brief : null;
+
+  /* 지수 기준일. 지수는 같은 거래일 종가로 함께 들어오므로 보통 날짜가 같은데, 그걸
+     지수마다 적으면 같은 날짜가 두 번 나와 정작 지수값·등락률을 덮는다. 같을 때만
+     줄 끝에 한 번 적으려고 여기서 판정한다.
+     **다르면 null이고 그때는 지수마다 적는다** — 한쪽만 갱신이 늦은 날 하나로 합치면
+     한 지수에 없는 날짜를 붙이는 셈이라 없는 사실이 된다. */
+  const mktAsOf = (() => {
+    const ixs = data.brief?.market?.indices ?? [];
+    if (!ixs.length) return null;
+    return ixs.every((x) => x.as_of === ixs[0].as_of) ? ixs[0].as_of : null;
+  })();
   const aiwork = [
     briefToday && `상담 전 브리핑 ${briefToday.items.length}종목 수집`,
     today.tool_calls &&
@@ -797,7 +808,6 @@ export default function DashboardPage() {
                   못 가져왔으면 빈칸으로 두지 않고 미연결 사유를 그대로 말한다. */}
               {data.brief.market?.indices?.length ? (
                 <div className="mkt">
-                  <span className="mkt-label">오늘 시장</span>
                   {data.brief.market.indices.map((ix) => {
                     const down = isDown(ix.change_pct);
                     return (
@@ -808,12 +818,26 @@ export default function DashboardPage() {
                           {down ? '▼' : '▲'}
                           {fmtPct(ix.change_pct)}%
                         </span>
-                        <span className="bcode">
-                          · {fmtDate(ix.as_of)} 지연
-                        </span>
+                        {/* 지수마다 붙는 날짜는 서로 다를 때만 쓴다(mktAsOf 참조) */}
+                        {!mktAsOf && (
+                          <span className="bcode">
+                            · {fmtDate(ix.as_of)} 지연
+                          </span>
+                        )}
                       </span>
                     );
                   })}
+                  {/* 날짜가 같으면 줄 끝에 한 번만. 숫자를 읽는 데 방해가 되지 않게
+                      오른쪽 끝으로 밀고 톤을 낮추되, 지우지는 않는다 — 이 값이 오늘
+                      것이 아니라는 사실은 화면에 남아 있어야 한다. */}
+                  {mktAsOf && (
+                    <span
+                      className="mkt-asof"
+                      title="지수는 일별 종가 기준이라 직전 거래일 값이다(실시간 아님). 주말·휴장일과 당일 장중에는 오늘 날짜가 없다."
+                    >
+                      {fmtDate(mktAsOf)} 종가
+                    </span>
+                  )}
                 </div>
               ) : (
                 <div className="mkt off">
