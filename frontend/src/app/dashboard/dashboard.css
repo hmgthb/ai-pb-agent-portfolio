@@ -964,6 +964,7 @@ tbody tr[aria-selected='true'] {
   line-height: 1.5;
 }
 .fitem .fbody {
+  flex: 1;
   min-width: 0;
 }
 .fitem .fhead {
