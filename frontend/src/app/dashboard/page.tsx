@@ -27,7 +27,7 @@ import {
   hhmm,
   isDown,
 } from './api';
-import { BarChart, Donut, GateMini, LineChart, Tip, useTip } from './charts';
+import { Donut, GateMini, Tip, useTip } from './charts';
 import F1Chat from './F1Chat';
 import ResearchCard from './ResearchCard';
 import { ChatModal, NoteModal } from './ReviewModal';
@@ -129,7 +129,6 @@ function lastDays(n: number) {
   }
   return out;
 }
-const dayKey = (iso: string) => bizDay.format(new Date(iso));
 
 /* ── 상담 준비 메모 ───────────────────────────────────────────
    고객을 고르면, 그 고객이 **실제로 들고 있는 종목**에 대해 이미 수집된 사실만 모아 보여준다.
@@ -460,28 +459,9 @@ export default function DashboardPage() {
     [visibleCustomers, selected],
   );
 
-  /* 추이 — 하드코딩 대신 감사로그·세션에서 집계한다. 데이터가 쌓이기 전에는 대부분 0이고,
-     그게 사실이다(없는 과거를 지어내지 않는다). */
+  /* 오늘(영업일) 키 — 브리프가 "오늘 것"인지 판별하는 데만 쓴다(lastDays의 마지막 칸).
+     예전엔 이 14일 배열로 감시 탭의 추이 차트도 그렸지만, 그 카드는 뺐다(2026-07-27). */
   const days = useMemo(() => lastDays(14), []);
-  const trend = useMemo(() => {
-    const noteByDay = new Map<string, number>();
-    (data?.audit ?? [])
-      .filter((a) => a.event_type === 'note_created')
-      .forEach((a) =>
-        noteByDay.set(dayKey(a.ts), (noteByDay.get(dayKey(a.ts)) ?? 0) + 1),
-      );
-    const sessByDay = new Map<string, number>();
-    (data?.sessions ?? []).forEach((s) =>
-      sessByDay.set(
-        dayKey(s.started_at),
-        (sessByDay.get(dayKey(s.started_at)) ?? 0) + 1,
-      ),
-    );
-    return {
-      notes: days.map((d) => noteByDay.get(d.key) ?? 0),
-      sessions: days.map((d) => sessByDay.get(d.key) ?? 0),
-    };
-  }, [data, days]);
 
   /* 컴플라이언스 알림 — 감사로그에서 실제 차단·거부만 뽑는다 */
   const feed = useMemo(() => {
@@ -1124,13 +1104,13 @@ export default function DashboardPage() {
       )}
 
       {/* ══════════ 탭 3 · 감시 (준법 전용) ══════════ */}
+      {/* 감시 탭은 카드 셋을 전폭으로 세로로 쌓는다(요약 지표 → 막힌 사건 → 원장).
+          2열로 두면 짧은 AI 신뢰도가 긴 알림 목록 높이만큼 늘어나 빈칸이 생겼다.
+          세 카드의 타고난 폭(넓음/넓음/넓음)이 달라 억지로 나란히 둘 이유가 없다. */}
       <div className="view stack" hidden={view !== 'ai'}>
-        <div className="grid">
-          <div className="col">
-            <section className="card" aria-labelledby="tr-title">
+        <section className="card" aria-labelledby="tr-title">
               <div className="card-head">
                 <h2 id="tr-title">AI 신뢰도</h2>
-                <span className="src live">DB 실데이터</span>
               </div>
               <div className="trust">
                 <div>
@@ -1167,12 +1147,6 @@ export default function DashboardPage() {
                     <span>0</span>
                     <span>목표 ≥90%</span>
                   </div>
-                  <div className="t-cap">
-                    {data.summary.citation_total
-                      ? `사실 주장 ${data.summary.citation_total}문장 중 ${data.summary.citation_sourced}문장에 출처 각주가 실제 공시·뉴스와 매칭됨` +
-                        ` · 해석·전망 ${data.summary.citation_interpretation}문장은 각주 대상이 아니라 분모에서 제외`
-                      : '아직 생성된 노트 문장이 없습니다.'}
-                  </div>
                 </div>
                 <div>
                   <div className="t-label">
@@ -1182,11 +1156,6 @@ export default function DashboardPage() {
                   <div className="t-value">
                     {data.summary.notes_published}
                     <span className="unit"> / {data.summary.notes_total}</span>
-                  </div>
-                  <div className="t-cap">
-                    {data.summary.notes_total
-                      ? `초안 ${data.summary.notes_total}건 중 발행 ${data.summary.notes_published}건 · 대기 ${data.summary.notes_pending}건`
-                      : '아직 생성된 노트가 없습니다.'}
                   </div>
                 </div>
                 <div>
@@ -1202,79 +1171,13 @@ export default function DashboardPage() {
                       <GateMini data={data.summary.gate_blocks_daily} />
                     </span>
                   </div>
-                  <div className="t-cap">
-                    미인용·금지표현·MNPI·워터마크 누락으로 발행이 차단된 건수 —
-                    0이 목표가 아니라 게이트가 일한 증거
-                  </div>
                 </div>
               </div>
-            </section>
+        </section>
 
-            {/* 간격은 바깥 .col의 gap(16px)이 준다 — marginTop을 또 주면 이 줄만
-                32px로 벌어져 고객 관리 탭의 카드 간격(.stack, 16px)과 어긋난다. */}
-            <div className="charts2">
-              <section className="card chart-box" aria-labelledby="t2">
-                <div className="card-head">
-                  <h2 id="t2">
-                    에이전트 호출 <span className="hint">누적</span>
-                  </h2>
-                  <span className="src live">DB 실데이터</span>
-                </div>
-                {data.agents.length ? (
-                  <BarChart
-                    rows={data.agents.map(
-                      (a) => [a.agent, a.calls] as [string, number],
-                    )}
-                    bind={bind}
-                  />
-                ) : (
-                  <div className="hint" style={{ padding: '20px 4px' }}>
-                    아직 에이전트 실행 기록이 없습니다.
-                  </div>
-                )}
-              </section>
-              <section className="card chart-box" aria-labelledby="t3">
-                <div className="card-head">
-                  <h2 id="t3">
-                    상담·노트 추이 <span className="hint">14일</span>
-                  </h2>
-                  <span className="src live">실집계</span>
-                </div>
-                <div className="chart-legend">
-                  <span className="li">
-                    <span className="key" style={{ background: 'var(--s1)' }} />
-                    상담 세션
-                  </span>
-                  <span className="li">
-                    <span className="key" style={{ background: 'var(--s2)' }} />
-                    노트 생성
-                  </span>
-                </div>
-                <LineChart
-                  days={days.map((d) => d.label)}
-                  bind={bind}
-                  series={[
-                    {
-                      name: '상담 세션',
-                      data: trend.sessions,
-                      color: 'var(--s1)',
-                    },
-                    {
-                      name: '노트 생성',
-                      data: trend.notes,
-                      color: 'var(--s2)',
-                    },
-                  ]}
-                />
-              </section>
-            </div>
-          </div>
-
-          <div className="col">
-            <section className="card" aria-labelledby="f-title">
+        <section className="card" aria-labelledby="f-title">
               <div className="card-head">
                 <h2 id="f-title">컴플라이언스 알림</h2>
-                <span className="src live">감사로그 집계</span>
               </div>
               <div className="feed">
                 {feed.map((f, i) => (
@@ -1298,9 +1201,7 @@ export default function DashboardPage() {
                   </div>
                 )}
               </div>
-            </section>
-          </div>
-        </div>
+        </section>
 
         {/* 감사로그는 좁은 사이드바에 두면 event_type·detail이 잘린다 —
             전폭으로 내려 한 줄에 담기게 한다. */}
@@ -1309,7 +1210,6 @@ export default function DashboardPage() {
             <h2 id="a-title">
               감사로그 <span className="hint">append-only · 최근 12건</span>
             </h2>
-            <span className="src live">DB 실데이터</span>
           </div>
           <div className="audit">
             {data.audit.slice(0, 12).map((a) => (
