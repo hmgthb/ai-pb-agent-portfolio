@@ -61,8 +61,6 @@ const ROLES: Record<
     defaultView: 'cust' | 'ai' | null;
     queueFilter: ((it: QueueItem) => boolean) | null;
     custFilter: ((c: Customer) => boolean) | null;
-    /** 큐 제목 옆 범위 라벨. 준법의 "심의 단계 건만" 라벨을 뗀 뒤로는 아무도 안 쓴다(선택). */
-    qScope?: string;
   }
 > = {
   // 이 화면의 주인. 담당 고객·상담은 **백엔드가 이미 걸러서** 보내므로(main.PB_NAME)
@@ -77,7 +75,6 @@ const ROLES: Record<
     defaultView: 'cust',
     queueFilter: null,
     custFilter: null,
-    qScope: '',
   },
   // 준법은 이 대시보드의 사용자가 아니다 — **다른 사람의 화면**을 데모로 미리 보는 모드다.
   // 그래서 고객 포트폴리오가 안 보이고(정보장벽), 심의 단계 노트만 손댈 수 있다.
@@ -86,7 +83,7 @@ const ROLES: Record<
     portfolio: false,
     research: false,
     brief: false,
-    // 준법도 처리할 일(심의 대기 큐)부터 본다 — AI 평가는 지표를 훑는 화면이지
+    // 준법도 처리할 일(심의 대기 큐)부터 본다 — 감시 탭은 지표를 훑는 화면이지
     // 오늘 손댈 것을 알려주지 않는다.
     defaultView: 'cust',
     queueFilter: (it) => it.type === 'note' && it.status === 'deliberation',
@@ -375,7 +372,9 @@ export default function DashboardPage() {
             on: true,
           },
           { id: 'note', label: '노트·승인', on: cfg.research },
-          { id: 'ai', label: 'AI 평가', on: cfg.aiTab },
+          // 준법감시인의 두 일 = 심의(통과시키기) / 감시(지켜보기). "AI 평가"는 준법이
+          // AI 성능을 채점하는 것처럼 읽혀서 바꿨다 — 실제 내용은 산출물의 규정 준수 감시다.
+          { id: 'ai', label: '감시', on: cfg.aiTab },
         ] as const
       ).filter((t) => t.on),
     [cfg],
@@ -405,11 +404,18 @@ export default function DashboardPage() {
     () => pending.filter((it) => !cfg.queueFilter || cfg.queueFilter(it)),
     [pending, cfg],
   );
+  /** 타입 필터(전체/노트/문의)는 큐에 여러 종류가 섞일 때만 의미 있다. 준법 큐는 심의 단계
+   *  종목 노트만 담고(고객 문의는 PB 일) 한 종류뿐이라, 필터 줄을 안 내고 남아 있던 filter
+   *  상태도 무시한다. cfg.queueFilter가 있으면 = 큐가 단일 종류로 좁혀진 역할(지금은 준법). */
+  const showTypeTabs = !cfg.queueFilter;
   /** 지금 선택된 탭에서 실제로 보이는 건. 목록과 건수 표시가 **같은 값**을 써야 한다 —
    *  따로 세면 필터 조건이 바뀔 때 한쪽만 고치고 넘어가기 쉽다. */
   const shownQueue = useMemo(
-    () => roleQueue.filter((it) => filter === 'all' || it.type === filter),
-    [roleQueue, filter],
+    () =>
+      showTypeTabs
+        ? roleQueue.filter((it) => filter === 'all' || it.type === filter)
+        : roleQueue,
+    [roleQueue, filter, showTypeTabs],
   );
   const roleCustomers = useMemo(
     () =>
@@ -576,17 +582,9 @@ export default function DashboardPage() {
             go: 'note' as const,
           },
         ]
-      : [
-          {
-            label: '심의 대기',
-            value: String(roleQueue.length),
-          },
-          {
-            label: '게이트 차단 (7일)',
-            value: String(data.summary.gate_blocks_7d),
-            gate: true,
-          },
-        ];
+      : // 준법 심의 탭엔 타일을 두지 않는다. 심의 대기 수는 아래 처리 대기 카드("N건"+목록)에,
+        // 게이트 차단은 감시 탭(AI 신뢰도 카드)에 이미 있어 타일은 중복 요약일 뿐이었다.
+        [];
 
   /* 처리 대기 카드 — 두 화면이 나눠 갖는다.
      PB에게는 「노트·승인」 탭(만드는 것과 처리하는 것을 같이 두는 곳)에,
@@ -596,33 +594,33 @@ export default function DashboardPage() {
     <section className="card" aria-labelledby="q-title">
       <div className="card-head">
         <h2 id="q-title">처리 대기</h2>
-        {cfg.qScope && (
-          <span
-            className="hint"
-            style={{ color: 'var(--accent)', fontWeight: 600 }}
-          >
-            {cfg.qScope}
+        {/* 준법은 타입 필터가 없어 건수를 헤더에 둔다(PB는 필터 줄 오른쪽에 있다). */}
+        {!showTypeTabs && (
+          <span className="hint" aria-live="polite">
+            {shownQueue.length}건
           </span>
         )}
       </div>
-      <div className="tabs" role="group" aria-label="대기 항목 필터">
-        {(['all', 'note', 'chat'] as const).map((f) => (
-          <button
-            key={f}
-            className="tab"
-            aria-pressed={filter === f}
-            onClick={() => setFilter(f)}
-          >
-            {f === 'all' ? '전체' : f === 'note' ? '종목 노트' : '고객 문의'}
-          </button>
-        ))}
-        {/* 건수는 탭마다 붙이지 않고 **선택된 탭의 것 하나만** 낸다 — 세 개를 늘어놓으면
-                  지금 보고 있는 게 어느 수인지가 오히려 흐려진다.
-                  aria-live: 탭을 바꾸면 목록이 갈리는데 스크린리더에는 그 변화가 안 들린다. */}
-        <span className="tab-count" aria-live="polite">
-          {shownQueue.length}건
-        </span>
-      </div>
+      {showTypeTabs && (
+        <div className="tabs" role="group" aria-label="대기 항목 필터">
+          {(['all', 'note', 'chat'] as const).map((f) => (
+            <button
+              key={f}
+              className="tab"
+              aria-pressed={filter === f}
+              onClick={() => setFilter(f)}
+            >
+              {f === 'all' ? '전체' : f === 'note' ? '종목 노트' : '고객 문의'}
+            </button>
+          ))}
+          {/* 건수는 탭마다 붙이지 않고 **선택된 탭의 것 하나만** 낸다 — 세 개를 늘어놓으면
+              지금 보고 있는 게 어느 수인지가 오히려 흐려진다.
+              aria-live: 탭을 바꾸면 목록이 갈리는데 스크린리더에는 그 변화가 안 들린다. */}
+          <span className="tab-count" aria-live="polite">
+            {shownQueue.length}건
+          </span>
+        </div>
+      )}
       <div className="queue">
         {shownQueue.map((it) => {
           const [label, cls] = PILL[it.status] ?? [it.status, ''];
@@ -681,7 +679,7 @@ export default function DashboardPage() {
       </header>
 
       {/* 탭 줄은 **고를 게 둘 이상일 때만** 낸다 — 선택지가 하나뿐인 탭은 고르는 장치가
-          아니라 제목일 뿐이다. PB는 고객 관리 + 종목 노트, 준법은 고객 관리 + AI 평가. */}
+          아니라 제목일 뿐이다. PB는 상담 준비 + 노트·승인, 준법은 심의 + 감시. */}
       {tabs.length > 1 && (
         <nav className="cats" aria-label="대시보드 카테고리">
           {tabs.map((t) => (
@@ -731,41 +729,39 @@ export default function DashboardPage() {
         {/* 오늘 규모(내 담당 고객·내 처리 대기) → 바로 만들 수 있는 것(종목 노트) 순서다.
             "AI가 오늘 한 일" 바로 아래에 오늘의 수치와 조작이 붙고, 그 아래로 읽을거리
             (브리핑·처리 대기·고객)가 이어진다. */}
-        {/* 타일은 어느 화면에서나 균등 2열이다. 한때 준법 화면에서만 AI 평가 탭의
+        {/* 타일은 어느 화면에서나 균등 2열이다. 한때 준법 화면에서만 감시 탭의
             사이드바 격자(2fr 1fr)에 맞췄는데, 두 타일의 무게가 같은데 폭이 다르면
             왼쪽이 더 중요한 것처럼 읽힌다 — 탭 사이 이음매보다 이쪽이 우선이다. */}
-        <div className="tile-row">
-          {tiles.map((t) => {
-            // 갈 곳이 있는 타일은 버튼이다 — div에 onClick만 얹으면 키보드로 못 누른다.
-            const go = 'go' in t ? t.go : undefined;
-            const Tag = go ? 'button' : 'div';
-            return (
-              <Tag
-                className={`tile${go ? ' clickable' : ''}`}
-                key={t.label}
-                {...(go
-                  ? { type: 'button' as const, onClick: () => setView(go) }
-                  : {})}
-              >
-                <div className="label">
-                  {t.label}
-                  {go && <span className="tile-go">→</span>}
-                </div>
-                <div className="value">{t.value}</div>
-                {'gate' in t && t.gate && (
-                  <div className="sub">
-                    <GateMini data={data.summary.gate_blocks_daily} />
+        {/* 타일이 없으면(준법: 아래 처리 대기 카드가 같은 정보를 담는다) 빈 그리드를 안 낸다. */}
+        {tiles.length > 0 && (
+          <div className="tile-row">
+            {tiles.map((t) => {
+              // 갈 곳이 있는 타일은 버튼이다 — div에 onClick만 얹으면 키보드로 못 누른다.
+              const go = 'go' in t ? t.go : undefined;
+              const Tag = go ? 'button' : 'div';
+              return (
+                <Tag
+                  className={`tile${go ? ' clickable' : ''}`}
+                  key={t.label}
+                  {...(go
+                    ? { type: 'button' as const, onClick: () => setView(go) }
+                    : {})}
+                >
+                  <div className="label">
+                    {t.label}
+                    {go && <span className="tile-go">→</span>}
                   </div>
-                )}
-                {/* 설명줄이 없는 타일은 빈 칸을 남기지 않는다(빈 div도 자리를 차지한다).
-                    준법 타일엔 breakdown 자체가 없으므로 in 가드로 좁힌다(gate와 같은 패턴). */}
-                {'breakdown' in t && t.breakdown && (
-                  <div className="breakdown">{t.breakdown}</div>
-                )}
-              </Tag>
-            );
-          })}
-        </div>
+                  <div className="value">{t.value}</div>
+                  {/* 설명줄이 없는 타일은 빈 칸을 남기지 않는다(빈 div도 자리를 차지한다).
+                      준법 타일엔 breakdown이 없으므로 in 가드로 좁힌다. */}
+                  {'breakdown' in t && t.breakdown && (
+                    <div className="breakdown">{t.breakdown}</div>
+                  )}
+                </Tag>
+              );
+            })}
+          </div>
+        )}
 
         {/* 상담 전 브리핑 (F2) — 오늘 시장 + 내 고객 보유 상위 종목의 밤사이 변화.
             선정 기준은 내 담당 고객의 보유 수다(backend pb_watchlist) — 배지가 그 근거를 적는다. */}
@@ -947,8 +943,8 @@ export default function DashboardPage() {
                   <input
                     className="search"
                     type="search"
-                    placeholder="고객명 검색"
-                    aria-label="고객명 검색"
+                    placeholder="검색"
+                    aria-label="검색"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />
@@ -1127,7 +1123,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ══════════ 탭 3 · AI 평가 ══════════ */}
+      {/* ══════════ 탭 3 · 감시 (준법 전용) ══════════ */}
       <div className="view stack" hidden={view !== 'ai'}>
         <div className="grid">
           <div className="col">

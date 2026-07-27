@@ -92,7 +92,7 @@
   box-sizing: border-box;
 }
 /* 스크롤바 자리를 항상 비워 둔다.
-   탭마다 내용 길이가 달라서(준법: 고객 관리는 한 화면에 들어가고 AI 평가는 넘친다)
+   탭마다 내용 길이가 달라서(준법: 심의는 한 화면에 들어가고 감시는 넘친다)
    스크롤바가 생겼다 사라지면 **뷰포트 폭이 스크롤바 두께만큼 변한다**. .wrap이
    margin:0 auto로 가운데 정렬이라 그 절반만큼 대시보드 전체가 좌우로 튄다.
    ※ macOS 기본값인 오버레이 스크롤바에서는 원래 안 나타나고, "항상 표시" 설정이나
@@ -299,7 +299,7 @@ tr:focus-visible,
   padding: 6px 0;
 }
 
-/* ── 카테고리 탭 (고객 관리 / AI 평가) ────── */
+/* ── 카테고리 탭 (PB: 상담 준비/노트·승인 · 준법: 심의/감시) ────── */
 .cats {
   display: flex;
   gap: 6px;
@@ -518,7 +518,7 @@ tr:focus-visible,
   color: var(--accent);
 }
 
-/* ── AI 신뢰도 카드 (AI 평가 탭) ──────────── */
+/* ── AI 신뢰도 카드 (감시 탭) ──────────── */
 .trust {
   display: grid;
   grid-template-columns: 1.4fr 1fr 1fr;
@@ -1819,7 +1819,7 @@ tbody tr[aria-selected='true'] {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 16px;
 }
-/* 한때 준법 화면에서만 `.tile-row.aligned`(2fr 1fr)를 붙여 AI 평가 탭의 사이드바
+/* 한때 준법 화면에서만 `.tile-row.aligned`(2fr 1fr)를 붙여 감시 탭의 사이드바
    격자와 이음매를 맞췄다. 뺀 이유: 타일 두 장은 무게가 같은 지표인데 폭이 다르면
    왼쪽이 더 중요한 것처럼 읽힌다. 탭을 오갈 때 이음매가 어긋나는 건 감수한다
    (원래 "어긋나 보인다"의 진짜 원인은 스크롤바였고, 그건 위 scrollbar-gutter로 잡았다). */
