@@ -144,7 +144,7 @@ export default function ResearchCard({
   function start() {
     if (running) return;
     if (!/^\d{6}$/.test(code.trim())) {
-      setMsg('종목코드는 6자리 숫자여야 합니다.');
+      setMsg('종목 코드는 6자리 숫자여야 합니다.');
       return;
     }
     setRun(true);
@@ -282,8 +282,8 @@ export default function ResearchCard({
           className="search"
           inputMode="numeric"
           maxLength={6}
-          placeholder="종목코드 (000000)"
-          aria-label="종목코드"
+          placeholder="000000"
+          aria-label="종목 코드"
           value={code}
           disabled={running}
           onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}

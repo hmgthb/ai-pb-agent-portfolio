@@ -45,11 +45,13 @@ export function Sparkline({ data, w = 64, h = 22 }: { data: number[]; w?: number
   return (
     <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
       <polyline points={pts} fill="none" stroke="var(--spark)" strokeWidth={1.5} strokeLinejoin="round" />
+      {/* 마지막 구간 강조는 --accent가 아니라 --accent-text다 — 브랜드 원색은 밝은 배경에서
+          2.8:1이라 2px 선이 배경에 묻는다(도형 대비 기준 3:1). 미터 채움과 같은 이유. */}
       <line
         x1={x(li - 1)} y1={y(data[li - 1])} x2={x(li)} y2={y(data[li])}
-        stroke="var(--accent)" strokeWidth={2} strokeLinecap="round"
+        stroke="var(--accent-text)" strokeWidth={2} strokeLinecap="round"
       />
-      <circle cx={x(li)} cy={y(data[li])} r={2.5} fill="var(--accent)" stroke="var(--surface)" strokeWidth={1.5} />
+      <circle cx={x(li)} cy={y(data[li])} r={2.5} fill="var(--accent-text)" stroke="var(--surface)" strokeWidth={1.5} />
     </svg>
   );
 }
@@ -175,8 +177,33 @@ export function BarChart({
   );
 }
 
-/* ── 자산배분 도넛 ────────────────────────────────────────── */
-export const ALLOC_COLORS = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)'];
+/* ── 자산배분 도넛 ──────────────────────────────────────────
+   자산군은 그냥 이름표가 아니라 **순서가 있는 값**이다(위험도: 현금성<채권<펀드<국내주식).
+   그래서 범주형 4색이 아니라 한 색조(청록) 4단계를 쓴다 — 진할수록 위험자산이라
+   "쏠림"이 색 농도로 바로 읽힌다. 이 화면의 위험 플래그 규칙이 보는 것도 그 쏠림이다.
+   색조가 하나라 등락(적·청)·강조(주황) 어느 것과도 안 겹친다: 가장 가까운 쌍이
+   하락 청과 ΔE 23.5로, "구분 어려움" 기준선(15)에서 멀다.
+   ※ 범주형 4색은 이 화면에서 불가능하다 — 적·청·주황을 빼면 문서 팔레트에 남는 색조가
+     셋뿐이고, 그중 aqua+green은 다크에서 서로 무너진다(ΔE 11.9). */
+export const ALLOC_ORDER: string[] = ['현금성', '채권', '펀드', '국내주식'];
+export const ALLOC_COLORS = [
+  'var(--alloc-1)',
+  'var(--alloc-2)',
+  'var(--alloc-3)',
+  'var(--alloc-4)',
+];
+
+/** 위험도 순으로 정렬한다. 모르는 자산군은 뒤에 원래 순서대로 붙인다 — 시드가 바뀌어도
+    조각이 조용히 사라지면 안 된다(합이 100%가 아니게 된다). */
+export function allocEntries(
+  alloc: Record<string, number>,
+): [string, number][] {
+  const known = ALLOC_ORDER.filter((k) => k in alloc).map(
+    (k) => [k, alloc[k]] as [string, number],
+  );
+  const rest = Object.entries(alloc).filter(([k]) => !ALLOC_ORDER.includes(k));
+  return [...known, ...rest];
+}
 
 export function Donut({
   alloc, size = 120, bind,
@@ -185,16 +212,18 @@ export function Donut({
   size?: number;
   bind: (html: string) => Record<string, unknown>;
 }) {
-  const entries = Object.entries(alloc);
+  const entries = allocEntries(alloc);
   const total = entries.reduce((a, [, v]) => a + v, 0) || 1;
   const cx = size / 2, cy = size / 2, r = size / 2 - 6, ir = r - 16;
-  let angle = -Math.PI / 2;
+  /* 시작 각도는 누적 변수로 굴리지 않는다 — 렌더 중 재할당이라 React 컴파일러가 막는다
+     (`react-hooks/immutability`). 앞 조각들의 합으로 그때그때 구한다(조각 4개). */
+  const sweep = entries.map(([, v]) => (v / total) * Math.PI * 2);
   const paths = entries.map(([k, v], i) => {
-    const a2 = angle + (v / total) * Math.PI * 2;
-    const large = a2 - angle > Math.PI ? 1 : 0;
+    const a1 = sweep.slice(0, i).reduce((a, b) => a + b, -Math.PI / 2);
+    const a2 = a1 + sweep[i];
+    const large = sweep[i] > Math.PI ? 1 : 0;
     const p = (a: number, rr: number) => `${cx + rr * Math.cos(a)},${cy + rr * Math.sin(a)}`;
-    const d = `M${p(angle, r)} A${r},${r} 0 ${large} 1 ${p(a2, r)} L${p(a2, ir)} A${ir},${ir} 0 ${large} 0 ${p(angle, ir)} Z`;
-    angle = a2;
+    const d = `M${p(a1, r)} A${r},${r} 0 ${large} 1 ${p(a2, r)} L${p(a2, ir)} A${ir},${ir} 0 ${large} 0 ${p(a1, ir)} Z`;
     return (
       <path
         key={k}

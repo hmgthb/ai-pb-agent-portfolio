@@ -10,9 +10,14 @@
     --grid: #e1e0d9;
     --baseline: #c3c2b7;
     --border: rgba(11, 11, 11, 0.10);
-    --accent: #2a78d6;
-    --accent-soft: rgba(42, 120, 214, 0.10);
-    --meter-track: #cde2fb;
+    /* 강조색 = 한화 주황. 셋으로 나눠 쓴다 — 브랜드 원색은 밝은 배경 위 대비가 2.8:1이라
+       글자에 그대로 못 쓰고(탭·링크), 흰 글자를 그 위에 얹어도 2.9:1이다.
+       --accent 면·선 / --accent-text 배경 위 글자·포커스 링 / --on-accent 주황 면 위 글자. */
+    --accent: #f37321;
+    --accent-text: #b34a06;
+    --on-accent: #0b0b0b;
+    --accent-soft: rgba(243, 115, 33, 0.12);
+    --meter-track: #fbdcc9;
     --s1: #2a78d6;
     --s2: #1baf7a;
     --s3: #eda100;
@@ -23,6 +28,22 @@
     --warning: #fab219;
     --serious: #ec835a;
     --critical: #d03b3b;
+    /* 등락 색은 국내 시장 관례(상승=적, 하락=청). 상태색(--good/--critical)과 분리한다 —
+       여기서 적색은 "나쁨"이 아니라 "상승"이라 뜻이 정반대다. */
+    --mkt-up: #c62828;
+    --mkt-down: #1257c4;
+    /* 고객 위험 플래그(⚑) 전용 — 값은 --critical과 같은 경고 적색이지만 토큰은 따로 둔다
+       (상승 적과 뜻이 다르고 게이트 차단과도 쓰임이 다르다). 상승 적과는 색이 아니라
+       형태로 갈린다: 저쪽은 빨간 숫자, 이쪽은 빨간 테두리 알약. */
+    --flag: #d03b3b;
+    /* 큐·에이전트 분류 배지 — 강조 주황(=선택 상태)과 갈려야 한다. 청록은 주황의 보색. */
+    --chip-note: #9e4aa4;
+    --chip-chat: #52514e;
+    /* 자산배분 도넛 — 범주형 4색이 아니라 한 색조 4단계(진할수록 위험자산). */
+    --alloc-1: #52c2ab;
+    --alloc-2: #17957c;
+    --alloc-3: #096b59;
+    --alloc-4: #024a41;
     --spark: #c3c2b7;
   }
   @media (prefers-color-scheme: dark) {
@@ -35,15 +56,25 @@
       --grid: #2c2c2a;
       --baseline: #383835;
       --border: rgba(255, 255, 255, 0.10);
-      --accent: #3987e5;
-      --accent-soft: rgba(57, 135, 229, 0.16);
-      --meter-track: #0d366b;
+      --accent: #f37321;
+      --accent-text: #f37321;
+      --accent-soft: rgba(243, 115, 33, 0.20);
+      --meter-track: #5a2c10;
       --s1: #3987e5;
       --s2: #199e70;
       --s3: #c98500;
       --s4: #008300;
       --s5: #9085e9;
       --good-text: #0ca30c;
+      --mkt-up: #ff5252;
+      --mkt-down: #5aa5ff;
+      --flag: #d03b3b;
+      --chip-note: #d98fdf;
+      --chip-chat: #c3c2b7;
+      --alloc-1: #9fe3d3;
+      --alloc-2: #4fc0a9;
+      --alloc-3: #1a9a80;
+      --alloc-4: #0e7461;
       --spark: #52514e;
     }
   }
@@ -56,15 +87,25 @@
     --grid: #2c2c2a;
     --baseline: #383835;
     --border: rgba(255, 255, 255, 0.10);
-    --accent: #3987e5;
-    --accent-soft: rgba(57, 135, 229, 0.16);
-    --meter-track: #0d366b;
+    --accent: #f37321;
+    --accent-text: #f37321;
+    --accent-soft: rgba(243, 115, 33, 0.20);
+    --meter-track: #5a2c10;
     --s1: #3987e5;
     --s2: #199e70;
     --s3: #c98500;
     --s4: #008300;
     --s5: #9085e9;
     --good-text: #0ca30c;
+    --mkt-up: #ff5252;
+    --mkt-down: #5aa5ff;
+    --flag: #d03b3b;
+    --chip-note: #d98fdf;
+    --chip-chat: #c3c2b7;
+    --alloc-1: #9fe3d3;
+    --alloc-2: #4fc0a9;
+    --alloc-3: #1a9a80;
+    --alloc-4: #0e7461;
     --spark: #52514e;
   }
   :root[data-theme="light"] {
@@ -76,15 +117,26 @@
     --grid: #e1e0d9;
     --baseline: #c3c2b7;
     --border: rgba(11, 11, 11, 0.10);
-    --accent: #2a78d6;
-    --accent-soft: rgba(42, 120, 214, 0.10);
-    --meter-track: #cde2fb;
+    --accent: #f37321;
+    --accent-text: #b34a06;
+    --on-accent: #0b0b0b;
+    --accent-soft: rgba(243, 115, 33, 0.12);
+    --meter-track: #fbdcc9;
     --s1: #2a78d6;
     --s2: #1baf7a;
     --s3: #eda100;
     --s4: #008300;
     --s5: #4a3aa7;
     --good-text: #006300;
+    --mkt-up: #c62828;
+    --mkt-down: #1257c4;
+    --flag: #d03b3b;
+    --chip-note: #9e4aa4;
+    --chip-chat: #52514e;
+    --alloc-1: #52c2ab;
+    --alloc-2: #17957c;
+    --alloc-3: #096b59;
+    --alloc-4: #024a41;
     --spark: #c3c2b7;
   }
 
@@ -108,7 +160,7 @@
   .brand small { font-weight: 500; color: var(--ink-2); margin-left: 8px; }
   .env-pill {
     font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
-    color: var(--accent); background: var(--accent-soft);
+    color: var(--accent-text); background: var(--accent-soft);
     border: 1px solid var(--border);
     padding: 2px 8px; border-radius: 999px;
   }
@@ -118,9 +170,9 @@
     font: inherit; font-size: 12px; padding: 4px 12px; border: 0; cursor: pointer;
     background: transparent; color: var(--ink-2);
   }
-  .role-toggle button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .role-toggle button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
   .role-toggle button:focus-visible, .btn:focus-visible, tr:focus-visible, .tab:focus-visible, .cat:focus-visible {
-    outline: 2px solid var(--accent); outline-offset: 1px;
+    outline: 2px solid var(--accent-text); outline-offset: 1px;
   }
   .asof { font-size: 12px; color: var(--muted); }
 
@@ -150,7 +202,7 @@
   }
   /* 동작하는 기능만 강조하고 나머지는 로드맵으로 낮춘다 — 안 되는 걸 되는 것처럼 보이지 않게. */
   .rail .f.on { border-color: var(--accent); }
-  .rail .f.on .fstate { background: var(--accent); color: #fff; }
+  .rail .f.on .fstate { background: var(--accent); color: var(--on-accent); }
   .rail .f.off { opacity: 0.62; }
   .rail .f.off .fstate { background: var(--grid); color: var(--muted); }
 
@@ -163,7 +215,7 @@
   .bcard .bquote { font-size: 12.5px; margin: 4px 0 8px; }
   .bcard .bline { font-size: 12px; color: var(--ink-2); padding: 4px 0; border-top: 1px solid var(--grid); display: flex; gap: 6px; }
   .bcard .bline a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--muted); }
-  .bcard .bline a:hover { color: var(--accent); }
+  .bcard .bline a:hover { color: var(--accent-text); }
   .bcard .btag { font-size: 10px; font-weight: 600; color: var(--muted); flex-shrink: 0; padding-top: 1px; }
   .bcard .bempty { font-size: 12px; color: var(--muted); padding: 6px 0; }
 
@@ -174,7 +226,7 @@
     padding: 8px 16px 9px; border: 0; background: transparent; color: var(--muted);
     border-bottom: 2px solid transparent; margin-bottom: -1px;
   }
-  .cat[aria-pressed="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  .cat[aria-pressed="true"] { color: var(--accent-text); border-bottom-color: var(--accent); }
   .cat .cat-sub { display: block; font-size: 11px; font-weight: 500; color: var(--muted); letter-spacing: 0.01em; }
   .view[hidden] { display: none; }
 
@@ -193,8 +245,8 @@
   .tile .breakdown b { color: var(--ink); }
   .tile .foot { margin-top: auto; padding-top: 8px; }
   .delta { font-size: 12px; font-weight: 600; }
-  .delta.up { color: var(--good-text); }
-  .delta.down { color: var(--critical); }
+  .delta.up { color: var(--mkt-up); }
+  .delta.down { color: var(--mkt-down); }
   .delta.flat { color: var(--muted); font-weight: 500; }
   .tile .vs { font-size: 11px; color: var(--muted); }
   .tile .sub svg { display: block; margin-left: auto; }
@@ -217,7 +269,7 @@
   }
   .src.live { color: var(--good-text); }
   .src.mock { color: var(--muted); }
-  .src.mixed { color: var(--accent); }
+  .src.mixed { color: var(--accent-text); }
 
   /* ── AI 신뢰도 카드 (AI 평가 탭) ──────────── */
   .trust { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 0; }
@@ -229,7 +281,7 @@
   .trust .t-cap { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
   .trust .t-sub { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
   .meter { position: relative; height: 10px; border-radius: 5px; background: var(--meter-track); margin: 10px 0 2px; }
-  .meter .fill { height: 100%; border-radius: 5px; background: var(--accent); }
+  .meter .fill { height: 100%; border-radius: 5px; background: var(--accent-text); }
   .meter .tick { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--ink); opacity: 0.5; }
   .meter-scale { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--muted); }
 
@@ -239,7 +291,7 @@
     font: inherit; font-size: 12px; padding: 3px 10px; cursor: pointer;
     border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--ink-2);
   }
-  .tab[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: transparent; font-weight: 600; }
+  .tab[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-text); border-color: transparent; font-weight: 600; }
   .queue { display: flex; flex-direction: column; }
   .qrow {
     display: flex; align-items: center; gap: 10px;
@@ -250,8 +302,10 @@
     font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px;
     white-space: nowrap;
   }
-  .chip.note { color: var(--accent); background: var(--accent-soft); }
-  .chip.chat { color: var(--s5); background: color-mix(in srgb, var(--s5) 12%, transparent); }
+  /* 분류 배지는 강조 주황을 안 쓴다 — 주황은 "지금 선택된 것"이라, 모든 행에 붙는 배지가
+     같은 색이면 전부 선택된 것처럼 보인다. 청록은 주황의 보색. */
+  .chip.note { color: var(--chip-note); background: color-mix(in srgb, var(--chip-note) 10%, transparent); }
+  .chip.chat { color: var(--chip-chat); background: color-mix(in srgb, var(--chip-chat) 10%, transparent); }
   .qrow .title { font-weight: 600; font-size: 13.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .qrow .meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
   .qrow .spacer { flex: 1; }
@@ -259,12 +313,12 @@
     font-size: 11px; font-weight: 600; padding: 1px 9px; border-radius: 999px;
     border: 1px solid var(--border); color: var(--ink-2); white-space: nowrap;
   }
-  .pill.review { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+  .pill.review { color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
   .pill.delib { color: var(--s5); border-color: color-mix(in srgb, var(--s5) 40%, transparent); }
   .btn {
     font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
     padding: 4px 12px; border-radius: 8px; border: 1px solid var(--border);
-    background: transparent; color: var(--accent);
+    background: transparent; color: var(--accent-text);
   }
   .btn:hover { background: var(--accent-soft); }
 
@@ -293,12 +347,24 @@
   }
   tbody td { padding: 7px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-  tbody tr { cursor: pointer; }
-  tbody tr:hover { background: var(--accent-soft); }
-  tbody tr[aria-selected="true"] { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+  /* hover 강조·포인터 커서·선택 표시는 누를 수 있는 표에만 — 전역 `tbody tr`이면
+     보유 종목·재무 수치 표(.holdings)까지 눌리는 것처럼 보인다(핸들러 없음). */
+  .tbl-scroll tbody tr { cursor: pointer; }
+  .tbl-scroll tbody tr:hover { background: var(--accent-soft); }
+  .tbl-scroll tbody tr[aria-selected="true"] { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
   .risk-chip { font-size: 11px; color: var(--ink-2); border: 1px solid var(--border); padding: 0 7px; border-radius: 999px; }
-  .flag { font-size: 11px; font-weight: 700; color: var(--critical); }
-  .flag-reasons { font-size: 12px; color: var(--critical); margin-top: 3px; }
+  /* 위험 플래그 — 색조가 아니라 형태로 눈에 띈다(적·청·주황·초록·청록이 이미 다 쓰였다).
+     11px 글리프 하나는 대비가 6:1이어도 훑을 때 안 걸렸다. 채운 칩은 18.7:1. */
+  .flag {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; font-weight: 700; line-height: 1.5; white-space: nowrap;
+    color: var(--flag); border: 1px solid color-mix(in srgb, var(--flag) 50%, transparent);
+    border-radius: 999px; padding: 0 7px;
+  }
+  /* 사유 줄은 칩을 따라 칠하지 않는다 — 강한 신호는 한 화면에 하나면 된다. */
+  /* 사유 줄도 알약과 같은 적색 — 알약이 '있다'를, 이 줄이 '무엇 때문인지'를 말하는 한 덩어리다.
+     다만 테두리는 없다(선이 둘이면 시끄럽다). */
+  .flag-reasons { font-size: 12px; color: var(--flag); margin-top: 3px; }
 
   .detail { border-left: 1px solid var(--grid); padding-left: 16px; min-width: 0; }
   .detail .name { font-size: 16px; font-weight: 700; }
@@ -317,7 +383,7 @@
     margin-top: 12px; padding: 10px 12px; border-radius: 10px;
     background: var(--accent-soft); font-size: 12.5px; color: var(--ink-2);
   }
-  .diag .tag { font-size: 10.5px; font-weight: 700; color: var(--accent); letter-spacing: 0.04em; margin-right: 6px; }
+  .diag .tag { font-size: 10.5px; font-weight: 700; color: var(--accent-text); letter-spacing: 0.04em; margin-right: 6px; }
 
   /* ── 차트 ────────────────────────────────── */
   .charts2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -357,7 +423,7 @@
   .gen-row .search { max-width: 240px; margin: 0; }
   .steps { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
   .step { font-size: 12px; font-weight: 600; padding: 3px 11px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
-  .step.run { color: var(--accent); border-color: var(--accent); }
+  .step.run { color: var(--accent-text); border-color: var(--accent); }
   .step.done { color: var(--good-text); border-color: color-mix(in srgb, var(--good) 50%, transparent); }
   .step.fail { color: #fff; background: var(--critical); border-color: transparent; }
   .steps .sep { color: var(--muted); font-size: 12px; }
@@ -408,7 +474,7 @@
   .srow { display: flex; gap: 10px; padding: 8px 2px; border-top: 1px solid var(--grid); font-size: 13.5px; align-items: baseline; }
   .srow .stext { min-width: 0; }
   .sbadge { flex: none; font-size: 10.5px; font-weight: 700; padding: 1px 8px; border-radius: 999px; letter-spacing: 0.03em; white-space: nowrap; }
-  .sbadge.src { color: var(--accent); background: var(--accent-soft); }
+  .sbadge.src { color: var(--accent-text); background: var(--accent-soft); }
   .sbadge.un { color: #fff; background: var(--critical); }
   .sbadge.acct { color: var(--s5); background: color-mix(in srgb, var(--s5) 12%, transparent); }
   .sbadge.ntc { color: var(--muted); border: 1px solid var(--border); }
@@ -417,7 +483,7 @@
   .bubble .blabel { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em; margin-bottom: 4px; }
   .m-actions { display: flex; align-items: center; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
   .m-actions .hint { font-size: 12px; }
-  .btn.primary { background: var(--accent); color: #fff; border-color: transparent; }
+  .btn.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; }
   .btn.primary:hover { opacity: 0.9; background: var(--accent); }
   .btn.danger { color: var(--critical); }
   .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
@@ -455,7 +521,7 @@
     .strip { flex-wrap: wrap; gap: 14px; }
   }
   @media (prefers-reduced-motion: no-preference) {
-    .qrow, .fitem, tbody tr { transition: background 0.12s ease; }
+    .qrow, .fitem, .tbl-scroll tbody tr { transition: background 0.12s ease; }
   }
 </style>
 
@@ -529,7 +595,7 @@
       <div class="card-head">
         <h2 id="q-title">검토·승인 대기</h2>
         <span class="hint">사람 승인 없이는 어떤 산출물도 나가지 않습니다</span>
-        <span class="hint" id="q-scope" style="color:var(--accent);font-weight:600"></span>
+        <span class="hint" id="q-scope" style="color:var(--accent-text);font-weight:600"></span>
         <span class="src mixed">노트=DB · 상담=목업</span>
       </div>
       <div class="tabs" role="group" aria-label="대기 항목 필터">
@@ -604,7 +670,7 @@
               <div class="t-label">게이트 차단 <span style="color:var(--muted)">· 7일</span></div>
               <div class="t-sub">
                 <span class="t-value" id="tr-gate">2</span>
-                <span class="delta up" id="tr-gate-delta" style="margin-left:6px">−1</span><span class="vs" id="tr-gate-vs" style="font-size:11px;color:var(--muted)">vs 전주</span>
+                <span class="delta down" id="tr-gate-delta" style="margin-left:6px">−1</span><span class="vs" id="tr-gate-vs" style="font-size:11px;color:var(--muted)">vs 전주</span>
                 <span id="gate-mini" style="margin-left:auto"></span>
               </div>
               <div class="t-cap">미인용·금지표현·MNPI·워터마크 누락으로 발행이 차단된 건수 — 0이 목표가 아니라 게이트가 일한 증거</div>
@@ -883,8 +949,8 @@ function sparkline(data, w = 64, h = 22) {
   const li = data.length - 1;
   return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">
     <polyline points="${pts}" fill="none" stroke="var(--spark)" stroke-width="1.5" stroke-linejoin="round"/>
-    <line x1="${x(li - 1)}" y1="${y(data[li - 1])}" x2="${x(li)}" y2="${y(data[li])}" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/>
-    <circle cx="${x(li)}" cy="${y(data[li])}" r="2.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="1.5"/>
+    <line x1="${x(li - 1)}" y1="${y(data[li - 1])}" x2="${x(li)}" y2="${y(data[li])}" stroke="var(--accent-text)" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="${x(li)}" cy="${y(data[li])}" r="2.5" fill="var(--accent-text)" stroke="var(--surface)" stroke-width="1.5"/>
   </svg>`;
 }
 
@@ -948,14 +1014,20 @@ function renderStrip() {
   s.append(
     el(`<div class="kv"><div class="k">${role === 'pb' ? '담당 고객자산' : '총 고객자산 (AUM)'}</div><div class="v">${fmtKRW(aum)}<span class="unit"> 원</span> <span class="delta up" style="font-size:12px">+2.4% vs 전월</span></div></div>`),
     el(`<div class="kv"><div class="k">평균 수익률 (연초 대비)</div><div class="v delta ${avg >= 0 ? 'up' : 'down'}" style="font-size:19px">${avg >= 0 ? '+' : ''}${avg.toFixed(1)}%</div></div>`),
-    el(`<div class="kv"><div class="k">위험 플래그</div><div class="v">${fc}<span class="unit">건</span> <span class="flag">▲</span></div></div>`),
+    el(`<div class="kv"><div class="k">위험 플래그</div><div class="v">${fc}<span class="unit">건</span> <span class="flag">⚑</span></div></div>`),
   );
 }
 
-const ALLOC_COLORS = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)'];
+const ALLOC_COLORS = ['var(--alloc-1)', 'var(--alloc-2)', 'var(--alloc-3)', 'var(--alloc-4)'];
+// 자산군은 이름표가 아니라 순서가 있는 값이다(위험도 낮은 순) — 색 농도가 그 순서를 나른다.
+const ALLOC_ORDER = ['현금성', '채권', '펀드', '국내주식'];
+const allocEntries = (a) => [
+  ...ALLOC_ORDER.filter((k) => k in a).map((k) => [k, a[k]]),
+  ...Object.entries(a).filter(([k]) => !ALLOC_ORDER.includes(k)),
+];
 
 function donut(alloc, size = 120) {
-  const entries = Object.entries(alloc);
+  const entries = allocEntries(alloc);
   const total = entries.reduce((a, [, v]) => a + v, 0);
   const cx = size / 2, cy = size / 2, r = size / 2 - 6, ir = r - 16;
   let angle = -Math.PI / 2, paths = '';
@@ -973,21 +1045,21 @@ function donut(alloc, size = 120) {
 function renderDetail(c) {
   const d = $('#detail');
   d.innerHTML = `
-    <div class="name">${esc(c.name)} ${c.flag ? '<span class="flag">▲ 위험 플래그</span>' : ''}</div>
+    <div class="name">${esc(c.name)} ${c.flag ? '<span class="flag">⚑ 위험 플래그</span>' : ''}</div>
     <div class="acct">${c.acct} · ${c.age}세 · ${RISK[c.risk]}</div>
-    ${c.flag ? `<div class="flag-reasons">▲ ${c.flagReasons.map((r) => esc(r.text)).join(' · ')}</div>` : ''}
+    ${c.flag ? `<div class="flag-reasons">⚑ ${c.flagReasons.map((r) => esc(r.text)).join(' · ')}</div>` : ''}
     <div class="row">
       <div class="kv"><div class="k">잔고</div><div class="v">₩${fmtKRW(c.balance)}</div></div>
       <div class="kv"><div class="k">수익률 (연초 대비)</div><div class="v delta ${c.ret >= 0 ? 'up' : 'down'}">${c.ret >= 0 ? '+' : ''}${c.ret.toFixed(1)}%</div></div>
     </div>
     <div class="donut-wrap">
       ${donut(c.alloc)}
-      <div class="legend">${Object.entries(c.alloc).map(([k, v], i) =>
+      <div class="legend">${allocEntries(c.alloc).map(([k, v], i) =>
         `<div class="li"><span class="sw" style="background:${ALLOC_COLORS[i]}"></span>${k}<span class="pct">${v}%</span></div>`).join('')}
       </div>
     </div>
     <table class="holdings" aria-label="보유 종목"><tbody>
-      ${c.holdings.map((h) => `<tr><td>${h.name} <span style="color:var(--muted)">${h.code}</span></td><td class="num">₩${fmtKRW(h.amt)}</td></tr>`).join('')}
+      ${c.holdings.map((h) => `<tr><td><strong>${h.name}</strong> <span style="color:var(--muted)">${h.code}</span></td><td class="num">₩${fmtKRW(h.amt)}</td></tr>`).join('')}
     </tbody></table>
     <div class="diag"><span class="tag">AI 진단 · 초안·미검증</span>${esc(c.diag)}</div>`;
   d.querySelectorAll('path[data-k]').forEach((p) =>
@@ -1004,7 +1076,7 @@ function renderCustomers(kw = '') {
         <td><span class="risk-chip">${RISK[c.risk]}</span></td>
         <td class="num">₩${fmtKRW(c.balance)}</td>
         <td class="num delta ${c.ret >= 0 ? 'up' : 'down'}">${c.ret >= 0 ? '+' : ''}${c.ret.toFixed(1)}%</td>
-        <td>${c.flag ? `<span class="flag" title="${esc(c.flagReasons.map((r) => r.text).join(' · '))}">▲</span>` : ''}</td>
+        <td>${c.flag ? `<span class="flag" title="${esc(c.flagReasons.map((r) => r.text).join(' · '))}">⚑</span>` : ''}</td>
       </tr>`);
     const select = () => {
       tb.querySelectorAll('tr').forEach((r) => r.removeAttribute('aria-selected'));
@@ -1138,7 +1210,7 @@ const ROLES = {
     qScope: '심의 단계 건만 표시 중',
     tiles: (n) => [
       { label: '심의 대기', value: String(n), breakdown: '검토를 통과해 준법 심의를 기다리는 노트', foot: GO_QUEUE },
-      { label: '게이트 차단 (7일)', value: '2', sub: '<span class="delta up">−1</span><span class="vs">vs 전주</span>', breakdown: '건별 상세는 컴플라이언스 알림 카드' },
+      { label: '게이트 차단 (7일)', value: '2', sub: '<span class="delta down">−1</span><span class="vs">vs 전주</span>', breakdown: '건별 상세는 컴플라이언스 알림 카드' },
     ],
   },
 };
@@ -1312,7 +1384,7 @@ function renderChatModal(it, res = {}) {
   $('#modal').innerHTML = `
     <div class="m-head"><h3>상담 답변 검토 — ${esc(c.name)}</h3><span class="pill ${PILL[itemStatus(it)][1]}">${PILL[itemStatus(it)][0]}</span>
       <button class="m-close" aria-label="닫기">×</button></div>
-    <div class="m-meta">${c.acct} · ${c.age}세 · ${RISK[c.risk]} · 잔고 ₩${fmtKRW(c.balance)} · 담당 ${c.pb}${c.flag ? ` · <span class="flag">▲ ${esc(c.flagReasons.map((r) => r.text).join(' · '))}</span>` : ''}</div>
+    <div class="m-meta">${c.acct} · ${c.age}세 · ${RISK[c.risk]} · 잔고 ₩${fmtKRW(c.balance)} · 담당 ${c.pb}${c.flag ? ` · <span class="flag">⚑ 위험 플래그</span> ${esc(c.flagReasons.map((r) => r.text).join(' · '))}` : ''}</div>
     <div class="wm">${WATERMARK} 승인 전에는 고객에게 전송되지 않습니다.</div>
     ${res.blocked ? `<div class="vbox">⛔ ${res.blocked}</div>` : ''}
     ${res.ok ? `<div class="okbox">✓ ${res.ok}</div>` : ''}

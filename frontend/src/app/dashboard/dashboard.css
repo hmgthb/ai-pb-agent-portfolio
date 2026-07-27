@@ -10,9 +10,19 @@
   --grid: #e1e0d9;
   --baseline: #c3c2b7;
   --border: rgba(11, 11, 11, 0.1);
-  --accent: #2a78d6;
-  --accent-soft: rgba(42, 120, 214, 0.1);
-  --meter-track: #cde2fb;
+  /* 강조색 = 한화 주황(#f37321). **셋으로 나눠 쓴다** — 브랜드 원색은 밝은 배경 위
+     대비가 2.8:1이라 글자에 그대로 쓰면 탭 라벨·링크가 안 읽히고, 흰 글자를 그 위에
+     얹어도 2.9:1이다(지금 파랑은 각각 4.3·4.4).
+       --accent      면·선·밑줄·점 — 브랜드 원색 그대로
+       --accent-text 배경 위 글자·포커스 링 — 대비용으로 어둡게(라이트 5.3:1)
+       --on-accent   주황 면 위에 얹는 글자(6.8:1). 다크에서도 검정이다 — 면 색이
+                     테마와 무관하게 같아서 흰 글자면 2.9:1로 무너진다.
+     --good(면)/--good-text(글자)가 이미 쓰는 방식과 같다. */
+  --accent: #f37321;
+  --accent-text: #b34a06;
+  --on-accent: #0b0b0b;
+  --accent-soft: rgba(243, 115, 33, 0.12);
+  --meter-track: #fbdcc9;
   --s1: #2a78d6;
   --s2: #1baf7a;
   --s3: #eda100;
@@ -23,6 +33,26 @@
   --warning: #fab219;
   --serious: #ec835a;
   --critical: #d03b3b;
+  /* 등락 색은 국내 시장 관례(상승=적, 하락=청)를 따른다.
+     상태색(--good/--critical)과 **반드시 분리한다** — 여기서 적색은 "나쁨"이 아니라
+     "상승"이라 뜻이 정반대다. 상태색을 뒤집으면 게이트 차단·위험 플래그가 같이 뒤집힌다. */
+  --mkt-up: #c62828;
+  --mkt-down: #1257c4;
+  /* 고객 위험 플래그(⚑) 전용. 값은 --critical과 같은 경고 적색인데 **토큰을 따로 둔다**:
+     상승 적(--mkt-up)과 뜻이 다르고, 게이트 차단(--critical)과도 쓰임이 달라 한쪽만
+     바꿔야 할 때가 온다. 상승 적과 갈리는 건 색이 아니라 형태다 — .flag 주석 참조.
+     ⚠️ 색만으로 뜻을 전하지 않는다: 표에는 title로 사유가, 상세에는 "위험 플래그"라는
+     라벨이 같이 붙는다. 기호도 ▲가 아니다(수익률 옆에서 상승 화살표로 읽힌다). */
+  --flag: #d03b3b;
+  /* 큐·에이전트 분류 배지 — 강조 주황(=선택 상태)과 갈려야 한다. 청록은 주황의 보색. */
+  --chip-note: #9e4aa4;
+  --chip-chat: #52514e;
+  /* 자산배분 도넛 — 범주형 색이 아니라 한 색조 4단계다(진할수록 위험자산).
+     이유와 검증 수치는 charts.tsx의 도넛 주석에. */
+  --alloc-1: #52c2ab;
+  --alloc-2: #17957c;
+  --alloc-3: #096b59;
+  --alloc-4: #024a41;
   --spark: #c3c2b7;
 }
 @media (prefers-color-scheme: dark) {
@@ -35,15 +65,26 @@
     --grid: #2c2c2a;
     --baseline: #383835;
     --border: rgba(255, 255, 255, 0.1);
-    --accent: #3987e5;
-    --accent-soft: rgba(57, 135, 229, 0.16);
-    --meter-track: #0d366b;
+    --accent: #f37321;
+    /* 어두운 배경 위에서는 브랜드 원색이 6.0:1이라 글자로도 그대로 쓴다. */
+    --accent-text: #f37321;
+    --accent-soft: rgba(243, 115, 33, 0.2);
+    --meter-track: #5a2c10;
     --s1: #3987e5;
     --s2: #199e70;
     --s3: #c98500;
     --s4: #008300;
     --s5: #9085e9;
     --good-text: #0ca30c;
+    --mkt-up: #ff5252;
+    --mkt-down: #5aa5ff;
+    --flag: #d03b3b;
+    --chip-note: #d98fdf;
+    --chip-chat: #c3c2b7;
+    --alloc-1: #9fe3d3;
+    --alloc-2: #4fc0a9;
+    --alloc-3: #1a9a80;
+    --alloc-4: #0e7461;
     --spark: #52514e;
   }
 }
@@ -56,15 +97,25 @@
   --grid: #2c2c2a;
   --baseline: #383835;
   --border: rgba(255, 255, 255, 0.1);
-  --accent: #3987e5;
-  --accent-soft: rgba(57, 135, 229, 0.16);
-  --meter-track: #0d366b;
+  --accent: #f37321;
+  --accent-text: #f37321;
+  --accent-soft: rgba(243, 115, 33, 0.2);
+  --meter-track: #5a2c10;
   --s1: #3987e5;
   --s2: #199e70;
   --s3: #c98500;
   --s4: #008300;
   --s5: #9085e9;
   --good-text: #0ca30c;
+  --mkt-up: #ff5252;
+  --mkt-down: #5aa5ff;
+  --flag: #d03b3b;
+  --chip-note: #d98fdf;
+  --chip-chat: #c3c2b7;
+  --alloc-1: #9fe3d3;
+  --alloc-2: #4fc0a9;
+  --alloc-3: #1a9a80;
+  --alloc-4: #0e7461;
   --spark: #52514e;
 }
 :root[data-theme='light'] {
@@ -76,15 +127,26 @@
   --grid: #e1e0d9;
   --baseline: #c3c2b7;
   --border: rgba(11, 11, 11, 0.1);
-  --accent: #2a78d6;
-  --accent-soft: rgba(42, 120, 214, 0.1);
-  --meter-track: #cde2fb;
+  --accent: #f37321;
+  --accent-text: #b34a06;
+  --on-accent: #0b0b0b;
+  --accent-soft: rgba(243, 115, 33, 0.12);
+  --meter-track: #fbdcc9;
   --s1: #2a78d6;
   --s2: #1baf7a;
   --s3: #eda100;
   --s4: #008300;
   --s5: #4a3aa7;
   --good-text: #006300;
+  --mkt-up: #c62828;
+  --mkt-down: #1257c4;
+  --flag: #d03b3b;
+  --chip-note: #9e4aa4;
+  --chip-chat: #52514e;
+  --alloc-1: #52c2ab;
+  --alloc-2: #17957c;
+  --alloc-3: #096b59;
+  --alloc-4: #024a41;
   --spark: #c3c2b7;
 }
 
@@ -138,7 +200,7 @@ body {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: var(--accent);
+  color: var(--accent-text);
   background: var(--accent-soft);
   border: 1px solid var(--border);
   padding: 2px 8px;
@@ -167,7 +229,7 @@ body {
 }
 .role-toggle button[aria-pressed='true'] {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 .role-toggle button:focus-visible,
@@ -175,7 +237,7 @@ body {
 tr:focus-visible,
 .tab:focus-visible,
 .cat:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 1px;
 }
 .asof {
@@ -216,7 +278,7 @@ tr:focus-visible,
   font: inherit;
   font-size: 13px;
   font-weight: 600;
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
   border: 0;
   border-radius: 22px;
@@ -290,7 +352,7 @@ tr:focus-visible,
   border-bottom: 1px dotted var(--muted);
 }
 .bcard .bline a:hover {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .bcard .btag {
   font-size: 10px;
@@ -325,7 +387,7 @@ tr:focus-visible,
   margin-bottom: -1px;
 }
 .cat[aria-pressed='true'] {
-  color: var(--accent);
+  color: var(--accent-text);
   border-bottom-color: var(--accent);
 }
 /* 종목 노트 생성이 도는 중 — 다른 탭을 보고 있어도 실행을 알 수 있는 유일한 신호다.
@@ -333,7 +395,7 @@ tr:focus-visible,
 .cat .cat-run {
   margin-left: 5px;
   font-size: 9px;
-  color: var(--accent);
+  color: var(--accent-text);
   vertical-align: 2px;
   animation: cat-run-blink 1.4s ease-in-out infinite;
 }
@@ -397,12 +459,12 @@ tr:focus-visible,
   border-color: var(--accent);
 }
 .tile.clickable:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 1px;
 }
 .tile .label .tile-go {
   margin-left: 5px;
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 .tile .label {
@@ -440,10 +502,10 @@ tr:focus-visible,
   font-weight: 600;
 }
 .delta.up {
-  color: var(--good-text);
+  color: var(--mkt-up);
 }
 .delta.down {
-  color: var(--critical);
+  color: var(--mkt-down);
 }
 .delta.flat {
   color: var(--muted);
@@ -521,7 +583,7 @@ tr:focus-visible,
   color: var(--muted);
 }
 .src.mixed {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* ── AI 신뢰도 카드 (감시 탭) ──────────── */
@@ -572,10 +634,13 @@ tr:focus-visible,
   background: var(--meter-track);
   margin: 10px 0 2px;
 }
+/* 채움은 브랜드 원색이 아니라 --accent-text를 쓴다. 부착률을 **읽는** 요소라 채움과
+   트랙의 경계가 보여야 하는데(WCAG 1.4.11, 3:1), 밝은 주황은 어떤 밝은 트랙과도
+   최대 2.9:1까지밖에 안 나온다 — 파랑일 때는 3.34:1이었다. 어두운 주황이면 4.2:1. */
 .meter .fill {
   height: 100%;
   border-radius: 5px;
-  background: var(--accent);
+  background: var(--accent-text);
 }
 .meter .tick {
   position: absolute;
@@ -611,7 +676,7 @@ tr:focus-visible,
 }
 .tab[aria-pressed='true'] {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   border-color: transparent;
   font-weight: 600;
 }
@@ -636,13 +701,21 @@ tr:focus-visible,
   border-radius: 999px;
   white-space: nowrap;
 }
+/* 큐 행의 종류 배지(종목 노트 / 고객 문의)와 노트 생성 카드의 에이전트 배지(a2 / a4).
+   **강조 주황을 쓰지 않는다** — 주황은 "지금 선택된 것"(필터 칩·탭 밑줄)이라서, 모든 행에
+   붙는 분류 배지가 같은 색이면 목록 전체가 선택된 것처럼 읽힌다.
+   ⚠️ **새 색조는 자주 하나뿐이다.** 색상환을 5° 간격으로 훑어 이미 쓰인 13색(주황 47°·적 25°·
+   앰버 78°·초록 143°·청록 175°(도넛)·하락 청 260°·보라 284°)과 재 보니 38개 색조 중 29개가
+   구분 기준선(ΔE 15) 아래였고, 살아남은 건 315~5°(자주) 구간뿐이다. 그래서 하나는 자주를 주고
+   다른 하나는 **무채색**(=--ink-2 값)으로 둔다 — 무채색은 색조를 안 쓰므로 무엇과도 겹칠 수 없다.
+   틴트가 10%인 이유: 12%면 자주 글자가 자기 배경 위에서 4.39:1로 본문 기준(4.5)에 못 미친다. */
 .chip.note {
-  color: var(--accent);
-  background: var(--accent-soft);
+  color: var(--chip-note);
+  background: color-mix(in srgb, var(--chip-note) 10%, transparent);
 }
 .chip.chat {
-  color: var(--s5);
-  background: color-mix(in srgb, var(--s5) 12%, transparent);
+  color: var(--chip-chat);
+  background: color-mix(in srgb, var(--chip-chat) 10%, transparent);
 }
 .qrow .title {
   font-weight: 600;
@@ -670,7 +743,7 @@ tr:focus-visible,
   white-space: nowrap;
 }
 .pill.review {
-  color: var(--accent);
+  color: var(--accent-text);
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 .pill.delib {
@@ -686,7 +759,7 @@ tr:focus-visible,
   border-radius: 8px;
   border: 1px solid var(--border);
   background: transparent;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .btn:hover {
   background: var(--accent-soft);
@@ -799,13 +872,17 @@ th.rownum {
   padding-right: 10px;
   color: var(--muted);
 }
-tbody tr {
+/* hover 강조·포인터 커서·선택 표시는 **누를 수 있는 표에만** 준다.
+   전역 `tbody tr`로 두면 보유 종목 표와 노트의 재무 수치 표(.holdings)까지 눌리는 것처럼
+   보인다 — 둘 다 클릭 핸들러가 없어 아무 일도 안 일어난다. 지금 누르는 표는 고객 목록
+   하나뿐이고 .tbl-scroll이 그것만 감싼다. */
+.tbl-scroll tbody tr {
   cursor: pointer;
 }
-tbody tr:hover {
+.tbl-scroll tbody tr:hover {
   background: var(--accent-soft);
 }
-tbody tr[aria-selected='true'] {
+.tbl-scroll tbody tr[aria-selected='true'] {
   background: var(--accent-soft);
   box-shadow: inset 2px 0 0 var(--accent);
 }
@@ -816,14 +893,31 @@ tbody tr[aria-selected='true'] {
   padding: 0 7px;
   border-radius: 999px;
 }
+/* 위험 플래그 — 경고 적색으로 돌아오되 **면이 아니라 선**이다.
+   상승도 적색이지만 그쪽은 "빨간 숫자", 이쪽은 "빨간 테두리 알약"이라 형태가 갈린다:
+   처음 문제("빨간 글자 둘이 안 갈린다")는 결국 색이 아니라 형태의 문제였다.
+   보라·자주·먹색 칩을 거쳐 여기 왔다 — 보라는 하락 청과 ΔE 9.0(구분 기준선 15 아래),
+   자주는 상승 적과 가까웠고, 11px 글리프 하나로는 대비가 6:1이어도 훑을 때 안 걸렸다.
+   모양은 바로 옆 `.risk-chip`(등록 위험성향)과 같은 알약이다 — 같은 종류의 표시는
+   같은 어휘로 쓴다. 뜻은 색만 나르지 않는다: 상세엔 라벨, 표엔 title(사유)이 붙는다. */
 .flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11px;
   font-weight: 700;
-  color: var(--critical);
+  line-height: 1.5;
+  white-space: nowrap;
+  color: var(--flag);
+  border: 1px solid color-mix(in srgb, var(--flag) 50%, transparent);
+  border-radius: 999px;
+  padding: 0 7px;
 }
+/* 사유 줄도 알약과 같은 적색이다 — 위 알약이 "플래그가 있다"를, 이 줄이 "무엇 때문인지"를
+   말하는 한 덩어리라 색이 갈리면 따로 읽힌다. 알약과 달리 테두리는 없다(선이 둘이면 시끄럽다). */
 .flag-reasons {
   font-size: 12px;
-  color: var(--critical);
+  color: var(--flag);
   margin-top: 3px;
 }
 
@@ -873,7 +967,7 @@ tbody tr[aria-selected='true'] {
   font: inherit;
   font-size: 12px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent-text);
   background: var(--accent-soft);
   border: 1px solid transparent;
   border-radius: 999px;
@@ -977,7 +1071,7 @@ tbody tr[aria-selected='true'] {
 .diag .tag {
   font-size: 10.5px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--accent-text);
   letter-spacing: 0.04em;
   margin-right: 6px;
 }
@@ -1065,7 +1159,7 @@ tbody tr[aria-selected='true'] {
   transform: rotate(90deg);
 }
 .fitem > summary:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: -2px;
   border-radius: 3px;
 }
@@ -1149,7 +1243,7 @@ tbody tr[aria-selected='true'] {
   transform: rotate(90deg);
 }
 .aitem > summary:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: -2px;
   border-radius: 3px;
 }
@@ -1186,7 +1280,7 @@ tbody tr[aria-selected='true'] {
   color: var(--good-text);
 }
 .aev.human {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .aitem .aref {
   min-width: 0;
@@ -1243,7 +1337,7 @@ tbody tr[aria-selected='true'] {
   color: var(--muted);
 }
 .step.run {
-  color: var(--accent);
+  color: var(--accent-text);
   border-color: var(--accent);
 }
 .step.done {
@@ -1386,7 +1480,7 @@ tbody tr[aria-selected='true'] {
   white-space: nowrap;
 }
 .sbadge.src {
-  color: var(--accent);
+  color: var(--accent-text);
   background: var(--accent-soft);
 }
 .sbadge.un {
@@ -1459,7 +1553,7 @@ tbody tr[aria-selected='true'] {
 }
 .btn.primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-color: transparent;
 }
 .btn.primary:hover {
@@ -1594,7 +1688,7 @@ tbody tr[aria-selected='true'] {
 @media (prefers-reduced-motion: no-preference) {
   .qrow,
   .fitem,
-  tbody tr {
+  .tbl-scroll tbody tr {
     transition: background 0.12s ease;
   }
 }
@@ -1656,7 +1750,7 @@ tbody tr[aria-selected='true'] {
   margin: 6px 0 10px;
 }
 .chat-hint em {
-  color: var(--accent);
+  color: var(--accent-text);
   font-style: normal;
 }
 .chat-log {
@@ -1692,7 +1786,7 @@ tbody tr[aria-selected='true'] {
 .bubble.me {
   align-self: flex-end;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-bottom-right-radius: 4px;
 }
 .bubble.ai {
@@ -1705,7 +1799,7 @@ tbody tr[aria-selected='true'] {
 .route-badge {
   font-size: 11px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--accent-text);
   background: var(--accent-soft);
   border-radius: 999px;
   padding: 2px 9px;
@@ -1790,7 +1884,7 @@ tbody tr[aria-selected='true'] {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.03em;
-  color: var(--accent);
+  color: var(--accent-text);
   margin-bottom: 6px;
 }
 .gen-caret {
@@ -1894,7 +1988,7 @@ tbody tr[aria-selected='true'] {
   margin-left: auto;
   font-size: 10.5px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent-text);
   background: var(--accent-soft);
   border-radius: 999px;
   padding: 1px 7px;
@@ -1946,7 +2040,7 @@ tbody tr[aria-selected='true'] {
 }
 .prep .prep-line a:hover,
 .prep .prep-line .linklike:hover {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .prep .prep-line.muted {
   color: var(--muted);
@@ -1977,7 +2071,7 @@ tbody tr[aria-selected='true'] {
   font-size: 11.5px;
   font-weight: 700;
   letter-spacing: 0.03em;
-  color: var(--accent);
+  color: var(--accent-text);
   list-style: none; /* Firefox 기본 삼각형 제거 */
 }
 .aiwork > summary::-webkit-details-marker {
@@ -1994,7 +2088,7 @@ tbody tr[aria-selected='true'] {
   transform: rotate(90deg);
 }
 .aiwork > summary:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 2px;
   border-radius: 3px;
 }

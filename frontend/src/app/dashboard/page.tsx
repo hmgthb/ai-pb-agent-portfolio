@@ -27,7 +27,14 @@ import {
   hhmm,
   isDown,
 } from './api';
-import { Donut, GateMini, Tip, useTip } from './charts';
+import {
+  ALLOC_COLORS,
+  allocEntries,
+  Donut,
+  GateMini,
+  Tip,
+  useTip,
+} from './charts';
 import F1Chat, { type ChatPrefill } from './F1Chat';
 import ResearchCard from './ResearchCard';
 import { ChatModal, NoteModal } from './ReviewModal';
@@ -1017,6 +1024,8 @@ export default function DashboardPage() {
                               {c.ret.toFixed(1)}%
                             </td>
                             <td>
+                              {/* ▲가 아니다 — 수익률 옆에서 상승 화살표로 읽힌다.
+                                  ⚑는 방향이 없고 기능 이름("위험 플래그")과도 맞는다. */}
                               {c.flag && (
                                 <span
                                   className="flag"
@@ -1024,7 +1033,7 @@ export default function DashboardPage() {
                                     .map((r) => r.text)
                                     .join(' · ')}
                                 >
-                                  ▲
+                                  ⚑
                                 </span>
                               )}
                             </td>
@@ -1041,7 +1050,7 @@ export default function DashboardPage() {
                         <span className="rowno">{selectedNo}</span>
                         {selected.name}{' '}
                         {selected.flag && (
-                          <span className="flag">▲ 위험 플래그</span>
+                          <span className="flag">⚑ 위험 플래그</span>
                         )}
                       </div>
                       <div className="acct">
@@ -1050,7 +1059,7 @@ export default function DashboardPage() {
                       </div>
                       {selected.flag && (
                         <div className="flag-reasons">
-                          ▲{' '}
+                          ⚑{' '}
                           {selected.flagReasons.map((r) => r.text).join(' · ')}
                         </div>
                       )}
@@ -1072,17 +1081,15 @@ export default function DashboardPage() {
                       <div className="donut-wrap">
                         <Donut alloc={selected.alloc} bind={bind} />
                         <div className="legend">
-                          {Object.entries(selected.alloc).map(([k, v], i) => (
+                          {/* 순서·색은 도넛과 같은 출처에서 온다(charts.tsx) — 여기에
+                              색 배열을 다시 적으면 둘이 조용히 어긋난다. */}
+                          {allocEntries(selected.alloc).map(([k, v], i) => (
                             <div className="li" key={k}>
                               <span
                                 className="sw"
                                 style={{
-                                  background: [
-                                    'var(--s1)',
-                                    'var(--s2)',
-                                    'var(--s3)',
-                                    'var(--s4)',
-                                  ][i % 4],
+                                  background:
+                                    ALLOC_COLORS[i % ALLOC_COLORS.length],
                                 }}
                               />
                               {k}
@@ -1096,7 +1103,9 @@ export default function DashboardPage() {
                           {selected.holdings.map((h) => (
                             <tr key={h.code}>
                               <td>
-                                {h.name}{' '}
+                                {/* 종목명이 이 표의 주어다 — 고객 표의 이름과 같은 무게로.
+                                    종목코드는 부가정보라 그대로 둔다. */}
+                                <strong>{h.name}</strong>{' '}
                                 <span style={{ color: 'var(--muted)' }}>
                                   {h.code}
                                 </span>
@@ -1382,7 +1391,7 @@ export default function DashboardPage() {
           준법은 그걸 통과시키는 쪽이다(cfg.research와 같은 경계). */}
       {cfg.research && !modal && (
         <button className="fab" onClick={() => setModal({ kind: 'f1' })}>
-          <span aria-hidden="true">💬</span> 종목 즉답
+          <span aria-hidden="true">💬</span>
         </button>
       )}
 

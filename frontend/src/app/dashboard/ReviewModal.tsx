@@ -433,9 +433,9 @@ export function ChatModal({
           <>
             {' '}
             ·{' '}
-            <span className="flag">
-              ▲ {customer.flagReasons.map((r) => r.text).join(' · ')}
-            </span>
+            {/* 칩 안엔 표시만 둔다 — 사유까지 넣으면 한 줄짜리 검은 막대가 된다 */}
+            <span className="flag">⚑ 위험 플래그</span>{' '}
+            {customer.flagReasons.map((r) => r.text).join(' · ')}
           </>
         )}
       </div>
