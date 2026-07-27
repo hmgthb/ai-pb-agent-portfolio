@@ -190,8 +190,10 @@ function PrepMemo({
   return (
     <div className="prep">
       {rows.map(({ h, b, note }) => {
-        const q = b?.quote;
-        const down = q ? isDown(q.change_pct) : false;
+        // 시세는 싣지 않는다. 브리프에 든 종목만 시세가 잡혀서(b = brief.items에서 찾은 것)
+        // 같은 목록인데 어떤 줄은 가격·등락률이 붙고 어떤 줄은 이름만 나왔다 — 그 차이가
+        // "이 종목이 더 중요하다"로 읽히지만 실제 뜻은 "오늘 브리핑 3종목에 들었다"일 뿐이다.
+        // 시세가 필요하면 바로 위 브리핑 카드에 있다. 여기서는 이름·코드만 같은 모양으로 둔다.
         const lines = [
           ...(b?.disclosures ?? []).slice(0, 2).map((d) => ({
             tag: '공시',
@@ -210,16 +212,6 @@ function PrepMemo({
           <div className="prep-row" key={h.code}>
             <div className="prep-name">
               {h.name} <span className="bcode">{h.code}</span>
-              {q && (
-                <span className="prep-quote">
-                  <strong>{Number(q.close).toLocaleString()}원</strong>{' '}
-                  <span className={`delta ${down ? 'down' : 'up'}`}>
-                    {down ? '▼' : '▲'}
-                    {fmtPct(q.change_pct)}%
-                  </span>
-                  <span className="bcode"> · {fmtDate(q.as_of)} 지연시세</span>
-                </span>
-              )}
             </div>
             {lines.map((l, i) => (
               <div className="prep-line" key={i}>

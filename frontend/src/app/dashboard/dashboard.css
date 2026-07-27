@@ -262,8 +262,14 @@ tr:focus-visible,
   font-size: 13.5px;
   font-weight: 600;
 }
-.bcard .bcode {
+/* 작은 회색 부가정보 — 종목코드·날짜·건수처럼 본문 옆에 붙는 것들.
+   원래 `.bcard .bcode`로만 있어서 **브리핑 카드 밖에서는 클래스만 붙고 규칙이 없었다**:
+   상담 준비 메모의 종목코드가 종목명과 똑같은 12.5px 볼드 검정으로 나왔고, 시세 줄의
+   "· 2026-07-24 지연시세"도 본문과 같은 무게로 읽혔다(14곳 중 3곳만 스타일이 먹고 있었다).
+   한 벌로 올린다 — 값은 브리핑 카드가 쓰던 것 그대로라 그쪽 모양은 변하지 않는다. */
+.bcode {
   font-size: 11px;
+  font-weight: 500;
   color: var(--muted);
 }
 .bcard .bquote {
@@ -1901,9 +1907,10 @@ tbody tr[aria-selected='true'] {
 }
 
 /* 상담 준비 메모 — 고객 상세 안 */
+/* 위 보유 종목 표와의 경계선을 두지 않는다 — 표의 마지막 행이 이미 border-bottom을 그어서
+   12px 사이에 선이 두 개 겹쳐 보였다. 간격(22px)만으로 두 블록이 갈린다. */
 .prep {
   margin-top: 12px;
-  border-top: 1px solid var(--grid);
   padding-top: 10px;
 }
 .prep .prep-row {
@@ -1919,11 +1926,6 @@ tbody tr[aria-selected='true'] {
   gap: 6px;
   font-size: 12.5px;
   font-weight: 600;
-}
-.prep .prep-quote {
-  font-size: 12px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
 }
 .prep .prep-line {
   display: flex;
