@@ -956,7 +956,7 @@ export default function DashboardPage() {
                 </div>
               </div>
               <div className="cust-layout">
-                <div>
+                <div className="cust-list">
                   <input
                     className="search"
                     type="search"
