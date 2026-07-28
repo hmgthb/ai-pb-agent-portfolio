@@ -697,9 +697,24 @@ async def _collect_chat_data(routing: dict, data: dict):
 async def chat_stream(
     q: str = Query(..., min_length=1, max_length=500),
     session: str | None = Query(None),
+    customer_id: int | None = Query(None),
 ):
+    """customer_id가 붙으면 **포트폴리오 질문**(집중도·배분·성향 대비)도 답할 수 있다.
+    안 붙으면 예전 그대로 종목 질문만 답한다 — 우하단 FAB로 여는 전역 F1이 그 경로다.
+
+    ⚠️ 스코핑은 화면이 아니라 **여기**서 한다. 담당이 아닌 고객이면 404다(`/api/customers/{id}`와
+       같은 규칙 — 403으로 존재를 알려주면 목록을 거른 의미가 없다). 프론트가 id를 바꿔
+       보내는 것만으로 남의 고객 포트폴리오를 답하게 만들 수 없어야 한다."""
     # 세션 id가 없으면 새로 발급 — 프론트가 받아 다음 턴부터 이어서 보낸다(멀티턴).
     session_id = session or f"s-{uuid.uuid4().hex[:16]}"
+
+    portfolio: dict | None = None
+    if customer_id is not None:
+        row = await db.get_customer(customer_id)
+        if row is None or row["pb"] != PB_NAME:
+            raise HTTPException(404, "고객을 찾을 수 없습니다.")
+        # 사실 계산은 순수 함수가 한다(LLM 미개입). 반환값에 이름·계좌는 들어가지 않는다.
+        portfolio = f1.portfolio_facts(_customer_to_dict(row))
 
     async def event_gen():
         try:
@@ -722,14 +737,19 @@ async def chat_stream(
             return
 
         # 2. 대화 맥락 로드 + 규칙 라우팅. 현재 질문에 종목이 없으면 직전 종목을 이어받는다.
+        #    포트폴리오 컨텍스트가 붙어 있으면 종목 없는 질문("분산 어때?")도 되묻지 않고
+        #    포트폴리오 라우트로 간다 — 대상이 지금 고른 고객의 계좌라 이미 정해져 있다.
         ctx = await session_store.get_context(session_id)
-        routing = f1.route(q, prev_entity=ctx.get("last_entity"))
+        routing = f1.route(
+            q, prev_entity=ctx.get("last_entity"), has_portfolio=portfolio is not None
+        )
         yield _sse("routing", routing)
         if routing["need_clarify"]:
-            # 이어받을 종목도 없을 때만 여기 온다.
+            # 종목을 모르거나(entity), 종목은 알아도 무엇을 물었는지 모를 때(intent).
+            # 문구는 f1이 정한다 — 되묻는 사유가 라우팅 결정이라 화면이 다시 판단하면 갈라진다.
             yield _sse("answer", {
                 "clarify": True,
-                "text": "어느 종목인지 알려주세요 — 종목명(예: 삼성전자)이나 6자리 코드(예: 005930)를 함께 적어주시면 조회하겠습니다.",
+                "text": f1.clarify_text(routing, has_portfolio=portfolio is not None),
                 "sentences": [], "violations": [],
             })
             # clarify도 턴으로 기록하되 종목이 없으니 last_entity는 안 바뀐다.
@@ -744,10 +764,15 @@ async def chat_stream(
             "entity_code": routing["entity_code"], "entity_name": routing["entity_name"],
         })
 
-        # 3. 라우팅된 에이전트로 데이터 조회
+        # 3. 데이터 확보. 포트폴리오 라우트는 **에이전트를 돌리지 않는다** — 근거가 이미
+        #    계산된 내부 데이터라 조회할 도구가 없다(덤으로 크레딧도 안 쓴다).
         data: dict = {}
-        async for chunk in _collect_chat_data(routing, data):
-            yield chunk
+        if routing["agent"] == "portfolio":
+            data["portfolio"] = portfolio
+            yield _sse("progress", {"agent": "portfolio", "step": "compute", "status": "completed"})
+        else:
+            async for chunk in _collect_chat_data(routing, data):
+                yield chunk
 
         # 4. 2차 query — f1 답변자를 메인 에이전트로 돌려 답변을 토큰 스트리밍
         yield _sse("progress", {"agent": "f1", "step": "answer", "status": "started"})
@@ -783,13 +808,22 @@ async def chat_stream(
             qd = data["quote"]
             quote_source = {"as_of": qd.get("as_of"), "close": qd.get("close"), "label": qd.get("source")}
         sentences = citations.parse_sentences(
-            raw, data.get("dart_sources") or {}, data.get("news_sources") or {}, quote_source
+            raw,
+            data.get("dart_sources") or {},
+            data.get("news_sources") or {},
+            quote_source,
+            # 포트폴리오 라우트에서만 `[^hold]`가 해석된다 — 다른 답변이 이 태그를 지어내도
+            # 출처로 인정되지 않고 UNSOURCED로 남는다(게이트가 잡는다).
+            f1.portfolio_source() if data.get("portfolio") else None,
         )
         content = compliance.apply_notice(raw, "F1")
         violations = compliance.check_note(content, sentences, "F1")
+        # 감사로그에는 **고객 id만** 남긴다(이름·계좌 아님). 누구 포트폴리오를 근거로 답했는지는
+        # 추적 가능해야 하지만, 로그도 화면(감시 탭)에 나가는 텍스트다.
         await db.append_audit("chat_answered", None, None, {
             "agent": routing["agent"], "intent": routing["intent"],
-            "entity": routing["entity_code"], "violations": violations,
+            "entity": routing["entity_code"], "customer_id": customer_id,
+            "violations": violations,
         })
         yield _sse("answer", {
             "clarify": False,

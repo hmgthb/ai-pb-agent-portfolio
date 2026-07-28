@@ -80,6 +80,7 @@ def parse_sentences(
     dart_sources: dict[str, dict],
     news_sources: dict[str, dict],
     quote_source: dict | None = None,
+    holdings_source: dict | None = None,
 ) -> list[dict]:
     """note_text -> [{text, source, sources, is_heading, kind}, ...]
 
@@ -87,6 +88,10 @@ def parse_sentences(
     news_sources: {url: {"title": ..., "pub_date": ...}}
     quote_source: F1 시세 답변용 — `[^krx]` 태그를 이 메타로 해석한다(있을 때만).
       {"as_of": ..., "close": ..., "label": ...}. 기본값 None이라 F2·F3 경로는 영향 없다.
+    holdings_source: F1 포트폴리오 답변용 — `[^hold]` 태그를 이 메타로 해석한다(있을 때만).
+      {"label": ..., "as_of": ...}. **이 출처만 공개데이터가 아니다**(내부 계좌 보유데이터) —
+      가드레일 1의 명시적 예외라 화면 배지도 `보유(내부)`로 따로 낸다(CLAUDE.md 참조).
+      기본값 None이라 F2·F3와 포트폴리오 없는 F1 경로는 영향 없다.
 
     source는 첫 출처(기존 화면 호환), sources는 그 문장이 인용한 출처 전부다 —
     한 문장이 두 건을 인용하면 둘 다 보여야 한다(가드레일 3: 출처 100% 노출).
@@ -111,20 +116,25 @@ def parse_sentences(
             if not text:
                 continue
             matched = True
-            sources = _resolve_all(tags, dart_sources, news_sources, quote_source)
+            sources = _resolve_all(tags, dart_sources, news_sources, quote_source, holdings_source)
             sentences.append(_make(text, sources, "boilerplate" if boilerplate else None))
         if not matched:
             # 문장부호로 안 끝나는 줄(마지막 줄 등)도 통째로 한 단위로 취급한다.
             text, tags = _strip_footnotes(line)
-            sources = _resolve_all(tags, dart_sources, news_sources, quote_source)
+            sources = _resolve_all(tags, dart_sources, news_sources, quote_source, holdings_source)
             sentences.append(_make(text, sources, "boilerplate" if boilerplate else None))
 
     return sentences
 
 
-def _resolve_all(tags, dart_sources, news_sources, quote_source) -> list[dict]:
+def _resolve_all(tags, dart_sources, news_sources, quote_source, holdings_source=None) -> list[dict]:
     return [
-        s for s in (_resolve_source(t, dart_sources, news_sources, quote_source) for t in tags) if s
+        s
+        for s in (
+            _resolve_source(t, dart_sources, news_sources, quote_source, holdings_source)
+            for t in tags
+        )
+        if s
     ]
 
 
@@ -155,11 +165,14 @@ def _resolve_source(
     dart_sources: dict[str, dict],
     news_sources: dict[str, dict],
     quote_source: dict | None = None,
+    holdings_source: dict | None = None,
 ) -> dict | None:
     if not tag:
         return None
     if tag == "krx" and quote_source:
         return {"type": "krx", **quote_source}
+    if tag == "hold" and holdings_source:
+        return {"type": "holdings", **holdings_source}
     if tag in dart_sources:
         return {"type": "dart", "rcept_no": tag, **dart_sources[tag]}
     if tag in news_sources:

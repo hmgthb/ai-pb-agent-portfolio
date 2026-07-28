@@ -127,6 +127,169 @@ def test_answer_input_never_rounds_figures():
     assert "300870903000000" in text  # 원문 보존
 
 
+# ── 포트폴리오 질문 (2026-07-28) ────────────────────────────
+# 고객 dict는 main._customer_to_dict 형태다. 여기 값은 실제 시드(신태윤 #5)에서 가져왔다 —
+# 집중도 70%가 저장된 flag_reasons와 맞는지까지 같이 확인하려고.
+_CUST = {
+    "id": 5, "name": "신태윤", "acct": "110-***-724441", "age": 41,
+    "risk": 2, "balance": 3310000, "ret": -4.8,
+    "holdings": [
+        {"amt": 659316, "code": "005930", "name": "삼성전자"},
+        {"amt": 1558384, "code": "035720", "name": "카카오"},
+    ],
+    "alloc": {"채권": 31, "펀드": 16, "현금성": 5, "국내주식": 48},
+    "diag": "예시", "flag": True,
+    "flagReasons": [{"key": "conc", "text": "보유주식 내 카카오 집중 70%"}],
+}
+
+
+def test_portfolio_route_needs_no_entity():
+    """'분산 어때?'에는 종목이 없다 — 예전에는 clarify로 떨어져 답이 안 나갔다."""
+    r = f1.route("분산 어때?", has_portfolio=True)
+    assert r["need_clarify"] is False
+    assert r["agent"] == "portfolio" and r["entity_code"] is None
+
+
+def test_portfolio_route_off_without_customer():
+    """전역 F1(FAB)에는 고객이 없다 — 켜면 답할 데이터가 없는 라우트로 보내게 된다."""
+    r = f1.route("분산 어때?", has_portfolio=False)
+    assert r["need_clarify"] is True and r["agent"] is None
+
+
+def test_portfolio_beats_stock_intent_and_keeps_entity():
+    """'KB금융 비중'은 시세가 아니라 포트폴리오 내 비중을 묻는 것이다."""
+    r = f1.route("035720 비중 어때?", has_portfolio=True)
+    assert r["agent"] == "portfolio"
+    assert r["entity_code"] == "035720"  # 종목은 들고 간다(그 종목 비중을 콕 집어 답하도록)
+
+
+def test_stock_question_still_routes_to_agent_with_portfolio_on():
+    """포트폴리오 컨텍스트가 있어도 종목 질문은 예전 그대로 에이전트로 간다."""
+    r = f1.route("카카오 최근 뉴스", has_portfolio=True)
+    assert r["agent"] == "a4" and r["entity_code"] == "035720"
+
+
+def test_portfolio_facts_computes_weights_from_stored_data():
+    p = f1.portfolio_facts(_CUST)
+    assert p["risk_label"] == "위험중립형"
+    assert p["equity_pct"] == 48
+    top = p["top_holding"]
+    assert top["name"] == "카카오"
+    # 저장된 flag_reasons의 "집중 70%"와 계산이 맞아야 한다(보유주식 내 비중).
+    assert top["pct_of_equity"] == 70.3
+    # 자산배분은 위험도 낮은 순 — 화면 도넛 범례와 같은 순서여야 대조가 된다.
+    assert [a["class"] for a in p["alloc"]] == ["현금성", "채권", "펀드", "국내주식"]
+
+
+def test_portfolio_facts_carries_no_customer_identity():
+    """가드레일 1 — 이 dict는 그대로 LLM 프롬프트가 된다. 이름·계좌·나이가 새면 안 된다."""
+    blob = repr(f1.portfolio_facts(_CUST))
+    for leak in ("신태윤", "110-***-724441", "41"):
+        assert leak not in blob, f"고객 식별정보 유출: {leak}"
+
+
+def test_portfolio_input_block_has_tag_and_internal_warning():
+    r = f1.route("집중도 어때?", has_portfolio=True)
+    text = f1.answer_input("집중도 어때?", r, {"portfolio": f1.portfolio_facts(_CUST)})
+    assert "[^hold]" in text
+    assert "내부 계좌 보유데이터" in text
+    assert "보유주식 내 70.3%" in text  # 계산은 코드가 했고 모델은 옮겨 적기만 한다
+    assert "다시 계산하거나" in text
+    # 종목이 없는 질문이라 '대상 종목' 블록 자체가 없어야 한다(빈 코드로 찍히면 안 된다)
+    assert "종목코드 None" not in text
+
+
+def test_portfolio_facts_handles_empty_holdings():
+    """현금성 100% 고객 — 나눗셈 분모가 0이다. 여기서 죽으면 칩이 고장 난 것처럼 보인다."""
+    empty = {**_CUST, "holdings": [], "balance": 0, "flagReasons": []}
+    p = f1.portfolio_facts(empty)
+    assert p["holdings"] == [] and p["top_holding"] is None
+    text = f1.answer_input("자산배분 구성 어때?", f1.route("자산배분 구성 어때?", has_portfolio=True),
+                           {"portfolio": p})
+    assert "위험 플래그: 없음" in text
+
+
+def test_hold_tag_resolves_only_with_holdings_source():
+    """`[^hold]`는 포트폴리오 답변에서만 출처다 — 다른 답변이 지어내면 UNSOURCED로 남는다."""
+    from backend import citations
+    text = "보유주식 내 카카오 비중이 70.3%다.[^hold]"
+    without = citations.parse_sentences(text, {}, {}, None, None)
+    assert without[0]["source"] is None
+    with_src = citations.parse_sentences(text, {}, {}, None, f1.portfolio_source())
+    assert with_src[0]["source"]["type"] == "holdings"
+    # 스냅샷 시각 컬럼이 없다 — 오늘 날짜를 지어내지 않는다.
+    assert with_src[0]["source"]["as_of"] is None
+
+
+def test_chat_notice_declares_internal_holdings():
+    """공개데이터가 아닌 근거를 쓰면서 화면에 안 밝히면 공시와 같은 급으로 읽힌다."""
+    assert "내부 계좌데이터" in CHAT_NOTICE and "공개데이터가 아니" in CHAT_NOTICE
+
+
+# ── 되묻기 두 종류 · 키워드 보강 (2026-07-28 2차) ──────────
+def test_return_and_balance_are_askable():
+    """portfolio_facts가 담고 있는데 키워드가 없어 되묻기로 떨어지던 것들."""
+    for q in ("이 고객 수익률 어때?", "잔고 얼마야?", "평가금액 알려줘"):
+        r = f1.route(q, has_portfolio=True)
+        assert r["agent"] == "portfolio", (q, r["reason"])
+
+
+def test_bare_profit_word_still_goes_to_financials():
+    """`수익`을 통째로 넣었으면 회사 재무 질문을 포트폴리오가 뺏는다 — 넣지 않았다."""
+    r = f1.route("카카오 수익성 어때?", has_portfolio=True)
+    assert r["agent"] == "a2"
+
+
+def test_inherited_entity_without_intent_asks_back():
+    """무관한 후속 질문이 직전 종목의 재무 조회를 돌리던 문제(실측: a2가 돌아 크레딧 사용)."""
+    prev = {"code": "035720", "name": "카카오"}
+    for q in ("오늘 점심 뭐 먹지?", "파이썬으로 퀵소트 짜줘"):
+        r = f1.route(q, prev_entity=prev, has_portfolio=True)
+        assert r["need_clarify"] is True and r["agent"] is None, (q, r["reason"])
+        assert r["clarify"] == "intent"
+        # 종목은 알고 있다 — 되물을 때 "무엇을"만 물어야 한다
+        assert r["entity_name"] == "카카오"
+
+
+def test_inherited_entity_with_intent_still_works():
+    """이어받기 자체는 살아 있어야 한다 — '관련 뉴스는?'이 되묻기로 떨어지면 퇴행이다."""
+    prev = {"code": "035720", "name": "카카오"}
+    r = f1.route("관련 뉴스는?", prev_entity=prev, has_portfolio=True)
+    assert r["agent"] == "a4" and r["inherited"] is True
+
+
+def test_explicit_entity_without_intent_keeps_default():
+    """종목을 직접 적었으면 추측 한 번은 한다 — 되묻기로 바꾸면 '카카오'가 안 먹는다."""
+    r = f1.route("카카오", has_portfolio=True)
+    assert r["agent"] == "a2" and r["need_clarify"] is False
+
+
+def test_clarify_text_differs_by_kind():
+    prev = {"code": "035720", "name": "카카오"}
+    intent_r = f1.route("오늘 점심 뭐 먹지?", prev_entity=prev, has_portfolio=True)
+    t = f1.clarify_text(intent_r, has_portfolio=True)
+    assert "카카오" in t and "무엇을 확인할까요" in t
+    assert "어느 종목인지" not in t  # 종목은 아는데 종목을 되물으면 동문서답이다
+
+    entity_r = f1.route("오늘 점심 뭐 먹지?", has_portfolio=True)
+    assert entity_r["clarify"] == "entity"
+    assert "구성" in f1.clarify_text(entity_r, has_portfolio=True)
+    # 고객이 없는 전역 F1에서는 포트폴리오를 권하면 안 된다(답할 데이터가 없다)
+    assert "구성" not in f1.clarify_text(entity_r, has_portfolio=False)
+    # 화면이 이 문자열을 그대로 렌더한다 — 마크다운을 넣으면 별표가 글자로 보인다
+    for r in (intent_r, entity_r):
+        for hp in (True, False):
+            assert "**" not in f1.clarify_text(r, has_portfolio=hp)
+
+
+def test_portfolio_block_denies_per_holding_return():
+    """수익률을 물을 수 있게 됐다 — 계좌 전체 값을 특정 종목 것으로 옮겨 적으면 안 된다."""
+    r = f1.route("수익률 어때?", has_portfolio=True)
+    text = f1.answer_input("수익률 어때?", r, {"portfolio": f1.portfolio_facts(_CUST)})
+    assert "종목별 수익률은 이 데이터에 없다" in text
+    assert "계좌 전체" in text
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):
