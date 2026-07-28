@@ -1556,7 +1556,10 @@ th.rownum {
 .srow {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  /* 가로 간격이 문장과 배지 사이의 홈이다 — `.spacer`를 뺀 뒤로 문장이 남는 폭을 전부
+     쓰기 때문에, 좁으면 문장 끝줄이 배지에 붙는다. 세로는 배지 덩어리가 제 문장 바로
+     아래에 붙도록 좁게 둔다. */
+  gap: 8px 14px;
   padding: 8px 2px;
   border-top: 1px solid var(--grid);
   font-size: 13.5px;
@@ -1565,6 +1568,20 @@ th.rownum {
 .srow .stext {
   min-width: 12ch;
   flex: 1 1 55%;
+}
+/* 배지는 낱개가 아니라 **한 덩어리**로 오른쪽에 붙인다. 낱개로 두면 flex가 배지마다
+     따로 줄을 넘겨, 넘어간 것들이 남는 공간을 제각각 나눠 갖고 흩어져 섰다.
+     묶어 두면 폭이 모자랄 때 덩어리째 아랫줄로 내려가 오른쪽 끝에 정렬된다
+     (문장이 위 한 줄을 다 쓰고, 날짜 배지는 그 아래 오른쪽에 모인다).
+     `margin-left: auto`는 배지만 있는 줄에서 쓰인다 — 문장과 같은 줄에서는 `.stext`가
+     먼저 늘어나 남는 공간을 가져가므로 어차피 배지가 오른쪽 끝이다. */
+.sbadges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 4px 6px;
+  margin-left: auto;
 }
 .sbadge {
   flex: none;
@@ -1860,20 +1877,22 @@ th.rownum {
   flex-direction: column;
   gap: 6px;
 }
-.bubble {
+/* F1 말풍선만 폭을 제한한다. 고객 문의 모달도 `.bubble`을 쓰므로 전역으로 두면
+   확인 사실 카드가 F1의 82% 폭으로 줄어든다. */
+.chat-turn .bubble {
   max-width: 82%;
   padding: 9px 13px;
   border-radius: 14px;
   font-size: 13px;
   line-height: 1.6;
 }
-.bubble.me {
+.chat-turn .bubble.me {
   align-self: flex-end;
   background: var(--accent);
   color: var(--on-accent);
   border-bottom-right-radius: 4px;
 }
-.bubble.ai {
+.chat-turn .bubble.ai {
   align-self: flex-start;
   background: var(--card);
   border: 1px solid var(--border);

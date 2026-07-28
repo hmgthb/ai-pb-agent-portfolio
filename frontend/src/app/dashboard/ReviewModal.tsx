@@ -55,6 +55,23 @@ function SourceBadge({ src }: { src: NoteSource | null }) {
   );
 }
 
+/** 옛 노트는 sources 없이 source만 있다 — 둘 다 읽는다. */
+function sourcesOf(s: NoteSentence): NoteSource[] {
+  return s.sources ?? (s.source ? [s.source] : []);
+}
+
+/** 검토 순서는 노트의 서술 순서가 아니다 — 손댈 것이 위, 읽기만 할 것이 아래다.
+ *  0 UNSOURCED: 근거 없는 사실 주장이라 가장 먼저 확인한다.
+ *  1 해석·전망: 각주가 없는 것이 규칙상 맞지만, 발행 전 사람 판단은 필요하다.
+ *  2 공시·시세 인용 · 3 뉴스 인용: 읽기만 할 근거 문장은 아래로 모은다.
+ *  정렬은 stable이라 같은 등급 안에서는 원문 순서가 유지되고, 확인(ack)은 **원본 인덱스**로
+ *  저장되므로 이 정렬에 영향받지 않는다(HANDOFF §1-2). */
+function reviewTier(s: NoteSentence): number {
+  const srcs = sourcesOf(s);
+  if (!srcs.length) return s.kind === 'interpretation' ? 1 : 0;
+  return srcs.some((x) => x.type === 'news') ? 3 : 2;
+}
+
 /** 문장 목록. `rows`의 i는 **원본 sentences 배열의 인덱스**다 — 확인 기록(ack)이 그
  *  인덱스로 저장되므로, 소제목·고지문구를 걸러낸 뒤의 순번을 쓰면 다른 문장을 가리킨다. */
 function SentenceRows({
@@ -73,52 +90,54 @@ function SentenceRows({
   return (
     <div className="srows">
       {rows.map(({ s, i }) => {
-        // 옛 노트는 sources 없이 source만 있다 — 둘 다 읽는다.
-        const srcs = s.sources ?? (s.source ? [s.source] : []);
+        const srcs = sourcesOf(s);
         const ack = ackOf.get(i);
         return (
           <div className="srow" key={i}>
             <span className="stext">{s.text}</span>
-            <span className="spacer" style={{ flex: 1 }} />
-            {srcs.length ? (
-              srcs.map((src, j) => <SourceBadge key={j} src={src} />)
-            ) : ack ? (
-              // 사람이 확인한 문장 — 누가·언제·무슨 사유였는지가 배지에 남는다.
-              <span
-                className="sbadge ack"
-                title={`${actorLabel(ack.actor)} · ${hhmm(ack.ts)} 확인`}
-              >
-                확인함 · {ack.reason}
-              </span>
-            ) : s.kind === 'interpretation' ? (
-              // 각주가 없는 게 규칙대로인 문장. UNSOURCED로 칠하면 검토자가 위반으로
-              // 오해한다 — 다만 판단은 사람이 하도록 큐에는 그대로 올라간다.
-              <span
-                className="sbadge itp"
-                title="해석·전망 문장은 출처 각주 대상이 아닙니다"
-              >
-                해석
-              </span>
-            ) : (
-              <SourceBadge src={null} />
-            )}
-            {/* 확인 UI는 미인용 문장에만 붙는다. 출처가 있는 문장은 애초에 게이트를
-                막고 있지 않으므로 풀 것도 없다. */}
-            {canAck && !srcs.length && (
-              <select
-                className="acksel"
-                aria-label="확인 사유"
-                value={ack?.reason ?? ''}
-                onChange={(e) => onAck(i, e.target.value || null)}
-              >
-                <option value="">확인 안 함</option>
-                {ACK_REASONS.map((r) => (
-                  <option key={r} value={r}>
-                    {r}(으)로 확인
-                  </option>
-                ))}
-              </select>
-            )}
+            {/* 배지는 낱개가 아니라 한 덩어리로 오른쪽에 붙인다 — 낱개면 인용이 여러
+                건일 때 줄바꿈된 배지가 남는 공간을 제각각 나눠 가져 흩어졌다. */}
+            <span className="sbadges">
+              {srcs.length ? (
+                srcs.map((src, j) => <SourceBadge key={j} src={src} />)
+              ) : ack ? (
+                // 사람이 확인한 문장 — 누가·언제·무슨 사유였는지가 배지에 남는다.
+                <span
+                  className="sbadge ack"
+                  title={`${actorLabel(ack.actor)} · ${hhmm(ack.ts)} 확인`}
+                >
+                  확인함 · {ack.reason}
+                </span>
+              ) : s.kind === 'interpretation' ? (
+                // 각주가 없는 게 규칙대로인 문장. UNSOURCED로 칠하면 검토자가 위반으로
+                // 오해한다 — 다만 판단은 사람이 하도록 큐에는 그대로 올라간다.
+                <span
+                  className="sbadge itp"
+                  title="해석·전망 문장은 출처 각주 대상이 아닙니다"
+                >
+                  해석
+                </span>
+              ) : (
+                <SourceBadge src={null} />
+              )}
+              {/* 확인 UI는 미인용 문장에만 붙는다. 출처가 있는 문장은 애초에 게이트를
+                  막고 있지 않으므로 풀 것도 없다. */}
+              {canAck && !srcs.length && (
+                <select
+                  className="acksel"
+                  aria-label="확인 사유"
+                  value={ack?.reason ?? ''}
+                  onChange={(e) => onAck(i, e.target.value || null)}
+                >
+                  <option value="">확인 안 함</option>
+                  {ACK_REASONS.map((r) => (
+                    <option key={r} value={r}>
+                      {r}(으)로 확인
+                    </option>
+                  ))}
+                </select>
+              )}
+            </span>
           </div>
         );
       })}
@@ -244,9 +263,12 @@ export function NoteModal({
 
   // 소제목과 고지문구·구분선은 검토 대상 문장이 아니다(백엔드 게이트와 같은 기준).
   // 원본 인덱스를 들고 다닌다 — 확인 기록이 그 인덱스로 저장되기 때문이다.
+  // 정렬은 reviewTier: 미인용(확인 필요) → 공시·시세 → 뉴스. 노트를 산문으로 읽는 화면이
+  // 아니라 **문장별로 출처를 확인하는 화면**이라 서술 순서보다 처리 순서를 따른다.
   const body = current.sentences
     .map((s, i) => ({ s, i }))
-    .filter(({ s }) => !s.is_heading && s.kind !== 'boilerplate');
+    .filter(({ s }) => !s.is_heading && s.kind !== 'boilerplate')
+    .sort((a, b) => reviewTier(a.s) - reviewTier(b.s));
 
   /* 각주를 붙일 수 없는 문장(해석·고지·데이터 설명)이 실제로 있어서, 게이트가 그걸 전부
      잠그면 사람이 열 방법이 없다 — 그래서 준법이 사유를 적어 확인하면 미인용 집계에서
@@ -456,8 +478,7 @@ export function ChatModal({
             {prepFacts(customer).map((s, i) => (
               <div className="srow" key={i}>
                 <span className="stext">{s.text}</span>
-                <span className="spacer" style={{ flex: 1 }} />
-                {s.badge}
+                <span className="sbadges">{s.badge}</span>
               </div>
             ))}
           </div>
