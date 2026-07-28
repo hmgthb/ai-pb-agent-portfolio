@@ -8,7 +8,7 @@
  */
 
 import { useState } from 'react';
-import { apiPost, errorMessage, fmtDate, fmtKRW, hhmm } from './api';
+import { apiPost, errorMessage, fmtKRW, hhmm } from './api';
 import {
   ACK_REASONS,
   ACTOR,
@@ -25,35 +25,15 @@ import {
   type QueueChat,
   type Role,
 } from './types';
+import {
+  buildFootnotes,
+  FootnoteList,
+  FootnoteRefs,
+  sourceKey,
+  useFootnoteJump,
+} from './sources';
 
 type Result = { ok?: string; blocked?: string };
-
-/* ── 문장 출처 배지 ─────────────────────────────────────────
-   날짜는 출처 종류와 무관하게 같은 규칙으로 찍는다(fmtDate) — 공시는 `20260722`,
-   뉴스는 RFC 2822로 원본 형식이 다른데, 그대로 두면 같은 줄에서 표기가 갈리고
-   뉴스는 `.slice()`에 요일이 잘려 "Wed, 22 Ju"로 나갔다. */
-function SourceBadge({ src }: { src: NoteSource | null }) {
-  if (!src) return <span className="sbadge un">UNSOURCED</span>;
-  if (src.type === 'dart') {
-    return (
-      <span className="sbadge src" title={`rcpNo ${src.rcept_no}`}>
-        공시 {fmtDate(src.rcept_dt) || '접수일 미상'}
-      </span>
-    );
-  }
-  if (src.type === 'krx') {
-    return (
-      <span className="sbadge src" title={src.label}>
-        시세 {fmtDate(src.as_of)}
-      </span>
-    );
-  }
-  return (
-    <span className="sbadge src" title={src.url}>
-      뉴스 {fmtDate(src.pub_date) || '시점 미상'}
-    </span>
-  );
-}
 
 /** 옛 노트는 sources 없이 source만 있다 — 둘 다 읽는다. */
 function sourcesOf(s: NoteSentence): NoteSource[] {
@@ -87,6 +67,12 @@ function SentenceRows({
   onAck: (index: number, reason: string | null) => void;
 }) {
   const ackOf = new Map(acks.map((a) => [a.index, a]));
+  /* 출처는 **번호 각주**로 나간다(2026-07-28). 예전에는 문장 옆에 날짜 배지를 붙였는데,
+     `.stext`가 55%로 눌려 배지 2개짜리 문장이 4줄로 흘렀다(배지 없는 문장은 2줄).
+     번호만 남기면 문장이 폭을 다 쓰고, 같은 출처를 여러 번 인용해도 번호가 하나라
+     중복 배지도 사라진다. 원문 링크·날짜·기사 제목은 아래 목록이 전부 보여준다. */
+  const fn = buildFootnotes(rows);
+  const { flash, jump } = useFootnoteJump();
   return (
     <div className="srows">
       {rows.map(({ s, i }) => {
@@ -94,35 +80,42 @@ function SentenceRows({
         const ack = ackOf.get(i);
         return (
           <div className="srow" key={i}>
-            <span className="stext">{s.text}</span>
-            {/* 배지는 낱개가 아니라 한 덩어리로 오른쪽에 붙인다 — 낱개면 인용이 여러
-                건일 때 줄바꿈된 배지가 남는 공간을 제각각 나눠 가져 흩어졌다. */}
-            <span className="sbadges">
-              {srcs.length ? (
-                srcs.map((src, j) => <SourceBadge key={j} src={src} />)
-              ) : ack ? (
-                // 사람이 확인한 문장 — 누가·언제·무슨 사유였는지가 배지에 남는다.
-                <span
-                  className="sbadge ack"
-                  title={`${actorLabel(ack.actor)} · ${hhmm(ack.ts)} 확인`}
-                >
-                  확인함 · {ack.reason}
-                </span>
-              ) : s.kind === 'interpretation' ? (
-                // 각주가 없는 게 규칙대로인 문장. UNSOURCED로 칠하면 검토자가 위반으로
-                // 오해한다 — 다만 판단은 사람이 하도록 큐에는 그대로 올라간다.
-                <span
-                  className="sbadge itp"
-                  title="해석·전망 문장은 출처 각주 대상이 아닙니다"
-                >
-                  해석
-                </span>
-              ) : (
-                <SourceBadge src={null} />
-              )}
-              {/* 확인 UI는 미인용 문장에만 붙는다. 출처가 있는 문장은 애초에 게이트를
-                  막고 있지 않으므로 풀 것도 없다. */}
-              {canAck && !srcs.length && (
+            {/* 표시는 전부 **문장 흐름 안에** 둔다. `.sbadges`를 형제 칸으로 두면
+                `.stext`가 폭을 다 쓰는 순간 배지가 통째로 아랫줄로 밀려, 해석 문장마다
+                빈 줄이 하나씩 생긴다(실측: 모달 높이 988→1336px). 인라인이면 문장
+                끝에 붙어 흐르고 줄이 모자랄 때만 자연스럽게 넘어간다. */}
+            <span className="stext">
+              {s.text}
+              <FootnoteRefs
+                ns={srcs.map((x) => fn.numberOf.get(sourceKey(x))!)}
+                onJump={jump}
+              />
+              {!srcs.length &&
+                (ack ? (
+                  // 사람이 확인한 문장 — 누가·언제·무슨 사유였는지가 배지에 남는다.
+                  <span
+                    className="sbadge ack inline"
+                    title={`${actorLabel(ack.actor)} · ${hhmm(ack.ts)} 확인`}
+                  >
+                    확인함 · {ack.reason}
+                  </span>
+                ) : s.kind === 'interpretation' ? (
+                  // 각주가 없는 게 규칙대로인 문장. UNSOURCED로 칠하면 검토자가 위반으로
+                  // 오해한다 — 다만 판단은 사람이 하도록 큐에는 그대로 올라간다.
+                  <span
+                    className="sbadge itp inline"
+                    title="해석·전망 문장은 출처 각주 대상이 아닙니다"
+                  >
+                    해석
+                  </span>
+                ) : (
+                  <span className="sbadge un inline">UNSOURCED</span>
+                ))}
+            </span>
+            {/* 확인 UI는 미인용 문장에만 붙는다. 출처가 있는 문장은 애초에 게이트를
+                막고 있지 않으므로 풀 것도 없다. 이것만 조작이라 문장 밖에 남긴다. */}
+            {canAck && !srcs.length && (
+              <span className="sbadges">
                 <select
                   className="acksel"
                   aria-label="확인 사유"
@@ -136,11 +129,12 @@ function SentenceRows({
                     </option>
                   ))}
                 </select>
-              )}
-            </span>
+              </span>
+            )}
           </div>
         );
       })}
+      <FootnoteList items={fn.items} flash={flash} />
     </div>
   );
 }
@@ -245,7 +239,7 @@ export function NoteModal({
               {
                 label: '발행',
                 ok: role === 'comp',
-                deny: '준법 심의 중입니다 — 발행은 준법 권한입니다',
+                deny: '준법 심의 중입니다. 발행은 준법 권한입니다',
                 run: () => act('publish'),
               },
             ]
@@ -458,8 +452,8 @@ export function ChatModal({
       {/* 여기부터 스크롤 영역 — 위 두 줄(제목·×·계좌 메타)은 고정이다. */}
       <div className="m-body">
         <div className="wm">
-          {WATERMARK} AI는 고객 회신을 대신 쓰지 않습니다 — 아래는 PB가 회신 전에
-          확인할 사실입니다.
+          {WATERMARK} AI는 고객 회신을 대신 쓰지 않습니다 — 아래는 PB가 회신
+          전에 확인할 사실입니다.
         </div>
         {res.blocked && <div className="vbox">⛔ {res.blocked}</div>}
         {res.ok && <div className="okbox">✓ {res.ok}</div>}

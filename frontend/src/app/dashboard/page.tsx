@@ -14,7 +14,13 @@
  *  레이아웃·스타일은 시안이 원본이다(dashboard.css).
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import './dashboard.css';
 import {
   api,
@@ -102,6 +108,69 @@ const ROLES: Record<
    같은 파란 테두리를 두르고도 클릭에 반응하지 않아 고장으로 읽혔다(실제 기능은 아래 각자의
    카드에 있다). F4·F5는 만들지 않은 기능의 자리표시였다 — 로드맵은 발표 자료가 할 일이지
    PB가 매일 보는 화면이 할 일이 아니다. F1 입구는 우하단 고정 버튼으로 옮겼다. */
+
+/* ── 라이트/다크 전환 — 바이낸스 top-nav 오른쪽 묶음에 있는 그 토글 ──────────────
+   이 화면의 기본은 **다크**이고(dashboard.css의 :root가 곧 다크), 라이트는 밝은 곳에서
+   보기 위한 선택지다. OS 설정(prefers-color-scheme)은 따라가지 않는다 — 이 화면의
+   정체성이 다크라, 밝은 OS를 쓴다는 이유만으로 옐로가 안 보이는 테마로 떨어지면 안 된다.
+
+   테마의 **정본은 React 상태가 아니라 DOM 속성**이다: 첫 페인트 전에 layout.tsx의
+   부트스트랩 스크립트가 이미 값을 써 놓기 때문이다(그래야 라이트 사용자가 검은 화면을
+   안 본다). 그래서 useState로 따로 들고 있으면 두 개의 진실이 생겨 버튼 라벨과 실제
+   화면이 어긋난다 — 외부 저장소를 구독하는 useSyncExternalStore가 이 경우의 도구다.
+   (useEffect + setState로 맞추는 방식은 React 컴파일러 규칙에도 걸린다:
+    react-hooks/set-state-in-effect.) */
+type Theme = 'dark' | 'light';
+const themeListeners = new Set<() => void>();
+
+const readTheme = (): Theme =>
+  document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+/** 서버 렌더·하이드레이션 시점의 값. CSS 기본값과 같아야 화면이 튀지 않는다. */
+const serverTheme = (): Theme => 'dark';
+
+function subscribeTheme(cb: () => void) {
+  themeListeners.add(cb);
+  return () => {
+    themeListeners.delete(cb);
+  };
+}
+
+function writeTheme(next: Theme) {
+  document.documentElement.dataset.theme = next;
+  try {
+    localStorage.setItem('pb-theme', next);
+  } catch {
+    /* 저장이 막힌 환경(사생활 보호 모드)에서도 이번 세션 동안은 전환이 산다 */
+  }
+  themeListeners.forEach((l) => l());
+}
+
+function ThemeToggle() {
+  const theme = useSyncExternalStore(subscribeTheme, readTheme, serverTheme);
+  const label = theme === 'dark' ? '라이트 테마로 전환' : '다크 테마로 전환';
+  return (
+    <button
+      className="theme-toggle"
+      onClick={() => writeTheme(theme === 'dark' ? 'light' : 'dark')}
+      aria-label={label}
+      title={label}
+    >
+      <span aria-hidden="true">{theme === 'dark' ? '☀' : '☾'}</span>
+    </button>
+  );
+}
+
+/** 포트폴리오 분석 칩. 종목 칩이 "이 종목"을 채운다면 이쪽은 "이 구성"을 채운다.
+ *
+ *  ⚠️ 각 질문문은 **백엔드 라우팅 키워드를 반드시 포함해야 한다**(`f1._PORTFOLIO_KEYWORDS`:
+ *     집중·배분·성향 …). 칩이 채운 질문이 포트폴리오 라우트로 안 가면 종목을 되묻는
+ *     clarify로 떨어져, 누른 사람 입장에서는 버튼이 고장 난 것처럼 보인다.
+ *     라벨이 아니라 **q가 계약**이다 — 라벨만 고치는 건 안전하고, q는 키워드를 지켜야 한다. */
+const PORTFOLIO_CHIPS: { label: string; q: string }[] = [
+  { label: '집중도', q: '보유 종목 집중도 어때?' },
+  { label: '자산배분', q: '자산배분 구성 어때?' },
+  { label: '성향 대비', q: '등록 위험성향 대비 구성 어때?' },
+];
 
 /** 화면(탭). 어떤 탭이 실제로 나오는지는 역할이 정한다 — 아래 TABS 참조.
  *  세 뷰는 전부 **마운트된 채로** `hidden`만 토글한다. 특히 'note' 탭은 1~2분짜리 SSE가
@@ -723,6 +792,7 @@ export default function DashboardPage() {
               </button>
             ))}
           </div>
+          <ThemeToggle />
         </div>
       </header>
 
@@ -1153,49 +1223,69 @@ export default function DashboardPage() {
                   )}
                 </div>
 
-                {/* ── 3열: 이 고객의 보유 종목에 묻기 ─────────────────────────
-                    **"고객에 대해 묻는 챗봇"이 아니다.** 백엔드가 부를 수 있는 건
-                    공시·뉴스·시세뿐이라 고객 자체에 대해 답할 경로가 없고, 고객
-                    식별정보는 산출물에 들어가면 안 된다(가드레일 1). 회신문 대필도
-                    금지다(가드레일 4). 그래서 이 칸은 **보유 종목으로 좁힌 F1**이고,
-                    머리말·칩·placeholder 전부 종목을 주어로 말한다.
+                {/* ── 3열: 이 포트폴리오에 묻기 ───────────────────────────────
+                    답할 수 있는 건 둘이다: **보유 종목**(공시·뉴스·지연시세, 에이전트가
+                    조회) + **포트폴리오 구성**(집중도·배분·성향 대비, 코드가 계산).
+                    2026-07-28에 후자를 열면서 근거에 **내부 계좌데이터**가 들어왔다 —
+                    가드레일 1의 명시적 예외이고, 조건은 CLAUDE.md에 적혀 있다(수치는
+                    코드가 계산 · 이름/계좌는 프롬프트에도 답변에도 없음 · 조정 지시 금지).
+
+                    ⚠️ **여전히 "고객에 대해 묻는 챗봇"이 아니다.** 주어를 종목에서
+                    포트폴리오까지만 넓혔지 **사람으로 옮기지 않았다** — 제목이 "이 고객에게
+                    묻기"로 읽히는 순간 답할 수 없는 질문(고객 자체)과 해서는 안 되는 질문
+                    (회신문 대필, 가드레일 4)을 부른다.
                     ⚠️ 입력 가드(compliance.PII_PATTERNS)는 주민·계좌번호 '숫자 형식'만
-                    잡는다 — 한글 이름은 안 걸린다. 이름을 안 쓰게 만드는 건 지금은
-                    이 UI의 몫이다. */}
+                    잡는다 — 한글 이름은 안 걸린다. 이름을 안 쓰게 만드는 건 지금도
+                    이 UI의 몫이다(HANDOFF §7). */}
                 <div className="cust-chat">
                   {selected ? (
                     <>
-                      {/* 제목 + 근거를 한 줄에. 이름은 이 기능의 화면 이름(`종목 즉답`,
-                          FAB 라벨·CLAUDE.md 기능표와 같다)에 범위만 붙인 것이다 —
-                          한 화면에서 같은 기능을 두 이름으로 부르면 다른 물건처럼 읽힌다.
-                          **주어는 종목이어야 한다**: "이 고객에게 묻기"로 읽히면 답할 수
-                          없는 질문(고객 자체)과 해서는 안 되는 질문(회신문 대필)을 부른다. */}
+                      {/* 제목의 주어는 **사물(포트폴리오)**이지 사람(고객)이 아니다 —
+                          위 ⚠️ 참조. 근거 줄에 '보유·배분'을 맨 앞에 둔 건 그것만
+                          공개데이터가 아니어서다(문장별로는 각 출처 배지가 말한다). */}
                       <div className="cchat-head">
-                        <strong>보유 종목 질문</strong>
+                        <strong>포트폴리오 질문</strong>
                         <span className="cchat-src">
-                          공시 · 뉴스 · 지연시세
+                          보유·배분 · 공시 · 뉴스 · 지연시세
                         </span>
                       </div>
                       <div className="cchat-chips">
-                        {selected.holdings.length ? (
-                          selected.holdings.map((h) => (
-                            <button
-                              key={h.code}
-                              className="chip"
-                              onClick={() => askHolding(`${h.name} 최근 실적`)}
-                              title={`${h.name}(${h.code}) 질문 채우기`}
-                            >
-                              {h.name}
-                            </button>
-                          ))
-                        ) : (
-                          <span className="hint">보유 종목이 없습니다.</span>
-                        )}
+                        {selected.holdings.map((h) => (
+                          <button
+                            key={h.code}
+                            className="chip"
+                            onClick={() => askHolding(`${h.name} 최근 실적`)}
+                            title={`${h.name}(${h.code}) 질문 채우기`}
+                          >
+                            {h.name}
+                          </button>
+                        ))}
+                        {/* 분석 칩 — 종목 칩과 **다른 종류**라 형태로 가른다(.chip.ana).
+                            보유 종목이 없어도 낸다: 자산배분·성향 대비는 주식이 하나도
+                            없어도 답이 되는 질문이고(현금성 100%도 구성이다), 오히려
+                            그때 물어볼 게 이것뿐이다. */}
+                        {PORTFOLIO_CHIPS.map((c) => (
+                          <button
+                            key={c.label}
+                            className="chip ana"
+                            onClick={() => askHolding(c.q)}
+                            title={`${c.q} — 질문 채우기`}
+                          >
+                            {c.label}
+                          </button>
+                        ))}
                       </div>
                       {/* 고객이 바뀌면 대화를 새로 시작한다(key). 세션을 이어가면 다음
                           질문이 **앞 고객의 종목을 이어받아**(멀티턴 last_entity) 이
-                          고객이 갖고 있지도 않은 종목을 답해 버린다. */}
-                      <F1Chat key={selected.id} compact prefill={prefill} />
+                          고객이 갖고 있지도 않은 종목을 답해 버린다.
+                          같은 이유로 customerId도 여기서만 넘어간다 — 전역 F1(FAB)에는
+                          고객이 없어 포트폴리오 라우트가 아예 안 켜진다. */}
+                      <F1Chat
+                        key={selected.id}
+                        compact
+                        prefill={prefill}
+                        customerId={selected.id}
+                      />
                     </>
                   ) : (
                     <div className="hint">
@@ -1416,21 +1506,26 @@ export default function DashboardPage() {
         </section>
       </div>
 
-      {/* ── 전체 고지 (맨 아래) ──────────────────────────────
+      {/* ── 전체 고지 = 페이지를 닫는 밝은 띠 ─────────────────
           화면 전체에 걸리는 고지다. 개별 산출물은 각자 자기 고지를 달고 다닌다 —
           종목 노트=워터마크(ReviewModal) · F1 답변=지연시세 고지(F1Chat).
+          바이낸스의 footer-light(어두운 본문을 밝은 면으로 닫는다)를 여기에 쓴 건
+          장식이 아니라 **대비** 때문이다: 이 문장은 반드시 읽혀야 하는데, 밝은 면 위
+          검은 글자가 다크 캔버스에서 낼 수 있는 어떤 회색보다 세다.
           ⚠ 상담 전 브리핑 카드만 예외다: 백엔드가 만든 "ℹ 내부 참고용" 고지가
           content_md에 있는데 화면 타입(Brief)에 그 필드가 없어 카드가 그리지 않는다.
           이 줄이 위에 있을 땐 그게 가려졌지만, 아래로 내린 지금은 브리핑이 첫 화면에서
           고지 없이 보인다 — 카드 자체 고지를 붙이는 게 맞다(미결). */}
-      <p className="disclaimer" role="note">
-        <span className="dot" aria-hidden="true">
-          ⚠
-        </span>{' '}
-        본 화면의 AI 산출물은 공개 공시·뉴스·지연시세에 근거한 내부 참고용
-        미검증 초안이며, 투자권유·광고가 아닙니다. 대고객 문안 작성과 발행은
-        사람의 검토·심의·승인을 거칩니다.
-      </p>
+      <footer className="page-footer">
+        <p className="disclaimer" role="note">
+          <span className="dot" aria-hidden="true">
+            ⚠
+          </span>{' '}
+          본 화면의 AI 산출물은 공개 공시·뉴스·지연시세에 근거한 내부 참고용
+          미검증 초안이며, 투자권유·광고가 아닙니다. 대고객 문안 작성과 발행은
+          사람의 검토·심의·승인을 거칩니다.
+        </p>
+      </footer>
 
       {/* ── 종목 즉답(F1) 입구 ────────────────────────────────
           화면에서 이것만 성격이 다르다 — 나머지는 상담 **전** 준비인데 F1은 상담 **중**
@@ -1439,7 +1534,14 @@ export default function DashboardPage() {
           준법 화면에는 띄우지 않는다 — 에이전트를 돌려 산출물을 만드는 쪽은 PB고,
           준법은 그걸 통과시키는 쪽이다(cfg.research와 같은 경계). */}
       {cfg.research && !modal && (
-        <button className="fab" onClick={() => setModal({ kind: 'f1' })}>
+        <button
+          className="fab"
+          /* 라벨이 제거되면서 접근 가능한 이름이 aria-hidden 이모지 하나만 남아 있었다
+             (HANDOFF §7). 버튼 모양을 손보는 김에 이름을 돌려준다. */
+          aria-label="종목 즉답 열기"
+          title="종목 즉답 (F1)"
+          onClick={() => setModal({ kind: 'f1' })}
+        >
           <span aria-hidden="true">💬</span>
         </button>
       )}

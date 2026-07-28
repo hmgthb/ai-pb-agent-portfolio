@@ -29,9 +29,17 @@ export const streamUrl = (stockCode: string, actor?: string) =>
   `${BASE}/api/research/stream?stock_code=${encodeURIComponent(stockCode)}` +
   (actor ? `&actor=${encodeURIComponent(actor)}` : '');
 
-export const chatStreamUrl = (q: string, session?: string | null) =>
+/** customerId를 붙이면 포트폴리오 질문(집중도·배분·성향 대비)까지 답한다. 안 붙이면
+ *  종목 질문만 답하는 예전 동작 그대로다(우하단 고정 버튼으로 여는 전역 F1이 그 경로).
+ *  ⚠️ id를 붙인다고 아무 고객이나 열리지 않는다 — 담당이 아니면 서버가 404다. */
+export const chatStreamUrl = (
+  q: string,
+  session?: string | null,
+  customerId?: number | null,
+) =>
   `${BASE}/api/chat/stream?q=${encodeURIComponent(q)}` +
-  (session ? `&session=${encodeURIComponent(session)}` : '');
+  (session ? `&session=${encodeURIComponent(session)}` : '') +
+  (customerId != null ? `&customer_id=${customerId}` : '');
 
 /** FastAPI의 에러 본문에서 사람이 읽을 메시지를 꺼낸다. 게이트 차단은 violations를 준다. */
 export function errorMessage(body: unknown, fallback = '처리에 실패했습니다.'): string {

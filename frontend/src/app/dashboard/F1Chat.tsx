@@ -13,37 +13,20 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { chatStreamUrl, fmtDate } from './api';
-import type { ChatAnswer, ChatRouting, NoteSource } from './types';
+import { chatStreamUrl } from './api';
+import type { ChatAnswer, ChatRouting } from './types';
+import { mergeSources, SourceBadge } from './sources';
 
 const AGENT_LABEL: Record<string, string> = {
   a1: '공시(a1)',
   a2: '재무(a2)',
   a4: '뉴스(a4)',
   krx: '시세(KRX)',
+  // 에이전트가 아니라 **코드 계산**이다 — 집중도·배분은 순수 함수가 내고 LLM은 문장만 쓴다.
+  // 배지에 그대로 적는 이유: "왜 이 답이 나왔나"를 화면이 말해야 하는데(감사 가능한 라우팅),
+  // 여기서만 도구 호출이 0건이라 진행 타임라인에 아무것도 안 뜬다.
+  portfolio: '보유·배분(계산)',
 };
-
-/** 문장 출처 배지 — 노트 모달과 같은 규칙(날짜 표기 포함)에 시세(krx)를 더한다. */
-function SrcBadge({ src }: { src: NoteSource | null }) {
-  if (!src) return <span className="sbadge un">UNSOURCED</span>;
-  if (src.type === 'dart')
-    return (
-      <span className="sbadge src" title={`rcpNo ${src.rcept_no}`}>
-        공시 {fmtDate(src.rcept_dt)}
-      </span>
-    );
-  if (src.type === 'krx')
-    return (
-      <span className="sbadge src" title={src.label}>
-        시세 {fmtDate(src.as_of)}
-      </span>
-    );
-  return (
-    <span className="sbadge src" title={src.url}>
-      뉴스 {fmtDate(src.pub_date)}
-    </span>
-  );
-}
 
 type Turn = {
   q: string;
@@ -63,12 +46,16 @@ export default function F1Chat({
   initial,
   prefill,
   compact,
+  customerId,
 }: {
   initial?: string;
   /** 마운트 뒤에도 입력창을 채우는 경로(고객 카드의 보유 종목 칩). */
   prefill?: ChatPrefill | null;
   /** 카드 안에 인라인으로 놓을 때. 모달용 큰 머리말·안내문을 접고 높이를 부모에 맞춘다. */
   compact?: boolean;
+  /** 붙이면 **포트폴리오 질문**까지 답한다(집중도·배분·성향 대비). 안 붙이면 종목 질문만.
+   *  전역 F1(우하단 고정 버튼)에는 고객이 없으므로 undefined로 열린다. */
+  customerId?: number;
 } = {}) {
   // 상담 준비 메모에서 종목을 눌러 열면 질문이 채워진 채로 시작한다. **보내지는 않는다** —
   // 실행은 크레딧을 쓰고 답변은 고객 앞에서 쓰일 수 있으니, 시작 버튼은 사람이 누른다.
@@ -105,7 +92,9 @@ export default function F1Chat({
     setInput('');
     setTurns((ts) => [...ts, { q, streaming: '', running: true }]);
 
-    const es = new EventSource(chatStreamUrl(q, sessionRef.current));
+    const es = new EventSource(
+      chatStreamUrl(q, sessionRef.current, customerId ?? null),
+    );
     esRef.current = es;
     let done = false;
 
@@ -217,13 +206,17 @@ export default function F1Chat({
                   {t.answer.sentences.map((s, j) => (
                     <div className="chat-sent" key={j}>
                       <span>{s.text}</span>
-                      {(s.sources?.length
-                        ? s.sources
-                        : s.source
-                          ? [s.source]
-                          : []
-                      ).map((src, k) => (
-                        <SrcBadge key={k} src={src} />
+                      {/* 같은 출처를 두 번 인용하면 배지도 두 개였다 — 하나로 묶고
+                          `×2`로 센다. **다른 출처끼리는 합치지 않는다**(합치면 한쪽
+                          링크가 사라져 가드레일 3 위반). */}
+                      {mergeSources(
+                        s.sources?.length
+                          ? s.sources
+                          : s.source
+                            ? [s.source]
+                            : [],
+                      ).map(({ src, count }, k) => (
+                        <SourceBadge key={k} src={src} count={count} />
                       ))}
                       {!s.source &&
                         !s.sources?.length &&
@@ -235,7 +228,7 @@ export default function F1Chat({
                             해석
                           </span>
                         ) : (
-                          <SrcBadge src={null} />
+                          <SourceBadge src={null} />
                         ))}
                     </div>
                   ))}
@@ -270,7 +263,11 @@ export default function F1Chat({
         <input
           className="search"
           placeholder={
-            compact ? '질문을 입력하세요.' : '최근 이 회사 실적 어때?'
+            compact
+              ? customerId != null
+                ? '종목·배분에 대해 질문하세요.'
+                : '질문을 입력하세요.'
+              : '최근 이 회사 실적 어때?'
           }
           value={input}
           disabled={running}

@@ -56,15 +56,21 @@ export type QueueItem = QueueNote | QueueChat;
 export type NoteSource =
   | { type: 'dart'; rcept_no: string; viewer_url: string; rcept_dt: string | null }
   | { type: 'news'; url: string; title: string; pub_date: string }
-  | { type: 'krx'; as_of: string; close: string; label: string };  // F1 시세 [^krx]
+  | { type: 'krx'; as_of: string; close: string; label: string }  // F1 시세 [^krx]
+  /** F1 포트폴리오 [^hold] — **유일하게 공개데이터가 아닌 출처**다(내부 계좌 보유데이터).
+   *  as_of가 null인 건 pb_customers에 스냅샷 시각 컬럼이 없어서다. 지어내지 않는다. */
+  | { type: 'holdings'; label: string; as_of: string | null };
 
 /** F1 대화형 Q&A — 라우팅 배지·답변 문장·고지. 백엔드 /api/chat/stream SSE와 짝. */
 export type ChatRouting = {
   entity_code: string | null;
   entity_name: string | null;
-  agent: 'a1' | 'a2' | 'a4' | 'krx' | null;
+  agent: 'a1' | 'a2' | 'a4' | 'krx' | 'portfolio' | null;
   intent: string | null;
   need_clarify: boolean;
+  /** 되묻는 사유. 'entity'=종목을 모른다 / 'intent'=종목은 아는데 무엇을 물었는지 모른다.
+   *  되물을 **문구는 백엔드가 만든다**(f1.clarify_text) — 여기서 다시 판단하면 갈라진다. */
+  clarify?: 'entity' | 'intent' | null;
   inherited: boolean;  // 멀티턴: 이전 턴 종목을 이어받았는가
   reason: string;
 };
