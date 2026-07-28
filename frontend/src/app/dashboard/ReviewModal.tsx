@@ -8,7 +8,7 @@
  */
 
 import { useState } from 'react';
-import { apiPost, errorMessage, fmtDate, fmtKRW, hhmm, detailStr } from './api';
+import { apiPost, errorMessage, fmtDate, fmtKRW, hhmm } from './api';
 import {
   ACK_REASONS,
   ACTOR,
@@ -286,47 +286,41 @@ export function NoteModal({
       <div className="m-meta">
         노트 #{current.id} · {people}
       </div>
-      <div className="wm">{WATERMARK}</div>
-      {res.blocked && <div className="vbox">⛔ {res.blocked}</div>}
-      {res.ok && <div className="okbox">✓ {res.ok}</div>}
-      {/* 심의 단계에서 "무엇이 남아서 막고 있는가"를 문장 목록 위에 먼저 말한다 —
-          발행 버튼을 눌러 409를 받고 나서야 아는 건 검토 화면이 할 일이 아니다. */}
-      {current.status === 'deliberation' && (
-        <div className={blocking ? 'ackbar' : 'ackbar done'}>
-          {blocking
-            ? `출처 없는 문장 ${blocking}개가 발행을 막고 있습니다. 각주를 붙일 수 없는 문장이면 사유를 골라 확인하세요.`
-            : '미인용 문장이 모두 확인되었습니다 — 발행할 수 있습니다.'}
-          {current.acks.length > 0 &&
-            ` (확인 ${current.acks.length}개, 감사로그에 기록됨)`}
-        </div>
-      )}
-      <SentenceRows
-        rows={body}
-        acks={current.acks}
-        canAck={canAck}
-        onAck={ack}
-      />
-      <ActionsRow
-        acts={actions}
-        onDone={async (r) => {
-          setRes(r);
-          const fresh = await onChanged();
-          if (fresh) setCurrent(fresh);
-        }}
-      />
-      <div className="m-audit">
-        <div className="alabel">감사로그 (append-only)</div>
-        {current.audit_log.map((a, i) => (
-          <div className="aitem" key={i}>
-            <span className="ats">{hhmm(a.ts)}</span>
-            <span className="aev">{a.event_type}</span>
-            <span className="adet">
-              {[a.actor && `actor: ${actorLabel(a.actor)}`, detailStr(a.detail)]
-                .filter(Boolean)
-                .join(' · ')}
-            </span>
+      {/* 여기부터가 스크롤 영역이다 — 위 두 줄(제목·×·메타)은 고정이라 긴 노트에서도
+          닫기 버튼이 사라지지 않는다. */}
+      <div className="m-body">
+        <div className="wm">{WATERMARK}</div>
+        {res.blocked && <div className="vbox">⛔ {res.blocked}</div>}
+        {res.ok && <div className="okbox">✓ {res.ok}</div>}
+        {/* 심의 단계에서 "무엇이 남아서 막고 있는가"를 문장 목록 위에 먼저 말한다 —
+            발행 버튼을 눌러 409를 받고 나서야 아는 건 검토 화면이 할 일이 아니다. */}
+        {current.status === 'deliberation' && (
+          <div className={blocking ? 'ackbar' : 'ackbar done'}>
+            {blocking
+              ? `출처 없는 문장 ${blocking}개가 발행을 막고 있습니다. 각주를 붙일 수 없는 문장이면 사유를 골라 확인하세요.`
+              : '미인용 문장이 모두 확인되었습니다 — 발행할 수 있습니다.'}
+            {current.acks.length > 0 &&
+              ` (확인 ${current.acks.length}개, 감사로그에 기록됨)`}
           </div>
-        ))}
+        )}
+        <SentenceRows
+          rows={body}
+          acks={current.acks}
+          canAck={canAck}
+          onAck={ack}
+        />
+        <ActionsRow
+          acts={actions}
+          onDone={async (r) => {
+            setRes(r);
+            const fresh = await onChanged();
+            if (fresh) setCurrent(fresh);
+          }}
+        />
+        {/* 감사로그는 여기 두지 않는다 — 준법 · 감시 탭의 감사로그 카드에서 노트별로
+            골라 본다(2026-07-28). 이 모달에 두면 화면 절반이 로그였고, 같은 원장이
+            두 곳에 나뉘어 있었다. 이 자리에 남는 이력 요약은 모달 머리말 한 줄이다
+            ("노트 #13 · 확인 PB · 심의 요청 PB · 발행 —"). */}
       </div>
     </>
   );
@@ -439,40 +433,43 @@ export function ChatModal({
           </>
         )}
       </div>
-      <div className="wm">
-        {WATERMARK} AI는 고객 회신을 대신 쓰지 않습니다 — 아래는 PB가 회신 전에
-        확인할 사실입니다.
-      </div>
-      {res.blocked && <div className="vbox">⛔ {res.blocked}</div>}
-      {res.ok && <div className="okbox">✓ {res.ok}</div>}
-      <div className="bubble q">
-        <div className="blabel">고객 질문</div>
-        {item.question}
-      </div>
-      <div className="bubble">
-        <div className="blabel">
-          회신 전 확인할 사실
-          <span className="src mock" style={{ marginLeft: 6 }}>
-            계좌는 시드 데이터 · 가상 고객
-          </span>
+      {/* 여기부터 스크롤 영역 — 위 두 줄(제목·×·계좌 메타)은 고정이다. */}
+      <div className="m-body">
+        <div className="wm">
+          {WATERMARK} AI는 고객 회신을 대신 쓰지 않습니다 — 아래는 PB가 회신 전에
+          확인할 사실입니다.
         </div>
-        <div className="srows">
-          {prepFacts(customer).map((s, i) => (
-            <div className="srow" key={i}>
-              <span className="stext">{s.text}</span>
-              <span className="spacer" style={{ flex: 1 }} />
-              {s.badge}
-            </div>
-          ))}
+        {res.blocked && <div className="vbox">⛔ {res.blocked}</div>}
+        {res.ok && <div className="okbox">✓ {res.ok}</div>}
+        <div className="bubble q">
+          <div className="blabel">고객 질문</div>
+          {item.question}
         </div>
+        <div className="bubble">
+          <div className="blabel">
+            회신 전 확인할 사실
+            <span className="src mock" style={{ marginLeft: 6 }}>
+              계좌는 시드 데이터 · 가상 고객
+            </span>
+          </div>
+          <div className="srows">
+            {prepFacts(customer).map((s, i) => (
+              <div className="srow" key={i}>
+                <span className="stext">{s.text}</span>
+                <span className="spacer" style={{ flex: 1 }} />
+                {s.badge}
+              </div>
+            ))}
+          </div>
+        </div>
+        <ActionsRow
+          acts={actions}
+          onDone={(r) => {
+            setRes(r);
+            onChanged();
+          }}
+        />
       </div>
-      <ActionsRow
-        acts={actions}
-        onDone={(r) => {
-          setRes(r);
-          onChanged();
-        }}
-      />
     </>
   );
 }

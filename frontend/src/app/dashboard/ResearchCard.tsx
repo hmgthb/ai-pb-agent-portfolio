@@ -101,7 +101,16 @@ export default function ResearchCard({
   const [news, setNews] = useState<NewsItem[]>([]);
   const [sources, setSources] = useState<SourceEvent[]>([]);
   const [noteText, setNoteText] = useState('');
-  const [msg, setMsg] = useState('');
+  /* 카드 하단 한 줄은 **다섯 가지가 나눠 쓴다** — 입력 검증 실패·실행 중 안내·생성 완료·
+     노트 미생성·없음. 종류를 안 붙이면 전부 같은 회색이라 경고가 경고로 안 읽힌다.
+     (그래서 문자열이 아니라 {kind, text}다. 색은 kind가 정한다.) */
+  const [msg, setMsg] = useState<{
+    kind: 'error' | 'info' | 'done';
+    text: string;
+  } | null>(null);
+  /* 입력칸의 오류 상태는 msg와 따로 둔다 — "노트가 생성되지 않았습니다"도 error지만
+     그건 입력 탓이 아니라서 입력칸을 빨갛게 만들면 안 된다. */
+  const [codeInvalid, setCodeInvalid] = useState(false);
   const [started, setStarted] = useState(false);
   // 실행이 끝난 뒤에만 빈 상태를 말한다 — 진행 중에 "뉴스 0건"을 띄우면 아직 안 온 것을
   // 없다고 단정하게 된다.
@@ -141,12 +150,20 @@ export default function ResearchCard({
     }
   }
 
+  /** 규칙을 읽어 주는 대신 **할 일과 지금 상태**를 말한다. 입력이 숫자만 받고 6자에서
+      잘리므로 실패 경우는 "덜 채움" 하나뿐이라, 남은 자릿수가 곧 안내가 된다. */
+  const shortMsg = (v: string) =>
+    `6자리를 모두 입력해 주세요 — 현재 ${v.length}자리`;
+
   function start() {
     if (running) return;
-    if (!/^\d{6}$/.test(code.trim())) {
-      setMsg('종목 코드는 6자리 숫자여야 합니다.');
+    const v = code.trim();
+    if (!/^\d{6}$/.test(v)) {
+      setCodeInvalid(true);
+      setMsg({ kind: 'error', text: shortMsg(v) });
       return;
     }
+    setCodeInvalid(false);
     setRun(true);
     setStarted(true);
     setSteps(IDLE);
@@ -157,7 +174,10 @@ export default function ResearchCard({
     setSources([]);
     setOutcome(null);
     setFailed('');
-    setMsg('에이전트를 실행하고 있습니다 — 완료까지 1~2분 걸립니다.');
+    setMsg({
+      kind: 'info',
+      text: '에이전트를 실행하고 있습니다 — 완료까지 1~2분 걸립니다.',
+    });
 
     const es = new EventSource(streamUrl(code.trim(), actor));
     esRef.current = es;
@@ -195,12 +215,14 @@ export default function ResearchCard({
       const d: NoteEvent = JSON.parse((e as MessageEvent).data);
       noteArrived = true;
       setCorp(d.corp_name);
-      setMsg(
-        `${d.corp_name}(${code.trim()}) 종목 노트 초안 생성 완료 — 처리 대기 큐에 올라갔습니다.` +
+      setMsg({
+        kind: 'done',
+        text:
+          `${d.corp_name}(${code.trim()}) 종목 노트 초안 생성 완료 — 처리 대기 큐에 올라갔습니다.` +
           (d.violations.length
             ? ` 게이트 지적 ${d.violations.length}건은 검토 화면에서 확인하세요.`
             : ''),
-      );
+      });
       onNoteCreated();
     });
 
@@ -233,13 +255,14 @@ export default function ResearchCard({
       );
       // 오류 배너가 이미 이유를 말하고 있으면 안내문을 겹쳐 띄우지 않는다.
       if (!noteArrived && !runErrored) {
-        setMsg(
-          d.outcome?.reasons.length
+        setMsg({
+          kind: 'error',
+          text: d.outcome?.reasons.length
             ? '노트가 생성되지 않았습니다 — 아래 사유를 확인하세요.'
             : '에이전트 실행은 끝났지만 노트가 생성되지 않았습니다 — 진행 단계에서 실패 지점을 확인하세요.',
-        );
+        });
       }
-      if (runErrored) setMsg('');
+      if (runErrored) setMsg(null);
     });
 
     es.onerror = () => {
@@ -250,7 +273,7 @@ export default function ResearchCard({
         setFailed(
           '스트림이 끊겼습니다 (백엔드에 연결할 수 없거나 실행 중 중단됨).',
         );
-        setMsg('');
+        setMsg(null);
       }
     };
   }
@@ -284,9 +307,25 @@ export default function ResearchCard({
           maxLength={6}
           placeholder="000000"
           aria-label="종목 코드"
+          /* 입력칸도 같이 오류 상태가 된다 — 메시지만 빨개지면 "무엇이" 잘못됐는지는
+             말하지 않는다. 테두리는 이 속성이 그대로 끌고 간다(dashboard.css). */
+          aria-invalid={codeInvalid || undefined}
+          aria-describedby={msg ? 'gen-msg' : undefined}
           value={code}
           disabled={running}
-          onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+          onChange={(e) => {
+            const v = e.target.value.replace(/\D/g, '');
+            setCode(v);
+            // 오류가 떠 있는 동안에는 남은 자릿수를 따라 고쳐 쓴다 — 한 자 칠 때마다
+            // 6에 가까워지는 게 보여야 하고, 다 채우면 경고가 스스로 사라진다.
+            if (!codeInvalid) return;
+            if (v.length === 6) {
+              setCodeInvalid(false);
+              setMsg(null);
+            } else {
+              setMsg({ kind: 'error', text: shortMsg(v) });
+            }
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') start();
           }}
@@ -442,9 +481,17 @@ export default function ResearchCard({
         </div>
       )}
 
+      {/* role은 종류에 따라 다르다 — 오류는 스크린리더를 끊고 즉시 읽어야 하지만(alert),
+          "실행 중"·"생성 완료"는 하던 읽기를 끊을 일이 아니다(status).
+          색만으로 경고를 말하지 않는다: ⚠를 같이 단다. */}
       {msg && (
-        <div className="hint" style={{ marginTop: 8 }}>
-          {msg}
+        <div
+          id="gen-msg"
+          className={`hint ${msg.kind}`}
+          role={msg.kind === 'error' ? 'alert' : 'status'}
+        >
+          {msg.kind === 'error' && <span aria-hidden="true">⚠ </span>}
+          {msg.text}
         </div>
       )}
     </section>

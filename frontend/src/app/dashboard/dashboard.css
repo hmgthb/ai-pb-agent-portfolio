@@ -45,8 +45,13 @@
      라벨이 같이 붙는다. 기호도 ▲가 아니다(수익률 옆에서 상승 화살표로 읽힌다). */
   --flag: #d03b3b;
   /* 큐·에이전트 분류 배지 — 강조 주황(=선택 상태)과 갈려야 한다. 청록은 주황의 보색. */
-  --chip-note: #9e4aa4;
-  --chip-chat: #52514e;
+  --chip-note: #643caf;
+  --chip-note-bg: #f3edfb;
+  --chip-chat: #1d4f91;
+  --chip-chat-bg: #e8eff9;
+  --pill-neutral: #6b7684;
+  --pill-delib: #3e63dd;
+  --pill-pending: #c2255c;
   /* 자산배분 도넛 — 범주형 색이 아니라 한 색조 4단계다(진할수록 위험자산).
      이유와 검증 수치는 charts.tsx의 도넛 주석에. */
   --alloc-1: #52c2ab;
@@ -79,8 +84,13 @@
     --mkt-up: #ff5252;
     --mkt-down: #5aa5ff;
     --flag: #d03b3b;
-    --chip-note: #d98fdf;
-    --chip-chat: #c3c2b7;
+    --chip-note: #9e7eec;
+    --chip-note-bg: #241b3d;
+    --chip-chat: #5e92da;
+    --chip-chat-bg: #132840;
+    --pill-neutral: #8692a0;
+    --pill-delib: #668cf3;
+    --pill-pending: #e56687;
     --alloc-1: #9fe3d3;
     --alloc-2: #4fc0a9;
     --alloc-3: #1a9a80;
@@ -110,8 +120,13 @@
   --mkt-up: #ff5252;
   --mkt-down: #5aa5ff;
   --flag: #d03b3b;
-  --chip-note: #d98fdf;
-  --chip-chat: #c3c2b7;
+  --chip-note: #9e7eec;
+  --chip-note-bg: #241b3d;
+  --chip-chat: #5e92da;
+  --chip-chat-bg: #132840;
+  --pill-neutral: #8692a0;
+  --pill-delib: #668cf3;
+  --pill-pending: #e56687;
   --alloc-1: #9fe3d3;
   --alloc-2: #4fc0a9;
   --alloc-3: #1a9a80;
@@ -141,8 +156,13 @@
   --mkt-up: #c62828;
   --mkt-down: #1257c4;
   --flag: #d03b3b;
-  --chip-note: #9e4aa4;
-  --chip-chat: #52514e;
+  --chip-note: #6f42c1;
+  --chip-note-bg: #f3edfb;
+  --chip-chat: #1d4f91;
+  --chip-chat-bg: #e8eff9;
+  --pill-neutral: #6b7684;
+  --pill-delib: #3e63dd;
+  --pill-pending: #c2255c;
   --alloc-1: #52c2ab;
   --alloc-2: #17957c;
   --alloc-3: #096b59;
@@ -702,20 +722,17 @@ tr:focus-visible,
   white-space: nowrap;
 }
 /* 큐 행의 종류 배지(종목 노트 / 고객 문의)와 노트 생성 카드의 에이전트 배지(a2 / a4).
-   **강조 주황을 쓰지 않는다** — 주황은 "지금 선택된 것"(필터 칩·탭 밑줄)이라서, 모든 행에
-   붙는 분류 배지가 같은 색이면 목록 전체가 선택된 것처럼 읽힌다.
-   ⚠️ **새 색조는 자주 하나뿐이다.** 색상환을 5° 간격으로 훑어 이미 쓰인 13색(주황 47°·적 25°·
-   앰버 78°·초록 143°·청록 175°(도넛)·하락 청 260°·보라 284°)과 재 보니 38개 색조 중 29개가
-   구분 기준선(ΔE 15) 아래였고, 살아남은 건 315~5°(자주) 구간뿐이다. 그래서 하나는 자주를 주고
-   다른 하나는 **무채색**(=--ink-2 값)으로 둔다 — 무채색은 색조를 안 쓰므로 무엇과도 겹칠 수 없다.
-   틴트가 10%인 이유: 12%면 자주 글자가 자기 배경 위에서 4.39:1로 본문 기준(4.5)에 못 미친다. */
+   **강조 주황을 쓰지 않는다** — 주황은 "지금 선택된 것"(필터 칩·탭 밑줄)이라, 모든 행에
+   붙는 분류 배지가 같은 색이면 목록 전체가 선택된 것처럼 읽힌다. 바로 위 필터 칩
+   (전체/종목 노트/고객 문의)은 주황 그대로다 — 그쪽은 실제로 선택 상태를 나타낸다.
+   글자·배경 모두 지정값이다(틴트 계산 아님). 다크는 같은 색상각의 밝은 단계 + 어두운 배경. */
 .chip.note {
   color: var(--chip-note);
-  background: color-mix(in srgb, var(--chip-note) 10%, transparent);
+  background: var(--chip-note-bg);
 }
 .chip.chat {
   color: var(--chip-chat);
-  background: color-mix(in srgb, var(--chip-chat) 10%, transparent);
+  background: var(--chip-chat-bg);
 }
 .qrow .title {
   font-weight: 600;
@@ -739,7 +756,9 @@ tr:focus-visible,
   padding: 1px 9px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  color: var(--ink-2);
+  /* 중립 상태(초안·발행완료·확인완료·보류됨)의 공통 색. 본문 --ink-2와 따로 두는 이유는
+     pill이 "지금 어느 단계인가"를 말하는 한 벌이라 본문 글자색과 같이 움직이면 안 돼서다. */
+  color: var(--pill-neutral);
   white-space: nowrap;
 }
 .pill.review {
@@ -747,8 +766,14 @@ tr:focus-visible,
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 .pill.delib {
-  color: var(--s5);
-  border-color: color-mix(in srgb, var(--s5) 40%, transparent);
+  color: var(--pill-delib);
+  border-color: color-mix(in srgb, var(--pill-delib) 40%, transparent);
+}
+/* 확인 대기(고객 문의)는 검토중(노트)과 **다른 단계다** — 원래 같은 `review` 클래스를 써서
+   색이 붙어 다녔다. types.ts::PILL에서 갈랐다. */
+.pill.pending {
+  color: var(--pill-pending);
+  border-color: color-mix(in srgb, var(--pill-pending) 40%, transparent);
 }
 .btn {
   font: inherit;
@@ -1297,6 +1322,23 @@ th.rownum {
   word-break: break-word;
 }
 /* 페이지 넘김 — 감사로그는 최근 200건을 20건씩 나눠 본다. */
+/* 감사로그 카드 머리말의 노트별 선택. 오른쪽 끝으로 밀어 제목·건수와 안 붙게 한다. */
+.alog-pick {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.alog-pick select {
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  max-width: 260px;
+}
 .apage {
   display: flex;
   align-items: center;
@@ -1353,8 +1395,29 @@ th.rownum {
   color: var(--muted);
   font-size: 12px;
 }
+/* 노트 생성 카드 하단의 한 줄 — 다섯 상태가 이 자리를 나눠 쓴다(입력 검증 실패·실행 중
+   안내·생성 완료·노트 미생성·없음). 원래 `.hint` 클래스만 붙어 있었는데 **`.hint`에는
+   기본 규칙이 아예 없어서**, 다섯 개가 전부 본문과 똑같은 검정 한 줄로 나왔다 —
+   경고가 경고로 안 읽힌 원인이다. 여기서 종류별로 가른다.
+   색만으로 말하지 않는다: 오류에는 ⚠를 같이 단다(색각 이상에서 색은 안 걸린다). */
 #gen-msg {
   margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+#gen-msg.error {
+  color: var(--critical);
+  font-weight: 600;
+}
+#gen-msg.done {
+  color: var(--good-text);
+}
+/* 입력칸도 같이 오류 상태가 된다 — 메시지만 빨개지면 "무엇이" 잘못됐는지는 말하지 않는다.
+   클래스가 아니라 aria-invalid가 모양을 끌고 간다: 보조기술에 알리는 것과 화면에 보이는
+   것이 **같은 하나의 상태**여야 한쪽만 켜지는 일이 없다. */
+.search[aria-invalid='true'] {
+  border-color: var(--critical);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--critical) 18%, transparent);
 }
 @media (prefers-reduced-motion: no-preference) {
   .step.run {
@@ -1368,16 +1431,20 @@ th.rownum {
 }
 
 /* ── 검토 모달 ──────────────────────────── */
+/* 모달은 화면 **중앙에 고정**하고, 넘치는 내용은 모달 **안에서** 스크롤한다.
+   예전에는 overlay가 스크롤을 맡고 모달은 위(flex-start)에 붙어 있었다 — 노트가 길면
+   상자 자체가 아래로 자라 화면 밖으로 나갔고, 스크롤은 페이지 전체가 움직이는 것처럼
+   느껴졌다. 이제 바깥은 안 움직인다(overflow: hidden). */
 #overlay {
   position: fixed;
   inset: 0;
   z-index: 5;
   background: rgba(0, 0, 0, 0.42);
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding: 6vh 16px;
-  overflow-y: auto;
+  padding: 24px 16px;
+  overflow: hidden;
 }
 #overlay[hidden] {
   display: none;
@@ -1390,11 +1457,26 @@ th.rownum {
   width: 100%;
   max-width: 720px;
   min-width: 0;
+  /* 머리말은 고정, 본문(.m-body)만 스크롤 — 그래서 기둥(column)이다.
+     dvh는 모바일 주소창이 접혔다 펴져도 높이가 안 튀게 한다. 미지원 브라우저는 위 줄로
+     떨어진다(선언 두 개를 겹쳐 두는 이유). */
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
+  /* .m-body가 없는 모달(F1 채팅)을 위한 폴백 — 그쪽은 상자째 스크롤한다. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
+/* 제목·상태·닫기(×)와 그 아래 메타 줄은 **스크롤 밖**이다 — 긴 노트에서 ×가 위로
+   사라지면 닫는 방법이 배경 클릭뿐이 된다(이 모달은 Esc로도 안 닫힌다).
+   sticky로도 해 봤지만 상자 안쪽 여백(padding) 구간을 문장이 스쳐 지나가서, 아예
+   스크롤 영역 밖으로 뺐다. flex-shrink: 0이 없으면 본문에 밀려 이 줄이 찌그러진다. */
 .m-head {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-shrink: 0;
 }
 .m-head h3 {
   margin: 0;
@@ -1421,6 +1503,20 @@ th.rownum {
   font-size: 12px;
   color: var(--muted);
   margin-top: 2px;
+  flex-shrink: 0;
+}
+/* 모달에서 실제로 스크롤되는 부분. 여기 위(머리말·메타)는 고정이다.
+   ⚠️ min-height: 0이 없으면 flex 자식이 자기 내용보다 안 줄어들어, 상자가 max-height를
+   넘겨 화면 밖으로 자란다(스크롤이 안 생긴다).
+   ⚠️ flex-grow는 주지 않는다 — 이 상자는 높이가 auto(내용에 맞음)라 늘릴 여백 자체가
+   없고, 짧은 노트에서 본문이 0으로 접힌다. 줄어들기만 하면 된다.
+   좌우·아래 여백을 상쇄해 스크롤바가 상자 안쪽 끝에 붙게 한다. */
+.m-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+  margin: 0 -20px -20px;
+  padding: 0 20px 20px;
 }
 .wm {
   background: color-mix(in srgb, var(--warning) 13%, transparent);
@@ -1569,18 +1665,6 @@ th.rownum {
 }
 .btn[disabled]:hover {
   background: transparent;
-}
-.m-audit {
-  margin-top: 16px;
-  border-top: 1px solid var(--grid);
-  padding-top: 8px;
-}
-.m-audit .alabel {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--muted);
-  letter-spacing: 0.04em;
-  margin-bottom: 2px;
 }
 #toast {
   position: fixed;

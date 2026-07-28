@@ -204,7 +204,9 @@ export const PILL: Record<string, [label: string, cls: string]> = {
   draft: ['초안', ''],
   review: ['검토중', 'review'],
   deliberation: ['심의중', 'delib'],
-  pending: ['확인 대기', 'review'],
+  // 확인 대기(고객 문의)는 검토중(노트)과 다른 단계라 클래스를 따로 쓴다 —
+  // 같은 'review'를 쓰던 동안 두 상태가 같은 색으로 붙어 다녔다.
+  pending: ['확인 대기', 'pending'],
   published: ['발행완료', ''],
   // 상담 세션의 done은 "AI가 고객에게 보냈다"가 아니라 "PB가 확인을 끝냈다"는 뜻이다 —
   // 회신은 사람이 직접 쓴다(대상 사용자 = PB).

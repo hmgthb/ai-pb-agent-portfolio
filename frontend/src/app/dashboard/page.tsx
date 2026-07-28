@@ -114,6 +114,9 @@ type Data = {
   customers: Customer[];
   queue: QueueItem[];
   notes: Record<string, NoteDetail>;
+  /** 노트 전건 색인(id 내림차순). notes는 종목별 최신 1건만 담아서 감사로그 필터를
+   *  못 만든다 — 같은 종목의 옛 노트(예: 기아 #8)가 키에서 밀려나기 때문이다. */
+  noteList: NoteIndex[];
   summary: Summary;
   audit: DashboardAudit[];
   agents: AgentCalls[];
@@ -267,6 +270,12 @@ export default function DashboardPage() {
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<'all' | 'note' | 'chat'>('all');
   const [auditPage, setAuditPage] = useState(0);
+  /** 감사로그를 노트 한 건으로 좁힌다(null = 전체 최근 200건).
+   *  노트를 고르면 **그 노트의 전건**을 따로 받는다 — 전체 목록은 최근 200건 창인데
+   *  감사로그의 87%가 도구 호출이라, 노트 13건 중 9건은 그 창 안에 한 줄도 없다.
+   *  (원장 자체는 append-only로 전건 보존이고, 못 보던 건 화면의 창이었다.) */
+  const [auditNote, setAuditNote] = useState<number | null>(null);
+  const [noteAudit, setNoteAudit] = useState<DashboardAudit[]>([]);
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [modal, setModal] = useState<
@@ -364,6 +373,7 @@ export default function DashboardPage() {
         customers,
         queue,
         notes,
+        noteList: noteIndex,
         summary,
         audit,
         agents,
@@ -382,6 +392,20 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- 마운트 시 데이터 로딩
     void load();
   }, [load]);
+
+  /* 노트를 고르면 그 노트의 전건을 따로 받아 온다. 전체 목록(data.audit)과 합치지
+     않는다 — 한쪽은 최근 200건 "창"이고 한쪽은 "전건"이라, 섞으면 지금 무엇을 보고
+     있는지가 흐려진다. 화면도 둘 중 하나만 그린다. */
+  useEffect(() => {
+    if (auditNote === null) return;
+    let alive = true;
+    api<DashboardAudit[]>(`/api/dashboard/audit?note_id=${auditNote}`)
+      .then((rows) => alive && setNoteAudit(rows))
+      .catch(() => alive && setNoteAudit([]));
+    return () => {
+      alive = false;
+    };
+  }, [auditNote]);
 
   const cfg = ROLES[role];
 
@@ -1296,18 +1320,43 @@ export default function DashboardPage() {
         <section className="card" aria-labelledby="a-title">
           <div className="card-head">
             <h2 id="a-title">
-              감사로그 <span className="hint">최근 {data.audit.length}건</span>
+              감사로그{' '}
+              <span className="hint">
+                {auditNote === null
+                  ? `최근 ${data.audit.length}건`
+                  : `노트 #${auditNote} 전건 ${noteAudit.length}건`}
+              </span>
             </h2>
+            {/* 노트별 조회 — 전체 목록은 최근 200건 창이라 옛 노트의 확인·심의 이력을
+                여기서 찾을 수 없었다(노트 13건 중 9건이 창 밖). 검토 모달에 있던
+                감사로그를 이리로 모으면서 같이 넣었다. */}
+            <label className="alog-pick">
+              <span className="hint">노트별</span>
+              <select
+                value={auditNote ?? ''}
+                onChange={(e) => {
+                  setAuditNote(e.target.value ? Number(e.target.value) : null);
+                  setAuditPage(0);
+                }}
+                aria-label="감사로그를 노트 한 건으로 좁히기"
+              >
+                <option value="">전체 (최근 200건)</option>
+                {data.noteList.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    #{n.id} {n.corp_name}({n.stock_code}) ·{' '}
+                    {PILL[n.status]?.[0] ?? n.status}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
           {(() => {
-            // 최근 200건을 20건씩 넘겨 본다(클라이언트 페이징). page는 데이터가 줄어도
-            // 범위를 벗어나지 않게 클램프한다.
-            const pages = Math.max(
-              1,
-              Math.ceil(data.audit.length / AUDIT_PAGE),
-            );
+            // 전체는 최근 200건 창, 노트별은 전건. 20건씩 넘겨 본다(클라이언트 페이징).
+            // page는 데이터가 줄어도 범위를 벗어나지 않게 클램프한다.
+            const rows = auditNote === null ? data.audit : noteAudit;
+            const pages = Math.max(1, Math.ceil(rows.length / AUDIT_PAGE));
             const page = Math.min(auditPage, pages - 1);
-            const shown = data.audit.slice(
+            const shown = rows.slice(
               page * AUDIT_PAGE,
               (page + 1) * AUDIT_PAGE,
             );
@@ -1349,8 +1398,8 @@ export default function DashboardPage() {
                     </button>
                     <span className="apage-info">
                       {page * AUDIT_PAGE + 1}–
-                      {Math.min((page + 1) * AUDIT_PAGE, data.audit.length)} /{' '}
-                      {data.audit.length}건
+                      {Math.min((page + 1) * AUDIT_PAGE, rows.length)} /{' '}
+                      {rows.length}건
                     </span>
                     <button
                       className="btn"

@@ -1162,7 +1162,22 @@ async def dashboard_agents():
 
 
 @app.get("/api/dashboard/audit")
-async def dashboard_audit(limit: int = Query(30, ge=1, le=200)):
+async def dashboard_audit(
+    limit: int = Query(30, ge=1, le=200),
+    note_id: int | None = Query(None, ge=1),
+):
+    """전체 최근 N건, 또는 특정 노트의 **전건**.
+
+    노트를 지정하면 limit을 적용하지 않는다 — 최근 N건 창으로는 옛 노트를 못 찾기
+    때문이다. 감사로그의 대부분이 도구 호출 흔적이라(tool_use_start/end가 87%) 창이
+    그것으로 다 차고, 노트 생명주기 이벤트는 금방 창 밖으로 밀린다. 노트별 조회는
+    그 이벤트만 남으므로(도구 호출 행은 note_id가 NULL) 건수가 애초에 작다.
+    """
+    rows = (
+        list(reversed(await db.get_audit_log(note_id)))  # 화면은 최신이 위
+        if note_id is not None
+        else await db.recent_audit(limit)
+    )
     return [
         {
             "id": r["id"],
@@ -1172,7 +1187,7 @@ async def dashboard_audit(limit: int = Query(30, ge=1, le=200)):
             "actor": r["actor"],
             "detail": json.loads(r["detail"]),
         }
-        for r in await db.recent_audit(limit)
+        for r in rows
     ]
 
 

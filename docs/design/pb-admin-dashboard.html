@@ -37,8 +37,13 @@
        형태로 갈린다: 저쪽은 빨간 숫자, 이쪽은 빨간 테두리 알약. */
     --flag: #d03b3b;
     /* 큐·에이전트 분류 배지 — 강조 주황(=선택 상태)과 갈려야 한다. 청록은 주황의 보색. */
-    --chip-note: #9e4aa4;
-    --chip-chat: #52514e;
+    --chip-note: #6f42c1;
+    --chip-note-bg: #f3edfb;
+    --chip-chat: #1d4f91;
+    --chip-chat-bg: #e8eff9;
+    --pill-neutral: #6b7684;
+    --pill-delib: #3e63dd;
+    --pill-pending: #c2255c;
     /* 자산배분 도넛 — 범주형 4색이 아니라 한 색조 4단계(진할수록 위험자산). */
     --alloc-1: #52c2ab;
     --alloc-2: #17957c;
@@ -69,8 +74,13 @@
       --mkt-up: #ff5252;
       --mkt-down: #5aa5ff;
       --flag: #d03b3b;
-      --chip-note: #d98fdf;
-      --chip-chat: #c3c2b7;
+      --chip-note: #9e7eec;
+      --chip-note-bg: #241b3d;
+      --chip-chat: #5e92da;
+      --chip-chat-bg: #132840;
+      --pill-neutral: #8692a0;
+      --pill-delib: #668cf3;
+      --pill-pending: #e56687;
       --alloc-1: #9fe3d3;
       --alloc-2: #4fc0a9;
       --alloc-3: #1a9a80;
@@ -100,8 +110,13 @@
     --mkt-up: #ff5252;
     --mkt-down: #5aa5ff;
     --flag: #d03b3b;
-    --chip-note: #d98fdf;
-    --chip-chat: #c3c2b7;
+    --chip-note: #9e7eec;
+    --chip-note-bg: #241b3d;
+    --chip-chat: #5e92da;
+    --chip-chat-bg: #132840;
+    --pill-neutral: #8692a0;
+    --pill-delib: #668cf3;
+    --pill-pending: #e56687;
     --alloc-1: #9fe3d3;
     --alloc-2: #4fc0a9;
     --alloc-3: #1a9a80;
@@ -131,8 +146,13 @@
     --mkt-up: #c62828;
     --mkt-down: #1257c4;
     --flag: #d03b3b;
-    --chip-note: #9e4aa4;
-    --chip-chat: #52514e;
+    --chip-note: #6f42c1;
+    --chip-note-bg: #f3edfb;
+    --chip-chat: #1d4f91;
+    --chip-chat-bg: #e8eff9;
+    --pill-neutral: #6b7684;
+    --pill-delib: #3e63dd;
+    --pill-pending: #c2255c;
     --alloc-1: #52c2ab;
     --alloc-2: #17957c;
     --alloc-3: #096b59;
@@ -304,17 +324,20 @@
   }
   /* 분류 배지는 강조 주황을 안 쓴다 — 주황은 "지금 선택된 것"이라, 모든 행에 붙는 배지가
      같은 색이면 전부 선택된 것처럼 보인다. 청록은 주황의 보색. */
-  .chip.note { color: var(--chip-note); background: color-mix(in srgb, var(--chip-note) 10%, transparent); }
-  .chip.chat { color: var(--chip-chat); background: color-mix(in srgb, var(--chip-chat) 10%, transparent); }
+  .chip.note { color: var(--chip-note); background: var(--chip-note-bg); }
+  .chip.chat { color: var(--chip-chat); background: var(--chip-chat-bg); }
   .qrow .title { font-weight: 600; font-size: 13.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .qrow .meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
   .qrow .spacer { flex: 1; }
   .pill {
     font-size: 11px; font-weight: 600; padding: 1px 9px; border-radius: 999px;
-    border: 1px solid var(--border); color: var(--ink-2); white-space: nowrap;
+    /* 중립 상태(초안·발행완료·확인완료·보류됨) 공통색 — 본문 --ink-2와 따로 둔다. */
+    border: 1px solid var(--border); color: var(--pill-neutral); white-space: nowrap;
   }
   .pill.review { color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
-  .pill.delib { color: var(--s5); border-color: color-mix(in srgb, var(--s5) 40%, transparent); }
+  .pill.delib { color: var(--pill-delib); border-color: color-mix(in srgb, var(--pill-delib) 40%, transparent); }
+  /* 확인 대기(고객 문의)는 검토중(노트)과 다른 단계 — 원래 같은 review 클래스라 색이 붙어 다녔다. */
+  .pill.pending { color: var(--pill-pending); border-color: color-mix(in srgb, var(--pill-pending) 40%, transparent); }
   .btn {
     font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
     padding: 4px 12px; border-radius: 8px; border: 1px solid var(--border);
@@ -427,7 +450,18 @@
   .step.done { color: var(--good-text); border-color: color-mix(in srgb, var(--good) 50%, transparent); }
   .step.fail { color: #fff; background: var(--critical); border-color: transparent; }
   .steps .sep { color: var(--muted); font-size: 12px; }
-  #gen-msg { margin-top: 8px; }
+  /* 노트 생성 카드 하단 한 줄 — 다섯 상태가 이 자리를 나눠 쓴다(검증 실패·실행 중·완료·
+     미생성·없음). `.hint`에는 기본 규칙이 없어 전부 본문과 같은 검정으로 나왔다.
+     색만으로 말하지 않는다: 오류에는 ⚠를 같이 단다. */
+  #gen-msg { margin-top: 8px; font-size: 12.5px; color: var(--ink-2); }
+  #gen-msg.error { color: var(--critical); font-weight: 600; }
+  #gen-msg.done { color: var(--good-text); }
+  /* 입력칸도 같이 오류 상태 — 메시지만 빨개지면 "무엇이" 잘못됐는지는 말하지 않는다.
+     클래스가 아니라 aria-invalid가 모양을 끌고 간다(보조기술과 화면이 같은 상태). */
+  .search[aria-invalid="true"] {
+    border-color: var(--critical);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--critical) 18%, transparent);
+  }
   @media (prefers-reduced-motion: no-preference) {
     .step.run { animation: pulse 1.2s ease-in-out infinite; }
     @keyframes pulse { 50% { opacity: 0.5; } }
@@ -435,24 +469,36 @@
 
   /* ── 검토 모달 ──────────────────────────── */
   #overlay {
-    position: fixed; inset: 0; z-index: 5;
-    background: rgba(0, 0, 0, 0.42);
-    display: flex; align-items: flex-start; justify-content: center;
-    padding: 6vh 16px; overflow-y: auto;
+    position: fixed; inset: 0; z-index: 5; background: rgba(0,0,0,0.42);
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px 16px; overflow: hidden;
   }
   #overlay[hidden] { display: none; }
+  /* 머리말은 고정, 본문(.m-body)만 스크롤 — 그래서 기둥(column)이다.
+     예전엔 상자가 아래로 자라 화면 밖으로 나갔다. */
   .modal {
     background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
     padding: 20px; width: 100%; max-width: 720px; min-width: 0;
+    display: flex; flex-direction: column;
+    max-height: calc(100vh - 48px);
+    max-height: calc(100dvh - 48px);
+    overflow-y: auto; overscroll-behavior: contain;   /* .m-body 없는 모달용 폴백 */
   }
-  .m-head { display: flex; align-items: center; gap: 10px; }
+  /* 제목·×와 메타 줄은 스크롤 밖 — 긴 노트에서 ×가 사라지면 닫는 길이 배경 클릭뿐이다. */
+  .m-head { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+  /* 실제로 스크롤되는 부분. min-height: 0이 없으면 flex 자식이 안 줄어들어 상자가
+     max-height를 넘겨 자란다. flex-grow는 주지 않는다(높이가 auto라 늘릴 여백이 없다). */
+  .m-body {
+    overflow-y: auto; overscroll-behavior: contain; min-height: 0;
+    margin: 0 -20px -20px; padding: 0 20px 20px;
+  }
   .m-head h3 { margin: 0; font-size: 16px; letter-spacing: -0.01em; }
   .m-close {
     margin-left: auto; font: inherit; font-size: 18px; line-height: 1; cursor: pointer;
     border: 0; background: transparent; color: var(--muted); padding: 4px 8px; border-radius: 6px;
   }
   .m-close:hover { color: var(--ink); background: var(--accent-soft); }
-  .m-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .m-meta { font-size: 12px; color: var(--muted); margin-top: 2px; flex-shrink: 0; }
   .wm {
     background: color-mix(in srgb, var(--warning) 13%, transparent);
     border: 1px solid var(--border); border-radius: 8px;
@@ -488,8 +534,6 @@
   .btn.danger { color: var(--critical); }
   .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
   .btn[disabled]:hover { background: transparent; }
-  .m-audit { margin-top: 16px; border-top: 1px solid var(--grid); padding-top: 8px; }
-  .m-audit .alabel { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em; margin-bottom: 2px; }
   #toast {
     position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 6;
     background: var(--ink); color: var(--page);
@@ -974,7 +1018,7 @@ function sparkline(data, w = 64, h = 22) {
 
 /* ── 승인 대기 큐 ─────────────────────────────────────────── */
 const PILL = {
-  draft: ['초안', ''], review: ['검토중', 'review'], delib: ['심의중', 'delib'], pending: ['승인 대기', 'review'],
+  draft: ['초안', ''], review: ['검토중', 'review'], delib: ['심의중', 'delib'], pending: ['승인 대기', 'pending'],
   published: ['발행완료', ''], done: ['전송완료', ''], rejected: ['반려됨', ''],
 };
 let currentTypeFilter = 'all';
@@ -1273,8 +1317,8 @@ function badge(src) {
 }
 const sentenceRows = (sentences) =>
   `<div class="srows">${sentences.map((s) => `<div class="srow"><span class="stext">${esc(s.text)}</span><span class="spacer" style="flex:1"></span>${badge(s.src)}</div>`).join('')}</div>`;
-const auditRows = (audit) =>
-  `<div class="m-audit"><div class="alabel">감사로그 (append-only)</div>${audit.map(([ts, ev, det]) => `<div class="aitem"><span class="ats">${ts}</span><span class="aev">${ev}</span><span class="adet">${esc(det)}</span></div>`).join('')}</div>`;
+// 감사로그는 모달에 두지 않는다 — 준법 · 감시 탭의 감사로그 카드에서 노트별로 골라 본다
+// (2026-07-28). 모달에 두면 화면 절반이 로그였고, 같은 원장이 두 곳에 나뉘어 있었다.
 const actionsRow = (acts) =>
   `<div class="m-actions">${acts.map((a, i) => `<button class="btn ${a.danger ? 'danger' : 'primary'}" data-act="${i}" ${a.ok ? '' : 'disabled'}>${a.label}</button>${a.ok ? '' : `<span class="hint">🔒 ${a.deny}</span>`}`).join('')}</div>`;
 function bindActions(acts, rerender) {
@@ -1340,12 +1384,13 @@ function renderNoteModal(note, res = {}) {
     <div class="m-head"><h3>${esc(note.corp)}(${note.code}) 실적·공시 노트</h3><span class="pill ${cls}">${label}</span>
       <button class="m-close" aria-label="닫기">×</button></div>
     <div class="m-meta">노트 #${note.id} · ${people}</div>
-    <div class="wm">${WATERMARK}</div>
-    ${res.blocked ? `<div class="vbox">⛔ ${res.blocked}</div>` : ''}
-    ${res.ok ? `<div class="okbox">✓ ${res.ok}</div>` : ''}
-    ${sentenceRows(note.sentences)}
-    ${acts.length ? actionsRow(acts) : ''}
-    ${auditRows(note.audit)}`;
+    <div class="m-body">
+      <div class="wm">${WATERMARK}</div>
+      ${res.blocked ? `<div class="vbox">⛔ ${res.blocked}</div>` : ''}
+      ${res.ok ? `<div class="okbox">✓ ${res.ok}</div>` : ''}
+      ${sentenceRows(note.sentences)}
+      ${acts.length ? actionsRow(acts) : ''}
+    </div>`;
   $('.m-close').addEventListener('click', closeModal);
   // hydrate()가 NOTES를 통째로 갈아끼우므로, 다시 그릴 때는 최신 객체로 조회한다.
   bindActions(acts, (r) => renderNoteModal(NOTES[note.code] ?? note, r));
@@ -1385,12 +1430,14 @@ function renderChatModal(it, res = {}) {
     <div class="m-head"><h3>상담 답변 검토 — ${esc(c.name)}</h3><span class="pill ${PILL[itemStatus(it)][1]}">${PILL[itemStatus(it)][0]}</span>
       <button class="m-close" aria-label="닫기">×</button></div>
     <div class="m-meta">${c.acct} · ${c.age}세 · ${RISK[c.risk]} · 잔고 ₩${fmtKRW(c.balance)} · 담당 ${c.pb}${c.flag ? ` · <span class="flag">⚑ 위험 플래그</span> ${esc(c.flagReasons.map((r) => r.text).join(' · '))}` : ''}</div>
-    <div class="wm">${WATERMARK} 승인 전에는 고객에게 전송되지 않습니다.</div>
-    ${res.blocked ? `<div class="vbox">⛔ ${res.blocked}</div>` : ''}
-    ${res.ok ? `<div class="okbox">✓ ${res.ok}</div>` : ''}
-    <div class="bubble q"><div class="blabel">고객 질문</div>${esc(it.question)}</div>
-    <div class="bubble"><div class="blabel">AI 답변 초안 (a1·a2·a4 조회 근거)</div>${sentenceRows(chatDraft(it))}</div>
-    ${acts.length ? actionsRow(acts) : ''}`;
+    <div class="m-body">
+      <div class="wm">${WATERMARK} 승인 전에는 고객에게 전송되지 않습니다.</div>
+      ${res.blocked ? `<div class="vbox">⛔ ${res.blocked}</div>` : ''}
+      ${res.ok ? `<div class="okbox">✓ ${res.ok}</div>` : ''}
+      <div class="bubble q"><div class="blabel">고객 질문</div>${esc(it.question)}</div>
+      <div class="bubble"><div class="blabel">AI 답변 초안 (a1·a2·a4 조회 근거)</div>${sentenceRows(chatDraft(it))}</div>
+      ${acts.length ? actionsRow(acts) : ''}
+    </div>`;
   $('.m-close').addEventListener('click', closeModal);
   bindActions(acts, (r) => renderChatModal(it, r));
 }
@@ -1423,10 +1470,22 @@ $('#run-research').addEventListener('click', () => {
   if (genRunning) return;
   const code = $('#code-input').value.trim();
   const msg = $('#gen-msg');
-  if (!/^\d{6}$/.test(code)) { msg.textContent = '종목코드는 6자리 숫자여야 합니다.'; return; }
-  if (NOTES[code]) { msg.textContent = `이미 이 종목의 노트가 큐/이력에 있습니다 (${NOTES[code].corp}).`; return; }
+  const input = $('#code-input');
+  // 종류(kind)를 같이 준다 — 색·role·아이콘이 여기서 갈린다.
+  const setMsg = (kind, text) => {
+    msg.className = 'hint' + (kind ? ' ' + kind : '');
+    msg.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+    msg.textContent = (kind === 'error' ? '⚠ ' : '') + (text || '');
+  };
+  if (!/^\d{6}$/.test(code)) {
+    input.setAttribute('aria-invalid', 'true');
+    setMsg('error', `6자리를 모두 입력해 주세요 — 현재 ${code.length}자리`);
+    return;
+  }
+  input.removeAttribute('aria-invalid');
+  if (NOTES[code]) { setMsg('error', `이미 이 종목의 노트가 큐/이력에 있습니다 (${NOTES[code].corp}).`); return; }
   genRunning = true;
-  msg.textContent = '';
+  setMsg('info', '에이전트를 실행하고 있습니다 — 완료까지 1~2분 걸립니다.');
   $('#gen-steps').hidden = false;
   const corp = DEMO_CORPS[code];
   const state = { a1: 'run' };
@@ -1434,7 +1493,7 @@ $('#run-research').addEventListener('click', () => {
   setTimeout(() => {
     if (!corp) {
       state.a1 = 'fail'; renderSteps(state);
-      msg.textContent = 'a1이 DART에서 법인을 확인하지 못했습니다 — 종목코드를 확인하세요. (시안은 데모 5종목만 지원)';
+      setMsg('error', 'a1이 DART에서 법인을 확인하지 못했습니다 — 종목 코드를 확인하세요. (시안은 데모 5종목만 지원)');
       genRunning = false;
       return;
     }
@@ -1450,7 +1509,7 @@ $('#run-research').addEventListener('click', () => {
       };
       queueItems.unshift({ type: 'note', code, age: '방금' });
       refresh();
-      msg.textContent = `${corp}(${code}) 노트 초안 생성 완료 — 승인 대기 큐에 올라갔습니다.`;
+      setMsg('done', `${corp}(${code}) 노트 초안 생성 완료 — 승인 대기 큐에 올라갔습니다.`);
       toast(`${corp} 노트 초안이 승인 대기에 추가되었습니다`);
       genRunning = false;
     }, 2100);
