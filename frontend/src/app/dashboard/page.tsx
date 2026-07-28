@@ -28,6 +28,7 @@ import {
   bizDay,
   detailStr,
   fmtDate,
+  fmtDateTime,
   fmtKRW,
   fmtPct,
   hhmm,
@@ -224,6 +225,11 @@ const AUDIT_CAT: Record<string, AuditCat> = {
   ack_removed: 'human',
   session_approved: 'human',
   session_rejected: 'human',
+  // 거절 2종도 사람의 판단이다 — 게이트 차단(block)과 **같은 칸에 두지 않는다**.
+  // 저건 기계가 막은 것이고 이건 사람이 안 된다고 한 것이라, 색이 같으면 감사로그에서
+  // "AI가 막힌 건수"를 셀 때 사람 판단이 섞인다.
+  deliberation_rejected: 'human',
+  note_discarded: 'human',
   brief_created: 'tool',
   chat_answered: 'tool',
   tool_use_start: 'tool',
@@ -236,9 +242,11 @@ function auditCat(a: DashboardAudit): AuditCat {
       : 'tool';
   return AUDIT_CAT[a.event_type] ?? 'tool';
 }
-/** 감사로그 행의 "언제" — 시간만 있으면 언제적인지 모른다. KST 날짜(M/D)+시각. */
-const auditWhen = (iso: string) =>
-  `${fmtDate(iso).slice(5).replace('-', '/')} ${hhmm(iso)}`;
+/** 감사로그 행의 "언제" — `7/28 15:31`. 행이 수백 개라 연도를 뗀다(전부 최근 것이다).
+ *  연도까지 필요한 자리("AI가 오늘 한 일"의 마지막 실행)는 `fmtDateTime`을 그대로 쓴다.
+ *  ⚠️ 날짜·시각 조립은 `api.ts::fmtDateTime` 한 곳뿐이어야 한다 — 화면마다 잘라 쓰다
+ *     `뉴스 Wed, 22 Ju`가 사용자에게 나간 적이 있고, 날짜를 UTC로 찍는 사고도 있었다. */
+const whenLabel = (iso: string) => fmtDateTime(iso).slice(5).replace('-', '/');
 const AUDIT_PAGE = 20;
 
 /* ── 상담 준비 메모 ───────────────────────────────────────────
@@ -434,7 +442,12 @@ export default function DashboardPage() {
       // (덮어쓰면 같은 종목의 옛 노트가 이기고, 그게 예전 동작이었다).
       const notes: Record<string, NoteDetail> = {};
       details.forEach((d) => {
-        if (d && !notes[d.stock_code]) notes[d.stock_code] = d;
+        // ⚠️ 보류된 노트는 **상담 재료가 아니다** — PB가 직접 버린 물건이다.
+        //    거르지 않으면 같은 종목의 옛 발행분을 이 최신 1건이 덮어, 상담 준비 메모에서
+        //    "PB가 상담에 실제로 써도 되는 유일한 등급"이 사라진다(HANDOFF §2와 같은 사고).
+        //    감사로그 노트별 조회(noteList)에는 그대로 남으므로 추적은 끊기지 않는다.
+        if (d && d.status !== 'rejected' && !notes[d.stock_code])
+          notes[d.stock_code] = d;
       });
       // 브리프는 아직 없을 수 있다(404) — 그건 오류가 아니라 상태다.
       const brief = await api<Brief>('/api/briefs/latest').catch(() => null);
@@ -707,6 +720,38 @@ export default function DashboardPage() {
         // 게이트 차단은 감시 탭(AI 신뢰도 카드)에 이미 있어 타일은 중복 요약일 뿐이었다.
         [];
 
+  /* "AI가 오늘 한 일" — 큐와 같이 **한 번 정의하고 자리만 옮긴다.**
+     궁금할 때 열어보는 것이지 늘 보고 있을 내용이 아니라 접어 둔다. 숫자는 전부 훅이 남긴
+     감사로그 실집계다(없으면 없다고 말한다). 펼침은 native <details>다 — 직접 만든 토글은
+     키보드·스크린리더 동작을 다시 구현해야 하지만 이건 브라우저가 준다.
+
+     자리는 역할이 정한다: **감시 탭이 있으면 거기, 없으면 첫 탭 맨 위.**
+     준법에게 이 줄은 "오늘 손댈 것"이 아니라 지켜본 결과라 심의(처리) 탭이 아니라 감시
+     탭에 속한다 — 감시 탭의 다른 카드(AI 신뢰도·알림·감사로그)와 같은 성격이고, 실제로
+     같은 감사로그를 원본으로 쓴다. PB에게는 감시 탭이 없으므로 첫 탭에 남는다. */
+  const aiworkCard = (
+    <details className="aiwork">
+      <summary>AI가 오늘 한 일</summary>
+      <div className="aiwork-body">
+        {aiwork.length ? (
+          <span>{aiwork.join(' · ')}</span>
+        ) : (
+          <span className="muted">
+            오늘은 실행 기록이 없습니다. 브리핑을 생성하면 여기에 표시됩니다.
+          </span>
+        )}
+        {data.summary.today.last_run && (
+          /* 날짜까지 적는다. "오늘"이 KST 기준이라 새벽·아침에는 시각만 봐서는 이 줄이
+             언제 것인지 헷갈렸다 — 컨테이너·Postgres가 UTC라 하루 경계로 실제 사고가
+             났던 자리다(HANDOFF §2 bizdate). 감사로그와 같은 함수로 찍는다. */
+          <span className="aiwork-time">
+            마지막 실행 {fmtDateTime(data.summary.today.last_run)}
+          </span>
+        )}
+      </div>
+    </details>
+  );
+
   /* 처리 대기 카드 — 두 화면이 나눠 갖는다.
      PB에게는 「작성·검토」 탭(만드는 것과 처리하는 것을 같이 두는 곳)에,
      준법에게는 그 탭이 없으므로 원래 자리에 남긴다 — 준법이 큐를 잃으면
@@ -821,28 +866,8 @@ export default function DashboardPage() {
 
       {/* ══════════ 탭 1 · 고객 관리 ══════════ */}
       <div className="view stack" hidden={view !== 'cust'}>
-        {/* AI가 오늘 한 일 — 궁금할 때 열어보는 것이지 늘 보고 있을 내용이 아니라 접어 둔다.
-            숫자는 전부 훅이 남긴 감사로그 실집계다(없으면 없다고 말한다).
-            펼침은 native <details>다 — 직접 만든 토글은 키보드·스크린리더 동작을 다시
-            구현해야 하지만 이건 브라우저가 준다. */}
-        <details className="aiwork">
-          <summary>AI가 오늘 한 일</summary>
-          <div className="aiwork-body">
-            {aiwork.length ? (
-              <span>{aiwork.join(' · ')}</span>
-            ) : (
-              <span className="muted">
-                오늘은 실행 기록이 없습니다. 브리핑을 생성하면 여기에
-                표시됩니다.
-              </span>
-            )}
-            {data.summary.today.last_run && (
-              <span className="aiwork-time">
-                마지막 실행 {hhmm(data.summary.today.last_run)}
-              </span>
-            )}
-          </div>
-        </details>
+        {/* 감시 탭이 있는 역할(준법)에게는 여기가 아니라 그쪽에 붙는다 — 정의는 위 한 곳. */}
+        {!cfg.aiTab && aiworkCard}
 
         {/* 오늘 규모(내 담당 고객·내 처리 대기) → 바로 만들 수 있는 것(종목 노트) 순서다.
             "AI가 오늘 한 일" 바로 아래에 오늘의 수치와 조작이 붙고, 그 아래로 읽을거리
@@ -1215,8 +1240,12 @@ export default function DashboardPage() {
                         notes={data.notes}
                         onOpenNote={(code) => setModal({ kind: 'note', code })}
                       />
+                      {/* 라벨이 `AI 진단`이 아닌 이유: 이 줄은 AI가 쓴 것이 아니라
+                          **코드가 계좌 데이터에서 계산한 것**이다(f1.portfolio_summary).
+                          예전 시드 문구를 그대로 내면서 `AI 진단`이라 부르던 게 이 카드에서
+                          유일하게 사실이 아닌 부분이었다. */}
                       <div className="diag">
-                        <span className="tag">AI 진단</span>
+                        <span className="tag">요약</span>
                         {selected.diag}
                       </div>
                     </>
@@ -1319,6 +1348,9 @@ export default function DashboardPage() {
           2열로 두면 짧은 AI 신뢰도가 긴 알림 목록 높이만큼 늘어나 빈칸이 생겼다.
           세 카드의 타고난 폭(넓음/넓음/넓음)이 달라 억지로 나란히 둘 이유가 없다. */}
       <div className="view stack" hidden={view !== 'ai'}>
+        {/* 오늘치 요약을 맨 위에 둔다 — 아래 세 카드가 누적 지표·사건·원장이라, 그 앞에
+            "오늘은 이만큼 돌았다"가 있어야 숫자를 읽을 기준이 생긴다. */}
+        {aiworkCard}
         <section className="card" aria-labelledby="tr-title">
           <div className="card-head">
             <h2 id="tr-title">AI 신뢰도</h2>
@@ -1467,7 +1499,7 @@ export default function DashboardPage() {
                       <details className="aitem" key={a.id}>
                         <summary>
                           <span className={`adot ${cat}`} aria-hidden="true" />
-                          <span className="ats">{auditWhen(a.ts)}</span>
+                          <span className="ats">{whenLabel(a.ts)}</span>
                           <span className={`aev ${cat}`}>{a.event_type}</span>
                         </summary>
                         <div className="adet-full">
@@ -1592,6 +1624,24 @@ export default function DashboardPage() {
                     toast={toast}
                     onClose={() => setModal(null)}
                     onChanged={() => void load()}
+                    /* 준법에게는 고객 포트폴리오 카드가 없다(정보장벽) — 그때는 넘기지
+                       않아서 버튼 자체가 안 그려진다. */
+                    onOpenPortfolio={
+                      cfg.portfolio
+                        ? () => {
+                            setSelectedId(c.id);
+                            setView('cust');
+                            setModal(null);
+                            // 뷰는 `hidden` 토글이라 DOM이 이미 있다 — 다음 프레임이면
+                            // 속성이 벗겨진 뒤라 스크롤 위치가 제대로 잡힌다.
+                            requestAnimationFrame(() =>
+                              document
+                                .getElementById('c-title')
+                                ?.scrollIntoView({ behavior: 'smooth' }),
+                            );
+                          }
+                        : undefined
+                    }
                   />
                 );
               })()}

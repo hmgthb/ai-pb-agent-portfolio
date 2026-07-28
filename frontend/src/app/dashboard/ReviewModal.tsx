@@ -13,8 +13,10 @@ import {
   ACK_REASONS,
   ACTOR,
   actorLabel,
+  DISCARD_REASONS,
   MY_PB,
   PILL,
+  REJECT_REASONS,
   RISK,
   WATERMARK,
   type Customer,
@@ -145,7 +147,9 @@ type Action = {
   ok: boolean;
   deny?: string;
   danger?: boolean;
-  run: () => Promise<Result>;
+  /** 사유를 골라야 실행되는 동작(반려·보류). 있으면 **두 번 누르는 동작**이 된다. */
+  reasons?: readonly string[];
+  run: (reason: string) => Promise<Result>;
 };
 
 function ActionsRow({
@@ -156,25 +160,95 @@ function ActionsRow({
   onDone: (r: Result) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  /* 사유가 필요한 동작은 **두 번 누른다**: 처음 누르면 사유 셀렉트가 열리고(armed),
+     사유를 고른 뒤 다시 눌러야 실행된다.
+     - 셀렉트를 처음부터 깔아 두지 않는 이유: 아직 하지 않기로 한 조작이 화면에 먼저 서서
+       기본 동작(확인·발행)과 무게가 같아 보인다. 거절은 있어야 하지만 권하는 길은 아니다.
+     - 사유를 고르는 순간 바로 실행하지 않는 이유: 보류·반려는 화면에서 되돌릴 수 없다.
+       (문장 확인 `.acksel`은 즉시 실행이 맞다 — 그건 언제든 되돌릴 수 있다.)
+     armed는 한 번에 하나뿐이라 사유 값도 하나면 된다. */
+  const [armed, setArmed] = useState<string | null>(null);
+  const [reason, setReason] = useState('');
+  const disarm = () => {
+    setArmed(null);
+    setReason('');
+  };
   if (!acts.length) return null;
+  /* **못 하는 조작은 아예 그리지 않는다.** 예전엔 비활성 버튼을 남겨 두고 옆에 사유를
+     적었는데, 심의중 노트를 PB가 열면 `발행`·`반려`가 회색으로 서 있어 "누를 수 있는데
+     지금은 안 되는 것"처럼 보였다 — 그 둘은 이 사람의 조작이 아니라 준법의 조작이다.
+     남는 건 사유 한 줄이고, 그게 "여기서 당신이 할 일은 없다"를 정확히 말한다.
+     ⚠️ 사유는 **거절된 것 중 첫 번째**에서 가져온다 — 한 상태의 동작들은 권한 조건이
+        같아서(전부 PB이거나 전부 준법) 사유도 하나면 된다. */
+  const allowed = acts.filter((a) => a.ok);
+  const denyMsg = acts.find((a) => !a.ok && a.deny)?.deny;
+  if (!allowed.length) {
+    return denyMsg ? (
+      <div className="m-actions">
+        {/* `.hint`가 아니라 전용 클래스다 — 이 줄은 조작 줄을 통째로 대신하는 문장이라
+            같은 자리의 버튼만 한 무게가 있어야 한다(`.hint`는 12px 곁말이다). */}
+        <span className="m-deny">{denyMsg}</span>
+      </div>
+    ) : null;
+  }
+  /* 무장하면 **그 동작만 남기고 나머지는 감춘다.** 셋(사유·실행·취소)이 한 덩어리로
+     왼쪽부터 논리 순서로 서고, 셀렉트가 어느 버튼의 것인지 헷갈릴 여지가 없어진다.
+     예전엔 `[발행] [사유 선택] [반려] [취소]`로 나와서 반려의 셀렉트가 발행에 붙어 보였다.
+     이미 반려를 하기로 한 상태이므로 다른 갈래를 같이 열어 둘 이유도 없다. */
+  const shown = armed ? allowed.filter((a) => a.label === armed) : allowed;
   return (
     <div className="m-actions">
-      {acts.map((a, i) => (
-        <span key={i} style={{ display: 'contents' }}>
-          <button
-            className={`btn ${a.danger ? 'danger' : 'primary'}`}
-            disabled={!a.ok || busy}
-            onClick={async () => {
-              setBusy(true);
-              onDone(await a.run());
-              setBusy(false);
-            }}
-          >
-            {a.label}
-          </button>
-          {!a.ok && <span className="hint">🔒 {a.deny}</span>}
-        </span>
-      ))}
+      {shown.map((a, i) => {
+        const isArmed = armed === a.label;
+        return (
+          <span key={i} style={{ display: 'contents' }}>
+            {isArmed && a.reasons && (
+              <select
+                className="acksel"
+                aria-label={`${a.label} 사유`}
+                // 누르자마자 초점이 여기로 온다 — 키보드만 쓰는 사람에게 "다음은 이것"을
+                // 알리는 신호이자, 마우스 사용자에게도 클릭 한 번을 아껴 준다.
+                autoFocus
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+              >
+                <option value="">사유 선택</option>
+                {a.reasons.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              className={`btn ${a.danger ? 'danger' : 'primary'}`}
+              // 무장 상태에서 사유가 비면 잠근다 — 사유는 감사 대상이라 빈 값으로 못 지나간다.
+              // (권한 없는 동작은 여기 오지 않는다 — 위에서 걸러 낸다.)
+              disabled={busy || (isArmed && !reason)}
+              onClick={async () => {
+                if (a.reasons && !isArmed) {
+                  setArmed(a.label);
+                  setReason('');
+                  return;
+                }
+                setBusy(true);
+                onDone(await a.run(reason));
+                setBusy(false);
+                disarm();
+              }}
+            >
+              {/* 무장 뒤에도 라벨은 그대로다. 눌렀다는 신호는 라벨이 아니라 **줄이 통째로
+                  바뀌는 것**이 낸다 — 다른 동작이 사라지고 사유 셀렉트·취소가 들어선다. */}
+              {a.label}
+            </button>
+            {isArmed && (
+              <button className="btn" onClick={disarm}>
+                취소
+              </button>
+            )}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -201,12 +275,23 @@ export function NoteModal({
   const actor = ACTOR[role];
   const [label, cls] = PILL[current.status] ?? [current.status, ''];
 
-  const act = async (action: string): Promise<Result> => {
-    const r = await apiPost(`/api/notes/${current.id}/${action}`, { actor });
+  const act = async (action: string, reason?: string): Promise<Result> => {
+    const r = await apiPost(`/api/notes/${current.id}/${action}`, {
+      actor,
+      ...(reason ? { reason } : {}),
+    });
     if (!r.ok) return { blocked: errorMessage(r.body) };
     if (action === 'publish') {
       toast('발행 완료 — 감사로그에 기록되었습니다');
       return { ok: '게이트 통과 — 발행되었습니다.' };
+    }
+    /* 반려·폐기는 `ok`(초록 ✓ 상자)로 알리지 않는다 — 동작은 성공했지만 결과는 "통과"가
+       아니라서 체크 표시가 뜻을 뒤집는다. 토스트로 알리고, 바뀐 상태는 머리말 알약이 말한다. */
+    if (action === 'reject') {
+      toast(`반려 — 검토중으로 되돌렸습니다 (${reason})`);
+    }
+    if (action === 'discard') {
+      toast(`보류 처리 — 처리 대기에서 빠집니다 (${reason})`);
     }
     return {};
   };
@@ -215,23 +300,35 @@ export function NoteModal({
      권한이었는데, 1인용 대시보드에는 관리자가 없다. 마지막 단계(발행)만 준법에게 남긴다:
      **만드는 사람과 통과시키는 사람이 갈리는 지점이 여기 하나**이고, 그게 이 제품의 핵심이다.
      그래서 PB 화면에서 심의중 노트는 상태만 보이고 버튼이 없다(아래 deny 문구가 이유를 말한다). */
+  /* 각 단계마다 **앞으로 가는 길과 거절하는 길이 같이 있다.** 거절이 없으면 이 화면은
+     "사람이 확인한다"가 아니라 "사람이 눌러 준다"가 된다 — 게이트 차단(publish_blocked)은
+     기계의 거절이라 사람의 판단을 대신하지 못한다.
+     두 거절은 뜻이 다르다: **폐기**(검토중, PB)는 고쳐 쓸 게 아니라는 종결이고,
+     **반려**(심의중, 준법)는 고쳐서 다시 올리라는 되돌림이다. */
   const actions: Action[] =
     current.status === 'draft'
       ? [
           {
-            label: '사실 확인 시작',
+            label: '사실 확인',
             ok: role === 'pb',
-            deny: '노트의 사실 확인은 담당 PB가 합니다',
+            deny: '노트의 사실 확인은 PB가 합니다.',
             run: () => act('review'),
           },
         ]
       : current.status === 'review'
         ? [
             {
-              label: '확인 완료 → 준법 심의 요청',
+              label: '확인',
               ok: role === 'pb',
-              deny: '심의 요청은 확인한 PB가 합니다',
+              deny: '심의 요청은 PB가 합니다.',
               run: () => act('deliberate'),
+            },
+            {
+              label: '보류',
+              ok: role === 'pb',
+              danger: true,
+              reasons: DISCARD_REASONS,
+              run: (reason) => act('discard', reason),
             },
           ]
         : current.status === 'deliberation'
@@ -239,21 +336,24 @@ export function NoteModal({
               {
                 label: '발행',
                 ok: role === 'comp',
-                deny: '준법 심의 중입니다. 발행은 준법 권한입니다',
+                deny: '준법 심의 중입니다.',
                 run: () => act('publish'),
+              },
+              {
+                label: '반려',
+                ok: role === 'comp',
+                danger: true,
+                reasons: REJECT_REASONS,
+                run: (reason) => act('reject', reason),
               },
             ]
           : [];
 
-  const people = (
-    [
-      ['확인', current.reviewer],
-      ['심의 요청', current.deliberator],
-      ['발행', current.publisher],
-    ] as const
-  )
-    .map(([k, v]) => `${k} ${v ? actorLabel(v) : '—'}`)
-    .join(' · ');
+  /* 단계별 담당자 줄("확인 PB · 심의 요청 PB · 발행 —")은 뺐다(2026-07-28).
+     역할이 `PB`/`준법` 둘뿐이라 어느 노트에서나 같은 값이 나왔고, "어디까지 갔나"는
+     제목 옆 상태 알약이 이미 말한다. **누가 언제 했는지는 감사로그가 정본**이고
+     준법·감시 탭의 노트별 조회에서 전건을 본다(모달에 원장을 복제하지 않는다).
+     ⚠️ 사람 이름이 여럿 생기면 이 줄이 다시 정보가 된다 — 그때 되살릴 것. */
 
   // 소제목과 고지문구·구분선은 검토 대상 문장이 아니다(백엔드 게이트와 같은 기준).
   // 원본 인덱스를 들고 다닌다 — 확인 기록이 그 인덱스로 저장되기 때문이다.
@@ -294,18 +394,20 @@ export function NoteModal({
         <h3>
           {current.corp_name}({current.stock_code}) 실적·공시 노트
         </h3>
+        {/* 노트 번호는 제목과 상태 사이에 회색으로 낀다 — 감사로그·큐와 대조할 때만 쓰는
+            식별자라 제 줄을 차지할 무게가 아니다. aria-label로 "#13"이 번호임을 밝힌다
+            (기호만 읽으면 스크린리더가 "우물 정 13"으로 흘린다). */}
+        <span className="m-id" aria-label={`노트 번호 ${current.id}`}>
+          #{current.id}
+        </span>
         <span className={`pill ${cls}`}>{label}</span>
         <button className="m-close" aria-label="닫기" onClick={onClose}>
           ×
         </button>
       </div>
-      <div className="m-meta">
-        노트 #{current.id} · {people}
-      </div>
-      {/* 여기부터가 스크롤 영역이다 — 위 두 줄(제목·×·메타)은 고정이라 긴 노트에서도
-          닫기 버튼이 사라지지 않는다. */}
+      {/* 여기부터가 스크롤 영역이다 — 위 제목줄만 고정이라 긴 노트에서도 닫기 버튼이
+          사라지지 않는다. */}
       <div className="m-body">
-        <div className="wm">{WATERMARK}</div>
         {res.blocked && <div className="vbox">⛔ {res.blocked}</div>}
         {res.ok && <div className="okbox">✓ {res.ok}</div>}
         {/* 심의 단계에서 "무엇이 남아서 막고 있는가"를 문장 목록 위에 먼저 말한다 —
@@ -325,6 +427,12 @@ export function NoteModal({
           canAck={canAck}
           onAck={ack}
         />
+        {/* 필수 고지 — 출처 목록 **아래**, 조작 줄 위. 페이지 전체 고지(.disclaimer)가
+            맨 아래 한 줄인 것과 같은 배치다: 문서를 다 읽은 자리에서 "이건 미검증 초안"을
+            마지막으로 말한다. ⚠️ 조작 줄보다 아래로 내리지 말 것 — 눌러야 할 것이 고지에
+            묻힌다. 스크롤 밖 고정 자리에도 두지 않는다(머리말이 세 줄이 되고, 바로 아래
+            ackbar와 같은 무게의 덩어리가 둘 생긴다). */}
+        <div className="wm">{WATERMARK}</div>
         <ActionsRow
           acts={actions}
           onDone={async (r) => {
@@ -351,25 +459,17 @@ export function NoteModal({
 function prepFacts(c: Customer) {
   return [
     {
-      text: `등록 투자성향 ${RISK[c.risk]} · 국내주식 비중 ${c.alloc['국내주식'] ?? 0}% · 잔고 ₩${fmtKRW(c.balance)}.`,
-      badge: (
-        <span className="sbadge acct" title={c.acct}>
-          계좌 데이터
-        </span>
-      ),
+      // 나이가 맨 앞이다 — 성향·비중을 읽을 때 기준이 되는 값이고, 머리말 계좌 줄을
+      // 걷어내면서 이 줄이 고객 프로필을 말하는 유일한 자리가 됐다.
+      text: `${c.age}세 · ${RISK[c.risk]} · 국내주식 비중 ${c.alloc['국내주식'] ?? 0}% · 잔고 ₩${fmtKRW(c.balance)}`,
     },
     ...(c.flag
       ? [
           {
             text: `위험 플래그: ${c.flagReasons.map((r) => r.text).join(' · ')}.`,
-            badge: <span className="sbadge acct">규칙 판정</span>,
           },
         ]
       : []),
-    {
-      text: '회신 시 고지: 정보 제공 목적이며 투자권유가 아님을 밝히고, 매매 판단은 고객 확인을 거칩니다.',
-      badge: <span className="sbadge ntc">필수 고지</span>,
-    },
   ];
 }
 
@@ -379,6 +479,7 @@ export function ChatModal({
   role,
   onClose,
   onChanged,
+  onOpenPortfolio,
   toast,
 }: {
   item: QueueChat;
@@ -386,6 +487,9 @@ export function ChatModal({
   role: Role;
   onClose: () => void;
   onChanged: () => void;
+  /** 이 고객의 포트폴리오 카드로 보낸다(모달을 닫고 상담 준비 탭에서 그 고객을 고른다).
+   *  준법에게는 고객 포트폴리오 카드 자체가 없으므로 넘어오지 않는다 — 정보장벽. */
+  onOpenPortfolio?: () => void;
   toast: (m: string) => void;
 }) {
   const [res, setRes] = useState<Result>({});
@@ -397,64 +501,50 @@ export function ChatModal({
       : '담당 PB만 처리할 수 있습니다';
   const [label, cls] = PILL[status] ?? [status, ''];
 
-  const decide = async (action: 'approve' | 'reject'): Promise<Result> => {
-    const r = await apiPost(`/api/sessions/${item.id}/${action}`, {
+  /* 이 화면의 조작은 **하나뿐이다.**
+     - `보류`는 뺐다(2026-07-28): 모달을 그냥 닫으면 건이 `확인 대기`로 남으므로 "아직
+       안 봤다"는 이미 기본 상태다. 버튼으로 또 두면 같은 뜻이 두 갈래가 된다.
+       (백엔드 `/api/sessions/{id}/reject`는 남겨 뒀다 — 화면에서 부르지 않을 뿐이다.)
+     - 라벨이 `확인`이 아니라 `처리 완료`인 이유: 맨 `확인`은 "읽었다"로도 "승인한다"로도
+       읽히는데, 여기서 승인할 대상은 없다(AI가 만든 회신문이 없다). 이 건들이 사는 카드
+       이름이 **`처리 대기`**라 `처리 대기 → 처리 완료`가 그대로 짝이 되고, 누르면 실제로
+       그 목록에서 내려간다. 노트 흐름의 말(검토·심의·발행)과도 안 겹친다. */
+  const finish = async (): Promise<Result> => {
+    const r = await apiPost(`/api/sessions/${item.id}/approve`, {
       actor: MY_PB,
     });
     if (!r.ok) return { blocked: errorMessage(r.body) };
-    setStatus(action === 'approve' ? 'done' : 'rejected');
-    if (action === 'approve') {
-      toast(`확인 완료 — ${customer.name} 고객 회신은 PB가 직접 작성합니다`);
-      return {
-        ok: '확인 완료 — 회신 작성은 사람이 합니다(AI가 대신 보내지 않습니다).',
-      };
-    }
-    toast('보류됨 — 추가 확인 필요로 표시했습니다');
-    return { blocked: '보류됨 — 사실 확인이 더 필요한 건으로 표시했습니다.' };
+    setStatus('done');
+    toast(
+      `처리 완료 — 처리 대기에서 내렸습니다. ${customer.name} 고객 회신은 PB가 직접 작성합니다`,
+    );
+    return {
+      ok: '처리 완료 — 회신 작성은 사람이 합니다(AI가 대신 보내지 않습니다).',
+    };
   };
 
   const actions: Action[] =
     status === 'pending'
-      ? [
-          { label: '확인', ok: mine, deny, run: () => decide('approve') },
-          {
-            label: '보류',
-            ok: mine,
-            deny,
-            danger: true,
-            run: () => decide('reject'),
-          },
-        ]
+      ? [{ label: '처리 완료', ok: mine, deny, run: finish }]
       : [];
 
   return (
     <>
       <div className="m-head">
-        <h3>고객 문의 대응 준비 — {customer.name}</h3>
+        {/* 큐 행과 **같은 제목**을 쓴다(`item.title` = "이름 · 주제"). 큐에서 누른 줄과
+            모달 제목이 글자까지 같아야 "그 건을 열었다"가 확인된다 — 예전엔 모달만
+            "고객 문의 대응 준비 — 이름"이라 같은 건인지 매번 대조해야 했다. */}
+        <h3>{item.title}</h3>
         <span className={`pill ${cls}`}>{label}</span>
         <button className="m-close" aria-label="닫기" onClick={onClose}>
           ×
         </button>
       </div>
-      <div className="m-meta">
-        {customer.acct} · {customer.age}세 · {RISK[customer.risk]} · 잔고 ₩
-        {fmtKRW(customer.balance)} · 담당 {customer.pb}
-        {customer.flag && (
-          <>
-            {' '}
-            ·{' '}
-            {/* 칩 안엔 표시만 둔다 — 사유까지 넣으면 한 줄짜리 검은 막대가 된다 */}
-            <span className="flag">⚑ 위험 플래그</span>{' '}
-            {customer.flagReasons.map((r) => r.text).join(' · ')}
-          </>
-        )}
-      </div>
-      {/* 여기부터 스크롤 영역 — 위 두 줄(제목·×·계좌 메타)은 고정이다. */}
+      {/* 계좌 메타 줄은 뺐다 — 계좌번호는 이 화면이 답할 것과 무관한 식별정보이고,
+          나이·성향·잔고·위험 플래그는 아래 "회신 전 확인할 사실"이 이미 말한다.
+          담당 PB도 적지 않는다(담당이 아니면 이 건이 목록에 오지도 않는다). */}
+      {/* 여기부터 스크롤 영역 — 위 제목줄만 고정이다. */}
       <div className="m-body">
-        <div className="wm">
-          {WATERMARK} AI는 고객 회신을 대신 쓰지 않습니다 — 아래는 PB가 회신
-          전에 확인할 사실입니다.
-        </div>
         {res.blocked && <div className="vbox">⛔ {res.blocked}</div>}
         {res.ok && <div className="okbox">✓ {res.ok}</div>}
         <div className="bubble q">
@@ -462,21 +552,25 @@ export function ChatModal({
           {item.question}
         </div>
         <div className="bubble">
-          <div className="blabel">
-            회신 전 확인할 사실
-            <span className="src mock" style={{ marginLeft: 6 }}>
-              계좌는 시드 데이터 · 가상 고객
-            </span>
-          </div>
+          <div className="blabel">고객 정보</div>
           <div className="srows">
             {prepFacts(customer).map((s, i) => (
               <div className="srow" key={i}>
                 <span className="stext">{s.text}</span>
-                <span className="sbadges">{s.badge}</span>
               </div>
             ))}
           </div>
+          {/* 여기 있는 건 계좌 요약 한두 줄뿐이다 — 보유 종목·공시·뉴스와 포트폴리오 질문은
+              전부 고객 카드에 있다. 그쪽으로 가는 길이 없어서 PB가 목록 최하단에서 이
+              고객을 다시 찾아야 했다(HANDOFF §7). 문의는 큐에 남으므로 잃는 것은 없다. */}
+          {onOpenPortfolio && (
+            <button className="linklike prep-go" onClick={onOpenPortfolio}>
+              포트폴리오 →
+            </button>
+          )}
         </div>
+        {/* 노트 모달과 같은 자리 — 읽을 것 아래, 조작 줄 위. 결정 직전에 반드시 지나친다. */}
+        <div className="wm">{WATERMARK}</div>
         <ActionsRow
           acts={actions}
           onDone={(r) => {

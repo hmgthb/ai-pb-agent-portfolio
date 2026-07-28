@@ -19,6 +19,9 @@ export type Customer = {
   ret: number;
   holdings: { code: string; name: string; amt: number }[];
   alloc: Record<string, number>;
+  /** 구성 요약 한 줄. **AI가 쓴 문장이 아니다** — 백엔드 `f1.portfolio_summary`가 계좌
+   *  데이터에서 계산한다(수치는 코드, 위험 판정은 저장된 flag_reasons 인용). 화면 라벨도
+   *  `AI 진단`이 아니라 `구성 요약`이다. */
   diag: string;
   flag: boolean;
   flagReasons: FlagReason[];
@@ -127,6 +130,20 @@ export type NoteAck = {
 /** 확인 사유 — 백엔드 main.py의 ACK_REASONS와 1:1. 자유 입력이 아닌 이유는 감사 대상이라서다. */
 export const ACK_REASONS = ['해석·전망', '고지·면책', '데이터 설명'] as const;
 
+/** 거절 사유 — 백엔드 main.py의 REJECT_REASONS/DISCARD_REASONS와 1:1.
+ *  두 목록이 갈린 건 **뜻이 다른 거절**이라서다: 반려는 고쳐서 다시 올릴 수 있고(→ 검토중),
+ *  폐기는 고쳐 쓸 게 아니다(→ 보류됨, 종결). 서버가 값을 대조하므로 여기서 늘리면 400이 난다. */
+export const REJECT_REASONS = [
+  '출처 불충분',
+  '표현·규정 위반',
+  '사실관계 재확인 필요',
+] as const;
+export const DISCARD_REASONS = [
+  '사실관계 오류',
+  '내용 부족',
+  '중복·불필요',
+] as const;
+
 export type NoteDetail = {
   id: number;
   stock_code: string;
@@ -214,9 +231,10 @@ export const PILL: Record<string, [label: string, cls: string]> = {
   // 같은 'review'를 쓰던 동안 두 상태가 같은 색으로 붙어 다녔다.
   pending: ['확인 대기', 'pending'],
   published: ['발행완료', ''],
-  // 상담 세션의 done은 "AI가 고객에게 보냈다"가 아니라 "PB가 확인을 끝냈다"는 뜻이다 —
-  // 회신은 사람이 직접 쓴다(대상 사용자 = PB).
-  done: ['확인완료', ''],
+  // 상담 세션의 done은 "AI가 고객에게 보냈다"가 아니라 "PB가 이 건 처리를 끝냈다"는 뜻이다 —
+  // 회신은 사람이 직접 쓴다(대상 사용자 = PB). 그래서 라벨이 `승인`류가 아니라 `처리 완료`다:
+  // 이 건들이 사는 카드 이름(`처리 대기`)과 짝이 맞고, 누르면 실제로 그 목록에서 내려간다.
+  done: ['처리 완료', ''],
   rejected: ['보류됨', ''],
 };
 

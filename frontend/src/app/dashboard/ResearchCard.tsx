@@ -150,17 +150,17 @@ export default function ResearchCard({
     }
   }
 
-  /** 규칙을 읽어 주는 대신 **할 일과 지금 상태**를 말한다. 입력이 숫자만 받고 6자에서
-      잘리므로 실패 경우는 "덜 채움" 하나뿐이라, 남은 자릿수가 곧 안내가 된다. */
-  const shortMsg = (v: string) =>
-    `6자리를 모두 입력해 주세요 — 현재 ${v.length}자리`;
+  /** 규칙을 읽어 주는 대신 **할 일**을 말한다. 입력이 숫자만 받고 6자에서 잘리므로
+      실패 경우는 "덜 채움" 하나뿐이라, 문구도 하나면 된다.
+      (자릿수를 세어 알려주던 버전은 뺐다 — 입력칸을 보면 이미 아는 수다.) */
+  const shortMsg = () => '종목 코드 6자리를 입력해 주세요.';
 
   function start() {
     if (running) return;
     const v = code.trim();
     if (!/^\d{6}$/.test(v)) {
       setCodeInvalid(true);
-      setMsg({ kind: 'error', text: shortMsg(v) });
+      setMsg({ kind: 'error', text: shortMsg() });
       return;
     }
     setCodeInvalid(false);
@@ -323,7 +323,7 @@ export default function ResearchCard({
               setCodeInvalid(false);
               setMsg(null);
             } else {
-              setMsg({ kind: 'error', text: shortMsg(v) });
+              setMsg({ kind: 'error', text: shortMsg() });
             }
           }}
           onKeyDown={(e) => {

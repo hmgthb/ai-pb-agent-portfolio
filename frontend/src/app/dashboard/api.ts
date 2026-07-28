@@ -93,6 +93,19 @@ export const fmtDate = (s: string | null | undefined) => {
 export const hhmm = (iso: string) =>
   new Date(iso).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
 
+/** 시각이 있는 사건의 "언제" — `2026-07-28 15:31`. **날짜도 KST로 찍는다.**
+ *
+ *  ⚠️ 여기에 `fmtDate(iso)`를 쓰면 안 된다. ISO 타임스탬프는 위 `^\d{4}-\d{2}-\d{2}` 분기에
+ *     걸려 **원문 문자열을 그대로 자르는데**, 백엔드가 보내는 값이 UTC(`+00:00`)다. 시각은
+ *     `hhmm`이 KST로 찍으므로 둘의 기준이 갈린다 — KST 00~09시 사건이 **날짜만 하루 전**으로
+ *     나온다(실측: `2026-07-28T16:30Z` → `07-28 01:30`, 정답은 `07-29 01:30`).
+ *     `fmtDate` 쪽은 그대로 둔다 — 거기 들어오는 공시일(`20260722`)·뉴스일은 시각이 없어
+ *     자르는 게 맞고, 고치면 그쪽이 깨진다. 하루 경계 규칙은 HANDOFF §2. */
+export const fmtDateTime = (iso: string) => {
+  const t = new Date(iso);
+  return Number.isNaN(t.getTime()) ? iso : `${bizDay.format(t)} ${hhmm(iso)}`;
+};
+
 export const ago = (iso: string) => {
   const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
   if (m < 1) return '방금';
