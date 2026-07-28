@@ -106,7 +106,16 @@ STATUS_ACTOR_FIELD = {
     "review": "reviewer",
     "deliberation": "deliberator",
     "published": "publisher",
+    # 폐기(보류됨)에는 담당자 칸이 없다 — notes에 컬럼이 없고, 만들 이유도 없다.
+    # 누가 언제 왜 버렸는지는 감사로그가 남긴다(append-only라 그쪽이 정본이다).
+    "rejected": None,
 }
+
+# 더 처리할 게 없는 상태 — 큐·대기 집계에서 뺀다. 발행(끝까지 감)과 폐기(중간에 버림)는
+# 도착 경로가 반대지만 "처리 대기 목록에 남으면 안 된다"는 점에서 같다.
+# ⚠️ 여기 넣은 상태는 `/api/notes` 색인에는 **그대로 남는다** — 읽을 것의 목록과
+#    처리할 일의 목록은 다르다(HANDOFF §2).
+NOTE_TERMINAL = ("published", "rejected")
 
 
 async def init_pool() -> None:
@@ -183,26 +192,33 @@ async def set_note_ack(
 
 
 async def advance_status(
-    note_id: int, status: str, actor: str | None, violations: list[str] | None = None
+    note_id: int,
+    status: str,
+    actor: str | None,
+    violations: list[str] | None = None,
+    *,
+    record_actor: bool = True,
 ) -> None:
-    """검토/심의/발행 단계 전이. violations가 주어지면(발행 시점 게이트 재평가) 같이 갱신한다."""
-    actor_field = STATUS_ACTOR_FIELD[status]
-    if violations is None:
-        await pool().execute(
-            f"UPDATE notes SET status = $2, {actor_field} = $3, updated_at = now() WHERE id = $1",
-            note_id,
-            status,
-            actor,
-        )
-    else:
-        await pool().execute(
-            f"""UPDATE notes SET status = $2, {actor_field} = $3, violations_json = $4::jsonb,
-                updated_at = now() WHERE id = $1""",
-            note_id,
-            status,
-            actor,
-            json.dumps(violations, ensure_ascii=False),
-        )
+    """검토/심의/발행 단계 전이. violations가 주어지면(발행 시점 게이트 재평가) 같이 갱신한다.
+
+    `record_actor=False`는 **되돌리는 전이**용이다(준법 반려 → 검토중, PB 폐기 → 보류됨).
+    앞으로 갈 때만 "이 단계를 누가 맡았나"를 노트에 새긴다 — 반려로 검토중에 돌아왔다고
+    `reviewer`를 준법 이름으로 덮어쓰면 **사실을 확인한 PB가 노트에서 사라진다.**
+    되돌린 사람이 누구인지는 감사로그가 남기고, 그게 정본이다.
+
+    ⚠️ `STATUS_ACTOR_FIELD[status]`는 그대로 인덱싱한다(`.get()` 아님) — 정의되지 않은
+       상태로 전이하려 하면 조용히 통과시키지 말고 KeyError로 죽는 편이 낫다.
+    """
+    field = STATUS_ACTOR_FIELD[status] if record_actor else None
+    sets = ["status = $2", "updated_at = now()"]
+    params: list = [note_id, status]
+    if field:
+        params.append(actor)
+        sets.append(f"{field} = ${len(params)}")
+    if violations is not None:
+        params.append(json.dumps(violations, ensure_ascii=False))
+        sets.append(f"violations_json = ${len(params)}::jsonb")
+    await pool().execute(f"UPDATE notes SET {', '.join(sets)} WHERE id = $1", *params)
 
 
 async def append_audit(

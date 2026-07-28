@@ -848,6 +848,13 @@ class AckBody(BaseModel):
     reason: str | None = None
 
 
+class ReasonBody(BaseModel):
+    """반려·폐기. 사유는 고정값이라 서버가 대조한다(아래 REJECT_REASONS/DISCARD_REASONS)."""
+
+    actor: str
+    reason: str
+
+
 class SessionDecisionBody(BaseModel):
     actor: str
     reason: str | None = None
@@ -857,6 +864,15 @@ class SessionDecisionBody(BaseModel):
 # 때문이다 — 나중에 "무슨 근거로 통과시켰나"를 세려면 값이 닫혀 있어야 한다.
 # 각주를 붙일 수 없는 문장의 실제 종류에서 왔다(해석·전망 / 워터마크·면책 / 데이터 설명).
 ACK_REASONS = ("해석·전망", "고지·면책", "데이터 설명")
+
+# 반려·폐기 사유도 같은 이유로 닫힌 값이다 — "왜 막았나"를 나중에 세려면 자유 입력이면 안 된다.
+# 두 목록을 나눠 둔 건 **뜻이 다른 거절**이기 때문이다:
+#   REJECT  = 준법이 심의중 노트를 PB에게 되돌린다(고칠 수 있다 → 검토중).
+#   DISCARD = PB가 검토중 노트를 버린다(고쳐 쓸 게 아니다 → 보류됨, 종결).
+# 한 목록으로 합치면 "출처 불충분"으로 폐기하고 "중복"으로 반려하는 조합이 생기는데,
+# 둘 다 그 단계에서 할 수 있는 판단이 아니다.
+REJECT_REASONS = ("출처 불충분", "표현·규정 위반", "사실관계 재확인 필요")
+DISCARD_REASONS = ("사실관계 오류", "내용 부족", "중복·불필요")
 
 
 def _valid_acks(row, sentences: list[dict]) -> set[int]:
@@ -956,6 +972,43 @@ async def start_deliberation(note_id: int, body: ActorBody):
     return {"status": "deliberation"}
 
 
+@app.post("/api/notes/{note_id}/reject")
+async def reject_deliberation(note_id: int, body: ReasonBody):
+    """준법이 심의중 노트를 **PB에게 되돌린다**(심의중 → 검토중).
+
+    이 제품이 "최종 판단은 사람"이라고 말하려면 사람이 **아니오**라고 말할 경로가 있어야
+    한다. 게이트 차단(`publish_blocked`)은 기계의 거절이지 판단이 아니다.
+    폐기가 아니라 되돌림인 이유: 심의에서 걸리는 건 대개 고칠 수 있는 것(출처·표현)이고,
+    고쳐서 다시 올릴 사람은 그 노트를 확인한 PB다.
+    ⚠️ `reviewer`는 덮어쓰지 않는다 — 확인한 PB가 누구였는지가 사라지면 안 된다.
+    """
+    await _require_status(note_id, "deliberation")
+    if body.reason not in REJECT_REASONS:
+        raise HTTPException(400, f"사유는 {' / '.join(REJECT_REASONS)} 중 하나여야 합니다.")
+    await db.advance_status(note_id, "review", body.actor, record_actor=False)
+    await db.append_audit(
+        "deliberation_rejected", note_id, body.actor, {"reason": body.reason}
+    )
+    return {"status": "review"}
+
+
+@app.post("/api/notes/{note_id}/discard")
+async def discard_note(note_id: int, body: ReasonBody):
+    """PB가 검토중 노트를 **버린다**(검토중 → 보류됨, 종결).
+
+    사실 확인을 해보니 고쳐 쓸 물건이 아닐 때다. 심의로 올리는 것 말고 다른 출구가 없으면
+    쓸모없는 초안이 큐에 영구히 남는다.
+    ⚠️ 노트 자체는 지우지 않는다 — 상태만 종결이고 본문·감사로그는 그대로 남는다.
+       "AI가 뭘 만들었고 사람이 왜 버렸나"가 감사 대상이다.
+    """
+    await _require_status(note_id, "review")
+    if body.reason not in DISCARD_REASONS:
+        raise HTTPException(400, f"사유는 {' / '.join(DISCARD_REASONS)} 중 하나여야 합니다.")
+    await db.advance_status(note_id, "rejected", body.actor, record_actor=False)
+    await db.append_audit("note_discarded", note_id, body.actor, {"reason": body.reason})
+    return {"status": "rejected"}
+
+
 @app.post("/api/notes/{note_id}/ack")
 async def ack_sentence(note_id: int, body: AckBody):
     """미인용 문장 하나를 '확인함'으로 표시하거나(reason) 되돌린다(reason=null).
@@ -1015,7 +1068,7 @@ async def publish_note(note_id: int, body: ActorBody):
 
 def _customer_to_dict(row) -> dict:
     flag_reasons = json.loads(row["flag_reasons"])
-    return {
+    c = {
         "id": row["id"],
         "name": row["name"],
         "age": row["age"],
@@ -1024,12 +1077,22 @@ def _customer_to_dict(row) -> dict:
         "risk": row["risk_profile"],
         "balance": row["balance"],
         "ret": row["return_pct"],
-        "holdings": json.loads(row["holdings"]),
+        # **금액 큰 순**으로 내보낸다. 시드 순서 그대로면 화면이 "왜 이 순서인가"를 설명할
+        # 수 없고, 상담에서 먼저 볼 것은 큰 것이다. 화면마다 정렬하지 않는 이유는 이 배열을
+        # 셋이 같이 쓰기 때문이다 — 보유 종목 표 · 상담 준비 메모 · 채팅의 보유 종목 칩.
+        # (f1.portfolio_facts도 자기 안에서 다시 정렬한다 — 순수 함수라 입력 순서를 가정하지
+        #  않는 게 맞고, 여기 정렬과 겹쳐도 결과는 같다.)
+        "holdings": sorted(
+            json.loads(row["holdings"]), key=lambda h: h.get("amt", 0), reverse=True
+        ),
         "alloc": json.loads(row["alloc"]),
-        "diag": row["diagnosis"],
         "flag": len(flag_reasons) > 0,
         "flagReasons": flag_reasons,
     }
+    # `pb_customers.diagnosis`(시드 문구)는 **더 이상 읽지 않는다** — 50명에 6종뿐인 목업이었고
+    # 문구가 조정 지시였다(f1.portfolio_summary 주석). 컬럼은 지우지 않고 그대로 둔다(§2 시드 보존).
+    c["diag"] = f1.portfolio_summary(c)
+    return c
 
 
 def _citation_stats(note_rows) -> tuple[int, int, int]:
@@ -1118,7 +1181,10 @@ async def dashboard_summary():
     sessions = await db.list_sessions(PB_NAME)
     sourced, total, interpretations = _citation_stats(notes)
     published = [n for n in notes if n["status"] == "published"]
-    pending_notes = [n for n in notes if n["status"] != "published"]
+    # 큐와 같은 기준으로 센다 — 화면의 "처리 대기 N건"과 큐 목록 길이가 갈리면 안 된다.
+    # ⚠️ publish_rate 분모(len(notes))에서는 폐기분을 빼지 않는다: 만들었는데 발행까지
+    #    못 간 건 통과율이 말해야 하는 사실이다.
+    pending_notes = [n for n in notes if n["status"] not in db.NOTE_TERMINAL]
     pending_sessions = [s for s in sessions if s["status"] == db.SESSION_PENDING]
     blocks = await db.gate_blocks_daily(7)
     return {
@@ -1152,7 +1218,8 @@ async def dashboard_queue():
     """검토·승인 대기 큐 — 노트(검토→심의→발행)와 상담(승인/반려)을 한 줄로 합친다."""
     items = []
     for n in await db.list_notes():
-        if n["status"] == "published":
+        # 발행(끝까지 감)과 폐기(중간에 버림)는 경로가 반대지만 둘 다 **더 처리할 게 없다**.
+        if n["status"] in db.NOTE_TERMINAL:
             continue
         items.append(
             {

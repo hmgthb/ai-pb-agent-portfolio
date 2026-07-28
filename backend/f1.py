@@ -252,6 +252,44 @@ def portfolio_facts(customer: dict) -> dict:
     }
 
 
+def portfolio_summary(customer: dict) -> str:
+    """고객 카드에 한 줄로 붙는 **구성 요약**(순수·결정론적, LLM 미개입).
+
+    예전에는 `pb_customers.diagnosis`의 시드 문구를 그대로 냈다. 두 가지가 문제였다:
+      ① 고객 50명에 문장이 6종뿐인 **목업**인데 라벨이 `AI 진단`이라 산출물처럼 읽혔다
+         — 카드의 나머지(잔고·수익률·배분·보유)는 전부 실집계인데 이 줄만 가짜였다.
+      ② 문구가 "리밸런싱 검토 여지"·"방어적 재배분 논의 필요"처럼 **조정 지시**였다.
+         CLAUDE.md 가드레일 1의 F1 예외가 금지한 것이다 — 무엇이 쏠렸는지까지만 말하고
+         어떻게 바꿀지는 PB가 정한다.
+
+    그래서 여기서는 **서술만** 한다. 수치는 `portfolio_facts`가 계산하고(같은 산술을 두 번
+    구현하지 않는다), 위험 판정은 저장된 `flag_reasons`를 **그대로 인용**한다(새로 안 내린다).
+
+    ⚠️ 이 문자열은 화면에 나가지만 LLM 프롬프트로는 가지 않는다. 그래도 이름은 안 담는다 —
+       담는 순간 프롬프트로 새는 경로가 생긴다(가드레일 1). 종목명은 공개정보라 담는다.
+    """
+    f = portfolio_facts(customer)
+    flags = f.get("flags") or []
+    parts: list[str] = []
+
+    if f.get("equity_pct") is not None:
+        parts.append(f"국내주식 {f['equity_pct']}%")
+
+    top = f.get("top_holding")
+    # 집중 플래그가 이미 같은 말을 하고 있으면(`보유주식 내 카카오 집중 70%`) 겹쳐 적지 않는다.
+    concentrated = any(x.get("key") == "conc" for x in flags)
+    if top and top.get("pct_of_equity") is not None and not concentrated:
+        parts.append(f"최대 단일 종목 {top['name']} {top['pct_of_equity']}%(주식 내)")
+
+    if flags:
+        parts.append("위험 플래그 " + " · ".join(x["text"] for x in flags))
+    else:
+        # "없음"을 적는다 — 줄이 통째로 사라지면 "규칙을 안 돌렸다"와 구분되지 않는다.
+        parts.append("위험 플래그 없음")
+
+    return " · ".join(parts)
+
+
 def portfolio_source() -> dict:
     """포트폴리오 문장의 출처 메타. `[^hold]` 태그가 이걸로 해석된다.
 

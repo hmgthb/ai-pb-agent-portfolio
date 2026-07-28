@@ -290,6 +290,32 @@ def test_portfolio_block_denies_per_holding_return():
     assert "계좌 전체" in text
 
 
+def test_portfolio_summary_is_descriptive_only():
+    """고객 카드 한 줄 — 서술만 하고 **조정 지시는 하지 않는다**(가드레일 1의 F1 예외).
+
+    걷어낸 시드 문구가 정확히 그 반대였다: "리밸런싱 검토 여지" · "방어적 재배분 논의 필요".
+    """
+    s = f1.portfolio_summary(_CUST)
+    assert "국내주식 48%" in s
+    # 위험 판정은 저장된 flag_reasons를 **그대로 인용**한다 — 새로 내리지 않는다.
+    assert "보유주식 내 카카오 집중 70%" in s
+    # 집중 플래그가 이미 말한 것을 "최대 단일 종목 …"으로 겹쳐 적지 않는다.
+    assert "최대 단일 종목" not in s
+    for banned in ("검토", "필요", "권고", "논의", "줄이", "늘리", "리밸런싱", "재배분"):
+        assert banned not in s, f"조정 지시로 읽히는 말: {banned}"
+    # 이름·계좌는 담지 않는다(프롬프트로 새는 경로를 아예 만들지 않는다).
+    assert _CUST["name"] not in s and _CUST["acct"] not in s
+
+
+def test_portfolio_summary_says_no_flag_explicitly():
+    """플래그가 없으면 줄을 비우지 않고 "없음"을 적는다 — 빈 줄은 "규칙을 안 돌렸다"와
+    구분되지 않는다. 이때는 집중도를 대신 보여 준다."""
+    clean = {**_CUST, "flag": False, "flagReasons": []}
+    s = f1.portfolio_summary(clean)
+    assert "위험 플래그 없음" in s
+    assert "최대 단일 종목 카카오 70.3%(주식 내)" in s
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):
