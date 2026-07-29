@@ -17,10 +17,13 @@ import { chatStreamUrl } from './api';
 import type { ChatAnswer, ChatRouting } from './types';
 import { mergeSources, SourceBadge } from './sources';
 
+/** 라우팅 배지에 적는 이름. **에이전트 식별자(a1·a2·a4)를 적지 않는다** — 이 배지가 답할
+ *  것은 "왜 이 답이 나왔나"(어떤 데이터를 봤나)이지 "어느 서브에이전트가 돌았나"가 아니다.
+ *  읽는 사람은 PB다. `KRX`·`계산`은 코드명이 아니라 출처·방법이라 남긴다. */
 const AGENT_LABEL: Record<string, string> = {
-  a1: '공시(a1)',
-  a2: '재무(a2)',
-  a4: '뉴스(a4)',
+  a1: '공시',
+  a2: '재무',
+  a4: '뉴스',
   krx: '시세(KRX)',
   // 에이전트가 아니라 **코드 계산**이다 — 집중도·배분은 순수 함수가 내고 LLM은 문장만 쓴다.
   // 배지에 그대로 적는 이유: "왜 이 답이 나왔나"를 화면이 말해야 하는데(감사 가능한 라우팅),

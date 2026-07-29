@@ -18,11 +18,14 @@ type Steps = Record<Agent, StepState>;
 
 const IDLE: Steps = { a1: 'idle', a2: 'idle', a4: 'idle', a5: 'idle' };
 
+/** 화면에 적는 단계 이름. **에이전트 식별자(a1·a2·a4·a5)를 적지 않는다** — 읽는 사람은
+ *  PB이지 이 시스템의 개발자가 아니라, 내부 코드명은 뜻을 나르지 않고 자리만 먹는다.
+ *  코드 안에서는 그대로 키로 쓴다(SSE progress 이벤트의 `agent` 값이라 바꿀 수 없다). */
 const LABEL: Record<Agent, string> = {
-  a1: 'a1 법인 확인',
-  a2: 'a2 재무 핵심수치',
-  a4: 'a4 뉴스',
-  a5: 'a5 노트 초안 작성',
+  a1: '법인 확인',
+  a2: '재무 핵심수치',
+  a4: '뉴스',
+  a5: '노트 초안 작성',
 };
 
 type ProgressEvent = { agent: Agent | 'O'; step: string; status: string };
@@ -357,7 +360,7 @@ export default function ResearchCard({
           {!financials && outcome && (
             <div className="gen-card empty">
               <div className="gen-card-head">
-                <span className="chip note">a2 재무 핵심수치</span>
+                <span className="chip chat">재무 핵심수치</span>
                 <span className="bcode">확보 못 함</span>
               </div>
               <div className="empty-body">
@@ -373,7 +376,7 @@ export default function ResearchCard({
           {financials && (
             <div className="gen-card">
               <div className="gen-card-head">
-                <span className="chip note">a2 재무 핵심수치</span>
+                <span className="chip chat">재무 핵심수치</span>
                 <span className="bcode">
                   {financials.bsns_year} ·{' '}
                   {financials.fs_div === 'CFS' ? '연결' : '별도'}
@@ -401,12 +404,24 @@ export default function ResearchCard({
                   })}
                 </tbody>
               </table>
+              {/* 줄마다 붙던 `공시` 꼬리표는 뺐다 — 이 카드에 들어오는 건 DART 공시뿐이라
+                  머리말(`재무 핵심수치`)과 줄 첫머리의 "원문"이 이미 종류를 말한다. */}
               {sources.map((s) => (
                 <div className="bline" key={s.rcept_no}>
-                  <span className="btag">공시</span>
                   <span style={{ minWidth: 0 }}>
-                    <a href={s.viewer_url} target="_blank" rel="noreferrer">
+                    {/* ↗는 이 프로젝트에서 "새 탭으로 열린다"는 뜻이다(sources.tsx의 규칙).
+                        여기도 진짜 링크(DART 뷰어)라 같은 표시를 단다. title은 그 짝이다 —
+                        ↗가 aria-hidden이라 안 달면 스크린리더에는 새 탭이라는 단서가 없다. */}
+                    <a
+                      href={s.viewer_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={`공시원문 ${s.rcept_no} (새 탭에서 열기)`}
+                    >
                       원문 {s.rcept_no}
+                      <span className="sbadge-ext" aria-hidden="true">
+                        ↗
+                      </span>
                     </a>
                     <span className="bcode">
                       {' '}
@@ -420,7 +435,7 @@ export default function ResearchCard({
           {news.length === 0 && outcome && (
             <div className="gen-card empty">
               <div className="gen-card-head">
-                <span className="chip chat">a4 뉴스</span>
+                <span className="chip chat">뉴스</span>
                 <span className="bcode">0건</span>
               </div>
               <div className="empty-body">
@@ -433,30 +448,55 @@ export default function ResearchCard({
           {news.length > 0 && (
             <div className="gen-card">
               <div className="gen-card-head">
-                <span className="chip chat">a4 뉴스</span>
+                <span className="chip chat">뉴스</span>
                 <span className="bcode">{news.length}건</span>
               </div>
-              {news.slice(0, 5).map((n, i) => (
-                <div className="bline" key={i}>
-                  <span className="btag">뉴스</span>
-                  <span style={{ minWidth: 0 }}>
-                    <a href={n.link} target="_blank" rel="noreferrer">
-                      {n.title}
-                    </a>
-                    <span className="bcode"> {fmtDate(n.pub_date)}</span>
-                  </span>
-                </div>
-              ))}
+              {/* 받아 온 것을 **전부** 그린다. 예전엔 `.slice(0, 5)`였는데 머리말 배지는
+                  news.length(=전부)를 적고 있어서, "10건"이라 써 놓고 5건만 보이는
+                  상태였다 — 숫자와 목록이 갈리면 어느 쪽이 사실인지 알 수 없다.
+                  넘치는 건 자르지 말고 스크롤로 넘긴다(.gen-scroll). */}
+              {/* 줄마다 붙던 `뉴스` 꼬리표는 뺐다 — 머리말이 `뉴스 N건`이라 같은 말이었다. */}
+              <div className="gen-scroll">
+                {news.map((n, i) => (
+                  <div className="bline" key={i}>
+                    <span style={{ minWidth: 0 }}>
+                      {/* ↗는 공시원문 줄과 같은 뜻이다 — 새 탭으로 원문에 나간다.
+                          제목 **안**에 두는 이유: 밖에 두면 제목이 길어 줄바꿈될 때
+                          화살표만 다음 줄에 홀로 떨어진다. */}
+                      <a
+                        href={n.link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={`${n.title} (새 탭에서 열기)`}
+                      >
+                        {n.title}
+                        <span className="sbadge-ext" aria-hidden="true">
+                          ↗
+                        </span>
+                      </a>
+                      <span className="bcode"> {fmtDate(n.pub_date)}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
       )}
 
-      {/* 토큰 스트리밍 — note 이벤트가 오기 전까지 a5가 쓰는 대로 흐른다 */}
+      {/* 토큰 스트리밍 — note 이벤트가 오기 전까지 노트 작성 단계가 쓰는 대로 흐른다.
+          머리말을 위 두 카드(재무·뉴스)와 **같은 파란 칩**으로 맞춘다: 셋 다 "그 단계가
+          만들어 낸 것"이라 같은 어휘로 서야 한다.
+          ⚠️ 깜빡이는 캐럿(.gen-caret)을 **일부러 뺐다**(2026-07-29) — 본문이 눈앞에서 늘어나는
+          것 자체가 진행 표시라 캐럿은 같은 말을 두 번 했고, 1~2분 내내 깜빡여 긴 노트를 읽는
+          동안 시선을 계속 끌었다. 진행은 위 단계 타임라인과 카드 아래 안내줄이 말한다.
+          (F1 채팅의 캐럿은 남아 있다 — 그쪽 답변은 2~4문장이라 깜빡이는 시간이 짧다.)
+          라벨에서 "중"을 뗀 것도 같은 줄기다: 스트림이 끝나도 라벨은 남는데 "작성 중"은
+          그때 거짓이 된다. */}
       {noteText && (
         <div className="gen-note" aria-live="polite">
           <div className="gen-note-label">
-            a5 초안 작성 중 {running && <span className="gen-caret">▌</span>}
+            <span className="chip chat">초안 작성</span>
           </div>
           {noteText}
         </div>
