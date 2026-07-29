@@ -45,12 +45,14 @@ import {
   useTip,
 } from './charts';
 import F1Chat, { type ChatPrefill } from './F1Chat';
+import PrepMemo from './PrepMemo';
 import ResearchCard from './ResearchCard';
 import { ChatModal, NoteModal } from './ReviewModal';
 import {
   ACTOR,
   actorLabel,
   PILL,
+  PORTFOLIO_CHIPS,
   RISK,
   type AgentCalls,
   type Brief,
@@ -165,18 +167,6 @@ function ThemeToggle() {
   );
 }
 
-/** 포트폴리오 분석 칩. 종목 칩이 "이 종목"을 채운다면 이쪽은 "이 구성"을 채운다.
- *
- *  ⚠️ 각 질문문은 **백엔드 라우팅 키워드를 반드시 포함해야 한다**(`f1._PORTFOLIO_KEYWORDS`:
- *     집중·배분·성향 …). 칩이 채운 질문이 포트폴리오 라우트로 안 가면 종목을 되묻는
- *     clarify로 떨어져, 누른 사람 입장에서는 버튼이 고장 난 것처럼 보인다.
- *     라벨이 아니라 **q가 계약**이다 — 라벨만 고치는 건 안전하고, q는 키워드를 지켜야 한다. */
-const PORTFOLIO_CHIPS: { label: string; q: string }[] = [
-  { label: '집중도', q: '보유 종목 집중도 어때?' },
-  { label: '자산배분', q: '자산배분 구성 어때?' },
-  { label: '성향 대비', q: '등록 위험성향 대비 구성 어때?' },
-];
-
 /** 화면(탭). 어떤 탭이 실제로 나오는지는 역할이 정한다 — 아래 TABS 참조.
  *  세 뷰는 전부 **마운트된 채로** `hidden`만 토글한다. 특히 'note' 탭은 1~2분짜리 SSE가
  *  도는 곳이라, 언마운트하면 실행이 끊기고 크레딧만 쓰고 노트가 안 나온다. */
@@ -252,93 +242,6 @@ function auditCat(a: DashboardAudit): AuditCat {
  *     `뉴스 Wed, 22 Ju`가 사용자에게 나간 적이 있고, 날짜를 UTC로 찍는 사고도 있었다. */
 const whenLabel = (iso: string) => fmtDateTime(iso).slice(5).replace('-', '/');
 const AUDIT_PAGE = 20;
-
-/* ── 상담 준비 메모 ───────────────────────────────────────────
-   고객을 고르면, 그 고객이 **실제로 들고 있는 종목**에 대해 이미 수집된 사실만 모아 보여준다.
-   여기서 에이전트를 새로 돌리지 않는다 — 브리프(F2)와 종목 노트(F3)가 출처와 함께 이미 가진
-   것을 고객 기준으로 다시 배열할 뿐이다("공통 인프라 1 + 얇은 레이어 N"의 실제 사례).
-   확인된 게 없으면 없다고 말한다 — 빈 줄을 그럴듯한 문장으로 채우지 않는다(가드레일 3). */
-function PrepMemo({
-  customer,
-  brief,
-  notes,
-  onOpenNote,
-}: {
-  customer: Customer;
-  brief: Brief | null;
-  notes: Record<string, NoteDetail>;
-  onOpenNote: (code: string) => void;
-}) {
-  const rows = customer.holdings.map((h) => ({
-    h,
-    b: brief?.items.find((i) => i.stock_code === h.code) ?? null,
-    note: notes[h.code] ?? null,
-  }));
-
-  // 라벨을 두지 않는다. 이 구역의 이름이 될 만한 말은 전부 화면 어딘가가 이미 쓰고 있었다 —
-  // "상담 준비"는 PB 탭 이름이고, "보유 종목"은 바로 위 표(aria-label)와 오른쪽 채팅 머리말이
-  // 쓴다. 두 블록의 경계는 .prep의 border-top이 이미 만들고 있어서 라벨이 없어도 섞이지 않는다.
-  return (
-    <div className="prep">
-      {rows.map(({ h, b, note }) => {
-        // 시세는 싣지 않는다. 브리프에 든 종목만 시세가 잡혀서(b = brief.items에서 찾은 것)
-        // 같은 목록인데 어떤 줄은 가격·등락률이 붙고 어떤 줄은 이름만 나왔다 — 그 차이가
-        // "이 종목이 더 중요하다"로 읽히지만 실제 뜻은 "오늘 브리핑 3종목에 들었다"일 뿐이다.
-        // 시세가 필요하면 바로 위 브리핑 카드에 있다. 여기서는 이름·코드만 같은 모양으로 둔다.
-        const lines = [
-          ...(b?.disclosures ?? []).slice(0, 2).map((d) => ({
-            tag: '공시',
-            text: d.report_nm.trim(),
-            href: d.viewer_url,
-            meta: fmtDate(d.rcept_dt),
-          })),
-          ...(b?.news ?? []).slice(0, 1).map((n) => ({
-            tag: '뉴스',
-            text: n.title,
-            href: n.link,
-            meta: fmtDate(n.pub_date),
-          })),
-        ];
-        return (
-          <div className="prep-row" key={h.code}>
-            <div className="prep-name">
-              {h.name} <span className="bcode">{h.code}</span>
-            </div>
-            {lines.map((l, i) => (
-              <div className="prep-line" key={i}>
-                <span className="btag">{l.tag}</span>
-                <a href={l.href || '#'} target="_blank" rel="noreferrer">
-                  {l.text}
-                </a>
-                <span className="bcode"> {l.meta}</span>
-              </div>
-            ))}
-            {note && (
-              <div className="prep-line">
-                <span className="btag">노트</span>
-                <button className="linklike" onClick={() => onOpenNote(h.code)}>
-                  {note.corp_name} 종목 노트 열기
-                </button>
-                <span className="bcode">
-                  {' '}
-                  · {PILL[note.status]?.[0] ?? note.status}
-                </span>
-              </div>
-            )}
-            {!lines.length && !note && (
-              <div className="prep-line muted">
-                오늘 브리핑·노트에 이 종목은 없습니다.
-              </div>
-            )}
-          </div>
-        );
-      })}
-      {!customer.holdings.length && (
-        <div className="hint">보유 종목이 없습니다.</div>
-      )}
-    </div>
-  );
-}
 
 export default function DashboardPage() {
   // 기본 역할은 PB다 — 이 제품의 사용자가 PB이므로 첫 화면도 PB가 보는 화면이어야 한다.
@@ -1746,6 +1649,12 @@ export default function DashboardPage() {
                     customer={c}
                     role={role}
                     toast={toast}
+                    /* 문의가 가리키는 종목의 공시·뉴스·노트를 모달 안에서 바로 읽는다 —
+                       고객 카드와 **같은 재료**(브리프·노트 색인)이고 에이전트를 새로
+                       돌리지 않는다(크레딧 0). */
+                    brief={data.brief}
+                    notes={data.notes}
+                    onOpenNote={(code) => setModal({ kind: 'note', code })}
                     onClose={() => setModal(null)}
                     onChanged={() => void load()}
                     /* 준법에게는 고객 포트폴리오 카드가 없다(정보장벽) — 그때는 넘기지

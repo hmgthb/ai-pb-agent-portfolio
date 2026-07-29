@@ -41,7 +41,7 @@ function sourceKind(src: NoteSource): string {
   if (src.type === 'dart') return '공시';
   if (src.type === 'news') return '뉴스';
   if (src.type === 'krx') return '시세';
-  return '보유(내부)';
+  return '보유';
 }
 
 function sourceDate(src: NoteSource): string {

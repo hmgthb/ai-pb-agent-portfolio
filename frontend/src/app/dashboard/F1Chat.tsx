@@ -28,7 +28,7 @@ const AGENT_LABEL: Record<string, string> = {
   // 에이전트가 아니라 **코드 계산**이다 — 집중도·배분은 순수 함수가 내고 LLM은 문장만 쓴다.
   // 배지에 그대로 적는 이유: "왜 이 답이 나왔나"를 화면이 말해야 하는데(감사 가능한 라우팅),
   // 여기서만 도구 호출이 0건이라 진행 타임라인에 아무것도 안 뜬다.
-  portfolio: '보유·배분(계산)',
+  portfolio: '보유·배분',
 };
 
 type Turn = {
@@ -176,7 +176,6 @@ export default function F1Chat({
             <div className="bubble ai">
               {t.routing && !t.routing.need_clarify && (
                 <div className="route-badge" title={t.routing.reason}>
-                  라우팅 →{' '}
                   <b>{t.routing.agent ? AGENT_LABEL[t.routing.agent] : '—'}</b>
                   <span className="route-entity">
                     {t.routing.entity_name ?? t.routing.entity_code}
@@ -194,7 +193,7 @@ export default function F1Chat({
 
               {t.blocked && (
                 <div className="chat-blocked">
-                  ⛔ 입력이 차단됐습니다 (에이전트를 실행하지 않았습니다)
+                  ⛔ 입력이 차단됐습니다. (에이전트를 실행하지 않았습니다)
                   <ul>
                     {t.blocked.map((v, j) => (
                       <li key={j}>{v}</li>

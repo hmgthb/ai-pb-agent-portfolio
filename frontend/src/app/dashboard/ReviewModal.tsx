@@ -9,6 +9,8 @@
 
 import { useState } from 'react';
 import { apiPost, errorMessage, fmtKRW, hhmm } from './api';
+import F1Chat, { type ChatPrefill } from './F1Chat';
+import PrepMemo from './PrepMemo';
 import {
   ACK_REASONS,
   ACTOR,
@@ -16,9 +18,11 @@ import {
   DISCARD_REASONS,
   MY_PB,
   PILL,
+  PORTFOLIO_CHIPS,
   REJECT_REASONS,
   RISK,
   WATERMARK,
+  type Brief,
   type Customer,
   type NoteAck,
   type NoteDetail,
@@ -455,7 +459,8 @@ export function NoteModal({
  *  여기서 보여주는 것은 **PB가 회신을 쓰기 전에 확인할 사실**뿐이다.
  *
  *  계좌 요약은 시드(가상 고객)의 실제 값이고, 상담 고지 문구는 규정에서 온 고정 문구다.
- *  종목 관련 사실이 필요하면 F1(종목 즉답)·브리핑으로 간다 — 여기서 지어내지 않는다. */
+ *  종목 관련 사실은 지어내지 않는다 — 브리프·노트가 이미 가진 것(PrepMemo)을 그대로 옮기고,
+ *  없으면 없다고 적은 뒤 인라인 F1으로 **PB가 직접 조회**한다. */
 function prepFacts(c: Customer) {
   return [
     {
@@ -473,20 +478,44 @@ function prepFacts(c: Customer) {
   ];
 }
 
+/** 이 문의가 가리키는 **보유 종목**. 문의 주제·질문 원문에 이름이 그대로 들어 있으면 그것이다.
+ *
+ *  매칭 기준을 "보유 종목명"으로 두는 게 핵심이다: 계좌 이야기(리밸런싱·연금·ISA)는 자연히
+ *  안 걸리고, 안 들고 있는 종목 이야기면 이 화면이 내놓을 계좌 사실 자체가 없다.
+ *  겹치면 **긴 이름이 이긴다** — `기아`처럼 짧은 이름이 다른 종목명 안에 우연히 들어가는 경우
+ *  실제로 문의가 가리키는 쪽은 늘 더 긴 이름이다. */
+function askedHolding(item: QueueChat, c: Customer) {
+  const hay = `${item.topic} ${item.question ?? ''}`;
+  return (
+    [...c.holdings]
+      .filter((h) => hay.includes(h.name))
+      .sort((a, b) => b.name.length - a.name.length)[0] ?? null
+  );
+}
+
 export function ChatModal({
   item,
   customer,
   role,
+  brief,
+  notes,
   onClose,
   onChanged,
+  onOpenNote,
   onOpenPortfolio,
   toast,
 }: {
   item: QueueChat;
   customer: Customer;
   role: Role;
+  /** 오늘 브리프·노트 색인 — 고객 카드의 상담 준비 메모와 **같은 재료**다.
+   *  여기서 에이전트를 새로 돌리지 않는다(크레딧 0). */
+  brief: Brief | null;
+  notes: Record<string, NoteDetail>;
   onClose: () => void;
   onChanged: () => void;
+  /** 종목 노트 모달로 바꿔 연다. 문의는 큐에 그대로 남으므로 잃는 것은 없다. */
+  onOpenNote: (code: string) => void;
   /** 이 고객의 포트폴리오 카드로 보낸다(모달을 닫고 상담 준비 탭에서 그 고객을 고른다).
    *  준법에게는 고객 포트폴리오 카드 자체가 없으므로 넘어오지 않는다 — 정보장벽. */
   onOpenPortfolio?: () => void;
@@ -495,6 +524,11 @@ export function ChatModal({
   const [res, setRes] = useState<Result>({});
   const [status, setStatus] = useState(item.status);
   const mine = role === 'pb' && customer.pb === MY_PB;
+  const asked = askedHolding(item, customer);
+  /** 인라인 채팅 입력창을 채우는 신호(고객 카드의 칩과 같은 방식) — 같은 칩을 두 번 눌러도
+   *  다시 채워지도록 n을 올린다. **채우기만 하고 보내지 않는다**(실행은 크레딧). */
+  const [prefill, setPrefill] = useState<ChatPrefill | null>(null);
+  const ask = (q: string) => setPrefill((p) => ({ q, n: (p?.n ?? 0) + 1 }));
   const deny =
     role === 'comp'
       ? '이 건의 처리는 담당 PB 권한입니다'
@@ -560,15 +594,89 @@ export function ChatModal({
               </div>
             ))}
           </div>
-          {/* 여기 있는 건 계좌 요약 한두 줄뿐이다 — 보유 종목·공시·뉴스와 포트폴리오 질문은
-              전부 고객 카드에 있다. 그쪽으로 가는 길이 없어서 PB가 목록 최하단에서 이
-              고객을 다시 찾아야 했다(HANDOFF §7). 문의는 큐에 남으므로 잃는 것은 없다. */}
+          {/* 이 줄들은 계좌 요약이다. 도넛(자산배분)·전 보유 종목 표·위험 플래그 사유는
+              고객 카드가 가진 것이고, 그쪽으로 가는 길이 여기다 — 없던 시절엔 PB가 목록
+              최하단에서 이 고객을 다시 찾아야 했다(HANDOFF §7). 문의는 큐에 남는다. */}
           {onOpenPortfolio && (
             <button className="linklike prep-go" onClick={onOpenPortfolio}>
               포트폴리오 →
             </button>
           )}
         </div>
+
+        {/* ── 여기부터가 "회신 전에 확인할 사실" ──────────────────────────
+            담당 PB가 아니면 그리지 않는다. 준법에게 고객 보유·공시가 갈 이유가 없고
+            (정보장벽), 인라인 채팅은 서버가 어차피 404로 막는다
+            (`/api/chat/stream?customer_id=`는 담당이 아니면 거절). */}
+        {mine && (
+          <>
+            {/* 문의가 종목을 가리키면 **그 종목만** 낸다. 전 보유 종목을 늘어놓으면 이미
+                특정된 질문이 목록에 묻힌다(이 화면의 값어치가 거기서 나온다).
+                계좌 이야기(리밸런싱·연금·ISA)는 여기 걸리지 않고 아래 분석 칩이 받는다. */}
+            {asked && (
+              <div className="bubble">
+                <div className="blabel">문의 종목</div>
+                <PrepMemo
+                  customer={customer}
+                  brief={brief}
+                  notes={notes}
+                  onOpenNote={onOpenNote}
+                  only={asked.code}
+                  amounts
+                />
+              </div>
+            )}
+
+            {/* 인라인 F1 — 고객 카드의 그것과 **같은 컴포넌트·같은 칩·같은 라우트**다.
+                ⚠️ 주어는 여전히 **포트폴리오**이지 사람이 아니다. 문의 모달이라 더 미끄럽다:
+                   "이 고객에게 뭐라고 답하지"로 읽히면 회신문 대필(가드레일 4)을 부른다.
+                   제목·칩을 고객 카드와 글자까지 같게 두는 이유가 그것이다.
+                ⚠️ 입력 가드는 한글 이름을 못 잡는다(HANDOFF §7) — 이름을 안 쓰게 만드는 건
+                   지금도 이 UI의 몫이다.
+                ⚠️ 모달을 닫으면 대화가 사라진다(EventSource가 언마운트에서 닫힌다). F1은
+                   한 턴이 수십 초라 F3(1~2분)만큼 아깝지는 않지만, 답을 받는 중이면 닫지
+                   않는 게 맞다. */}
+            <div className="sess-chat">
+              <div className="blabel">
+                포트폴리오 질문{' '}
+                <span className="cchat-src">
+                  보유·배분 · 공시 · 뉴스 · 지연시세
+                </span>
+              </div>
+              <div className="cchat-chips">
+                {/* 문의 종목을 맨 앞에 세운다 — 순서만 바꿀 뿐 목록은 고객 카드와 같다.
+                    질문문도 카드와 같은 `최근 실적`이다: 주제어(실적·비중·공시·급락)로
+                    의도를 추측해 채우면 틀렸을 때 크레딧을 헛쓴다. 칩은 입력창을 채울
+                    뿐이고 실제로 무엇을 물을지는 PB가 고쳐 쓴다. */}
+                {[
+                  ...(asked ? [asked] : []),
+                  ...customer.holdings.filter((h) => h.code !== asked?.code),
+                ].map((h) => (
+                  <button
+                    key={h.code}
+                    className="chip"
+                    onClick={() => ask(`${h.name} 최근 실적`)}
+                    title={`${h.name}(${h.code}) 질문 채우기`}
+                  >
+                    {h.name}
+                  </button>
+                ))}
+                {PORTFOLIO_CHIPS.map((c) => (
+                  <button
+                    key={c.label}
+                    className="chip ana"
+                    onClick={() => ask(c.q)}
+                    title={c.q}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+              <F1Chat compact customerId={customer.id} prefill={prefill} />
+            </div>
+          </>
+        )}
+
         {/* 노트 모달과 같은 자리 — 읽을 것 아래, 조작 줄 위. 결정 직전에 반드시 지나친다. */}
         <div className="wm">{WATERMARK}</div>
         <ActionsRow

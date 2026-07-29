@@ -125,8 +125,11 @@ for (const [name, body] of Object.entries(SCENARIOS)) {
   );
 
   await page.goto('http://localhost:3000/dashboard', { waitUntil: 'networkidle' });
-  await page.fill('input[aria-label="종목코드"]', '035420');
-  await page.click('button:has-text("노트 생성")');
+  // 노트 생성 카드는 PB의 「작성·검토」 탭에 있다(첫 화면은 「상담 준비」). 탭은 `hidden`
+  // 토글이라 DOM에는 있지만 안 보이는 상태로 시작한다 — 안 누르면 fill이 그대로 멈춘다.
+  await page.click('button:has-text("작성·검토")');
+  await page.fill('#research-card input[aria-label="종목 코드"]', '035420');
+  await page.click('#research-card button.primary');
 
   // done까지 처리되면 버튼이 다시 활성화된다
   await page.waitForFunction(

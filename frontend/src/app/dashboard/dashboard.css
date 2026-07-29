@@ -1155,17 +1155,34 @@ th.rownum {
   font-weight: 700;
   letter-spacing: -0.01em;
 }
-.cust-chat .cchat-src {
+/* 근거 줄 — 고객 카드의 머리말과 고객 문의 모달의 `.blabel` 둘 다 쓴다(같은 채팅이
+   두 자리에 있는 것이라 같은 말을 같은 모양으로 적는다). 그래서 스코프를 벗겨 뒀다. */
+.cchat-src {
   font-size: 11.5px;
   color: var(--muted);
 }
-.cust-chat .cchat-chips {
+/* 모달에서는 굵은 라벨(.blabel) 안에 들어간다. 고객 카드처럼 같은 줄에 붙여 봤더니
+   글자 크기가 같아(11px) 굵기 차이만으로는 안 갈렸다 — `포트폴리오 질문 보유·배분 ·
+   공시 …`가 한 문장으로 읽혔다. 카드에서는 제목이 15px이라 크기가 먼저 둘을 가른다.
+   그래서 여기서는 줄을 나눈다: 제목 한 줄, 근거 한 줄. */
+.blabel .cchat-src {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.cust-chat .cchat-chips,
+.sess-chat .cchat-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin: 8px 0;
 }
-.cust-chat .chip {
+/* 칩 모양은 두 자리가 공유한다(고객 카드 · 고객 문의 모달) — 전역 `.chip`은 크기·알약
+   모양만 정하고, 눌리는 버튼 꼴은 여기서 붙는다. ⚠️ 한쪽만 고치지 말 것. */
+.cust-chat .chip,
+.sess-chat .chip {
   font: inherit;
   font-size: 12px;
   font-weight: 600;
@@ -1176,20 +1193,23 @@ th.rownum {
   padding: 3px 10px;
   cursor: pointer;
 }
-.cust-chat .chip:hover {
+.cust-chat .chip:hover,
+.sess-chat .chip:hover {
   border-color: var(--accent);
 }
 /* 포트폴리오 분석 칩 — 종목 칩과 **다른 종류**다(대상이 종목이 아니라 구성 전체).
    새 색을 만들지 않고 형태로 가른다: 종목은 채운 알약, 분석은 점선 테두리에 면이 없다.
    색 예산이 이미 소진돼 있어서(HANDOFF §0-1) 구분은 색이 아니라 형태로 푸는 게 이 화면의
    규칙이다 — 위험 플래그(⚑ 테두리 알약)와 같은 방법. */
-.cust-chat .chip.ana {
+.cust-chat .chip.ana,
+.sess-chat .chip.ana {
   background: transparent;
   border-style: dashed;
   border-color: var(--border);
   color: var(--muted);
 }
-.cust-chat .chip.ana:hover {
+.cust-chat .chip.ana:hover,
+.sess-chat .chip.ana:hover {
   border-style: solid;
   border-color: var(--accent);
   color: var(--ink-2);
@@ -2010,7 +2030,10 @@ a.fn-title:hover {
 .bubble.q {
   background: var(--page);
 }
-.bubble .blabel {
+/* 고객 문의 모달의 구역 이름(고객 질문 · 고객 정보 · 문의 종목 · 포트폴리오 질문).
+   ⚠️ `.bubble` 안으로 스코프하지 말 것 — 인라인 채팅 구역은 상자를 두르지 않는다
+   (안에 든 대화 로그가 이미 테두리를 가져서 상자가 겹친다). */
+.blabel {
   font-size: 11px;
   font-weight: 700;
   color: var(--muted);
@@ -2616,6 +2639,43 @@ a.fn-title:hover {
 }
 .prep-go:hover {
   text-decoration: underline;
+}
+/* 고객 문의 모달 안의 상담 준비 메모(문의 종목 한 줄). 카드에서는 위 보유 표와 사이를
+   벌려야 했지만 여기서는 바로 위가 `.blabel`이라 그 간격이 빈 줄로 보인다. */
+.bubble .prep {
+  margin-top: 2px;
+  padding-top: 0;
+}
+/* 라벨과 목록 사이의 줄은 **목록이 있는 상자에만** 긋는다 — 옆 `고객 정보` 상자의 첫
+   `.srow`가 같은 줄을 그어서, 여기만 없으면 나란한 두 상자가 서로 다른 짜임으로 보였다.
+   (`고객 질문`은 목록이 아니라 문장 하나라 줄이 없는 게 맞다.)
+   카드 쪽 `.prep-row:first-of-type { border-top: 0 }`은 그대로 둔다 — 거기서는 바로 위가
+   보유 표라 선이 두 개 겹쳤다. */
+.bubble .prep .prep-row:first-of-type {
+  border-top: 1px solid var(--grid);
+}
+
+/* ── 고객 문의 모달 안의 인라인 F1 ─────────────────────────────
+   고객 카드의 것과 같은 컴포넌트인데 사는 상자가 다르다: 저쪽은 높이를 부모(그리드 칸)가
+   정해서 로그가 남는 높이를 전부 먹지만, 여기는 **이미 스크롤 중인 `.m-body` 안**이라
+   로그가 제 높이대로 자라면 모달 안에 스크롤이 둘 겹친다. 그래서 로그만 짧게 묶는다.
+   ⚠️ `.cust-chat .chat-log`의 flex-grow/height:0을 여기로 가져오지 말 것 — 이 상자에는
+      늘릴 여백이 없어서 로그가 0으로 접힌다. */
+.sess-chat {
+  /* 위 `.bubble`(margin 8px)보다 조금 더 띄운다 — 여기는 테두리가 없어서 같은 간격이면
+     앞 상자에 딸린 꼬리처럼 붙어 보인다. 읽을 것과 물을 것의 경계이기도 하다. */
+  margin-top: 16px;
+}
+.sess-chat .chat-log {
+  min-height: 0;
+  /* 고정 px(240)로 묶어 봤더니 모달에 세로 여백이 남는데도 답변 네 문장이 안쪽 스크롤에
+     걸렸다 — 스크롤이 둘이면 바깥 것부터 밀어야 해서 더 나쁘다. 화면 높이에 비례로 묶어
+     보통의 한 턴은 통째로 보이게 하고(넘치면 `.m-body`가 받는다), 짧은 창에서만 안쪽
+     스크롤이 선다. 전체화면 F1 모달의 52vh보다 낮은 건 위에 읽을 것이 더 있어서다. */
+  max-height: 42vh;
+}
+.sess-chat .chat-empty {
+  padding: 18px 0;
 }
 
 /* AI가 오늘 한 일 — 카드가 아니라 접어 둔 한 줄(기본 닫힘, 감사로그 실집계).
