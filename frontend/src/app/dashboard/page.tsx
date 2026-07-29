@@ -1239,10 +1239,12 @@ export default function DashboardPage() {
                             </td>
                             <td>
                               {/* ▲가 아니다 — 수익률 옆에서 상승 화살표로 읽힌다.
-                                  ⚑는 방향이 없고 기능 이름("위험 플래그")과도 맞는다. */}
+                                  ⚑는 방향이 없고 기능 이름("위험 플래그")과도 맞는다.
+                                  `.icon`은 글리프 하나짜리 원형 변종이다(라벨이 붙는
+                                  이름 옆 알약과 달리 폭이 내용에 안 늘어난다). */}
                               {c.flag && (
                                 <span
-                                  className="flag"
+                                  className="flag icon"
                                   title={c.flagReasons
                                     .map((r) => r.text)
                                     .join(' · ')}
@@ -1275,14 +1277,17 @@ export default function DashboardPage() {
                           "규칙을 안 돌렸다"가 구분되지 않는다(HANDOFF §0-1). 예전엔 이 말을
                           카드 맨 아래 요약 줄이 했는데, 플래그가 있는 고객에서는 이름 옆 ⚑·
                           사유 줄과 **세 번** 겹쳤다 — 자리를 여기 하나로 모았다.
-                          ⚑와 적색은 위반 표시라 없을 때는 둘 다 뗀다. */}
+                          사유 줄에는 ⚑를 달지 않는다 — 바로 위 이름 옆 `⚑ 위험 플래그`
+                          배지가 이미 마커이고, 3px 아래에서 같은 기호를 되풀이하면
+                          자기 라벨을 두 번 다는 셈이다. 적색은 위반 표시라 없을 때 뗀다. */}
                       {selected.flag ? (
                         <div className="flag-reasons">
-                          ⚑{' '}
                           {selected.flagReasons.map((r) => r.text).join(' · ')}
                         </div>
                       ) : (
-                        <div className="flag-reasons none">위험 플래그 없음</div>
+                        <div className="flag-reasons none">
+                          위험 플래그 없음
+                        </div>
                       )}
                       <div className="row">
                         <div className="kv">
