@@ -14,8 +14,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { chatStreamUrl } from './api';
-import type { ChatAnswer, ChatRouting } from './types';
+import { RedactionDetails } from './redaction';
 import { mergeSources, SourceBadge } from './sources';
+import type { ChatAnswer, ChatRedaction, ChatRouting } from './types';
 
 /** 라우팅 배지에 적는 이름. **에이전트 식별자(a1·a2·a4)를 적지 않는다** — 이 배지가 답할
  *  것은 "왜 이 답이 나왔나"(어떤 데이터를 봤나)이지 "어느 서브에이전트가 돌았나"가 아니다.
@@ -34,12 +35,39 @@ const AGENT_LABEL: Record<string, string> = {
 type Turn = {
   q: string;
   routing?: ChatRouting;
+  redaction?: ChatRedaction;
   streaming: string;
   answer?: ChatAnswer;
   blocked?: string[];
+  /** 어느 문지기에 걸렸나: `input`=들어오는 질문, `egress`=나가는 프롬프트.
+   *  둘은 사용자가 할 일이 다르다 — 앞은 질문을 고쳐 쓰고, 뒤는 데이터가 새는 것이라
+   *  질문을 고쳐도 같은 결과일 수 있다. */
+  blockedStage?: string;
   error?: string;
   running: boolean;
 };
+
+/** 보내기 전 경고 — 입력창에 담당 고객 이름이나 계좌·주민번호 형식이 있으면 알린다.
+ *
+ *  ⚠️ **이건 게이트가 아니다.** 권위는 백엔드(`compliance.egress_guard`)에 있고 여기서는
+ *     막지 않는다(보내기 버튼도 그대로 살아 있다) — 브라우저는 이미 `/api/customers`로
+ *     이름·계좌·실금액을 받아 화면에 그리고 있어서, 여기서 가려 봐야 보장이 생기지 않는다.
+ *     이 줄이 하는 일은 **누르기 전에 알려 주는 것**뿐이다(백엔드가 막으면 크레딧은 안 쓰지만
+ *     왕복은 한다). 오탐이어도 사람이 그냥 보낼 수 있어야 해서 차단하지 않는다.
+ *  ⚠️ 규칙은 백엔드와 **같은 뜻**으로 맞춘다: 3글자 이상 이름만, 계좌·주민번호는 숫자 형식.
+ *     2글자를 안 잡는 이유도 같다(일반 낱말과 겹쳐 오탐). */
+const _ACCOUNT_RE = /\d{2,3}\s*[-–]\s*\d{3,4}\s*[-–]\s*\d{4,6}/;
+const _RRN_RE = /\d{6}\s*[-–]\s*[1-4]\d{6}/;
+function outboundWarning(text: string, names: string[]): string | null {
+  // 사유마다 할 일이 다르다 — 이름은 **바꿔** 물으면 되고(종목·비중이면 같은 답이 나온다),
+  // 계좌·주민번호는 바꿀 게 아니라 **지우는** 것이다(답변에 쓸 데가 없다).
+  const hit = names.find((n) => n.length >= 3 && text.includes(n));
+  if (hit)
+    return `고객 이름이 들어 있습니다(${hit}). 이름 대신 종목·비중으로 물어보세요.`;
+  if (_RRN_RE.test(text) || _ACCOUNT_RE.test(text))
+    return '계좌·주민번호 형식이 들어 있습니다. 지우고 물어보세요.';
+  return null;
+}
 
 /** 입력창에 질문을 채워 넣는 신호. 같은 종목을 두 번 눌러도 다시 채워져야 하므로
  *  문자열이 아니라 **눌린 횟수(n)를 같이** 들고 다닌다 — 값이 같으면 effect가 안 돈다. */
@@ -50,6 +78,8 @@ export default function F1Chat({
   prefill,
   compact,
   customerId,
+  customerNames,
+  preview,
 }: {
   initial?: string;
   /** 마운트 뒤에도 입력창을 채우는 경로(고객 카드의 보유 종목 칩). */
@@ -59,6 +89,12 @@ export default function F1Chat({
   /** 붙이면 **포트폴리오 질문**까지 답한다(집중도·배분·성향 대비). 안 붙이면 종목 질문만.
    *  전역 F1(우하단 고정 버튼)에는 고객이 없으므로 undefined로 열린다. */
   customerId?: number;
+  /** 담당 고객 명단 — 보내기 전 경고에만 쓴다. 브라우저가 이미 갖고 있는 값이라
+   *  (`/api/customers`가 이름을 준다) 여기 넘긴다고 새로 노출되는 건 없다. */
+  customerNames?: string[];
+  /** 이 고객에 대해 물으면 무엇이 나가는가 — 질문 전에 미리 보여준다(크레딧 0).
+   *  `GET /api/customers/{id}/egress-preview`가 준 값 그대로. */
+  preview?: ChatRedaction | null;
 } = {}) {
   // 상담 준비 메모에서 종목을 눌러 열면 질문이 채워진 채로 시작한다. **보내지는 않는다** —
   // 실행은 크레딧을 쓰고 답변은 고객 앞에서 쓰일 수 있으니, 시작 버튼은 사람이 누른다.
@@ -69,6 +105,9 @@ export default function F1Chat({
   const esRef = useRef<EventSource | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const running = turns.length > 0 && turns[turns.length - 1].running;
+  // 렌더 중 계산이다(상태가 아니다) — 입력이 바뀌면 그 프레임에 같이 바뀌어야 하고,
+  // effect로 두면 한 글자 늦게 뜬다. 순수 문자열 검사라 비용도 없다.
+  const warning = outboundWarning(input, customerNames ?? []);
 
   useEffect(() => () => esRef.current?.close(), []);
   useEffect(() => {
@@ -107,8 +146,14 @@ export default function F1Chat({
     es.addEventListener('routing', (e) =>
       patchLast({ routing: JSON.parse((e as MessageEvent).data) }),
     );
-    es.addEventListener('blocked', (e) =>
-      patchLast({ blocked: JSON.parse((e as MessageEvent).data).violations }),
+    es.addEventListener('blocked', (e) => {
+      const d = JSON.parse((e as MessageEvent).data);
+      patchLast({ blocked: d.violations, blockedStage: d.stage ?? 'input' });
+    });
+    // 비식별화 경계를 지난 뒤에만 온다 — 이 이벤트가 있다는 건 "실제로 이것이 나갔다"는 뜻이다
+    // (가드에 걸려 차단되면 오지 않는다).
+    es.addEventListener('redaction', (e) =>
+      patchLast({ redaction: JSON.parse((e as MessageEvent).data) }),
     );
     es.addEventListener('answer_token', (e) =>
       setTurns((ts) =>
@@ -165,6 +210,17 @@ export default function F1Chat({
         </>
       )}
 
+      {/* 질문 전 미리보기 — 대화 로그 **밖**, 입력 위다. 로그 안에 두면 답변이 쌓이면서
+          위로 밀려 올라가는데, 이건 특정 턴에 딸린 게 아니라 이 고객에 대해 늘 참인 값이다.
+          답변 위 배지와 **글자까지 같은 상자**를 쓴다: 자리가 뜻을 갈라 준다(입력창 위면
+          "물어보면 볼 것", 말풍선 안이면 "이 답을 만들 때 본 것"). 미리 본 것과 실제 나간
+          것이 다른 모양이면 미리보기가 약속 구실을 못 한다. */}
+      {preview && (
+        <div className="redact-preview">
+          <RedactionDetails r={preview} />
+        </div>
+      )}
+
       <div className="chat-log" ref={scrollRef}>
         {turns.length === 0 && (
           <div className="chat-empty">질문을 입력하면 대화가 시작됩니다.</div>
@@ -191,9 +247,16 @@ export default function F1Chat({
                 </div>
               )}
 
+              {/* `AI가 보는 정보` — 이 답을 만들 때 모델이 실제로 받은 것.
+                  라우팅 배지 바로 아래인 건 둘이 같은 종류의 정보여서다: "왜 이 답이
+                  나왔나"(어떤 데이터를 봤나) 옆에 "그 데이터가 어떤 꼴이었나"가 선다. */}
+              {t.redaction && <RedactionDetails r={t.redaction} />}
+
               {t.blocked && (
                 <div className="chat-blocked">
-                  ⛔ 입력이 차단됐습니다. (에이전트를 실행하지 않았습니다)
+                  {t.blockedStage === 'egress'
+                    ? '⛔ 외부 모델로 보내기 전에 차단됐습니다. (에이전트를 실행하지 않았습니다)'
+                    : '⛔ 입력이 차단됐습니다. (에이전트를 실행하지 않았습니다)'}
                   <ul>
                     {t.blocked.map((v, j) => (
                       <li key={j}>{v}</li>
@@ -260,6 +323,10 @@ export default function F1Chat({
           </div>
         ))}
       </div>
+
+      {/* 보내기 전 경고 — 입력창 **바로 위**다(누르기 직전에 지나친다). 버튼은 살려 둔다:
+          권위는 백엔드에 있고 이건 알림일 뿐이라, 오탐이면 그냥 보낼 수 있어야 한다. */}
+      {warning && <div className="out-warn">⚠ {warning}</div>}
 
       <div className="chat-input">
         <input

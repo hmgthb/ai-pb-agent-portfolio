@@ -285,6 +285,17 @@ async def get_customer(customer_id: int) -> asyncpg.Record | None:
     return await pool().fetchrow("SELECT * FROM pb_customers WHERE id = $1", customer_id)
 
 
+# 반출 가드(compliance.egress_guard)가 자유 텍스트에 섞인 고객 이름을 대조하는 데 쓴다.
+# `list_customers`를 재사용하지 않는 이유: 저쪽은 holdings·alloc JSON까지 통째로 끌어와
+# 50행이면 무거운데, 여기 필요한 건 이름 한 열이고 **채팅 요청마다** 돈다.
+async def list_customer_names(pb: str | None = None) -> list[str]:
+    if pb is None:
+        rows = await pool().fetch("SELECT name FROM pb_customers")
+    else:
+        rows = await pool().fetch("SELECT name FROM pb_customers WHERE pb = $1", pb)
+    return [r["name"] for r in rows]
+
+
 async def list_sessions(pb: str | None = None) -> list[asyncpg.Record]:
     if pb is None:
         return await pool().fetch(

@@ -499,6 +499,7 @@ export function ChatModal({
   role,
   brief,
   notes,
+  customerNames,
   onClose,
   onChanged,
   onOpenNote,
@@ -512,6 +513,8 @@ export function ChatModal({
    *  여기서 에이전트를 새로 돌리지 않는다(크레딧 0). */
   brief: Brief | null;
   notes: Record<string, NoteDetail>;
+  /** 보내기 전 경고용 담당 고객 명단(알림일 뿐 — 판정은 백엔드 반출 가드가 한다). */
+  customerNames: string[];
   onClose: () => void;
   onChanged: () => void;
   /** 종목 노트 모달로 바꿔 연다. 문의는 큐에 그대로 남으므로 잃는 것은 없다. */
@@ -643,24 +646,30 @@ export function ChatModal({
                   보유·배분 · 공시 · 뉴스 · 지연시세
                 </span>
               </div>
+              {/* 종목 칩과 분석 칩은 **줄을 나눈다** — 고객 카드와 같은 규칙이다(한 상자면
+                  종목이 많을 때 분석 칩이 종목 사이에 끼어 두 종류가 섞여 보인다).
+                  문의 종목을 맨 앞에 세운다 — 순서만 바꿀 뿐 목록은 고객 카드와 같다.
+                  질문문도 카드와 같은 `최근 실적`이다: 주제어(실적·비중·공시·급락)로
+                  의도를 추측해 채우면 틀렸을 때 크레딧을 헛쓴다. 칩은 입력창을 채울
+                  뿐이고 실제로 무엇을 물을지는 PB가 고쳐 쓴다. */}
+              {customer.holdings.length > 0 && (
+                <div className="cchat-chips">
+                  {[
+                    ...(asked ? [asked] : []),
+                    ...customer.holdings.filter((h) => h.code !== asked?.code),
+                  ].map((h) => (
+                    <button
+                      key={h.code}
+                      className="chip"
+                      onClick={() => ask(`${h.name} 최근 실적`)}
+                      title={`${h.name}(${h.code}) 질문 채우기`}
+                    >
+                      {h.name}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="cchat-chips">
-                {/* 문의 종목을 맨 앞에 세운다 — 순서만 바꿀 뿐 목록은 고객 카드와 같다.
-                    질문문도 카드와 같은 `최근 실적`이다: 주제어(실적·비중·공시·급락)로
-                    의도를 추측해 채우면 틀렸을 때 크레딧을 헛쓴다. 칩은 입력창을 채울
-                    뿐이고 실제로 무엇을 물을지는 PB가 고쳐 쓴다. */}
-                {[
-                  ...(asked ? [asked] : []),
-                  ...customer.holdings.filter((h) => h.code !== asked?.code),
-                ].map((h) => (
-                  <button
-                    key={h.code}
-                    className="chip"
-                    onClick={() => ask(`${h.name} 최근 실적`)}
-                    title={`${h.name}(${h.code}) 질문 채우기`}
-                  >
-                    {h.name}
-                  </button>
-                ))}
                 {PORTFOLIO_CHIPS.map((c) => (
                   <button
                     key={c.label}
@@ -672,7 +681,12 @@ export function ChatModal({
                   </button>
                 ))}
               </div>
-              <F1Chat compact customerId={customer.id} prefill={prefill} />
+              <F1Chat
+                compact
+                customerId={customer.id}
+                customerNames={customerNames}
+                prefill={prefill}
+              />
             </div>
           </>
         )}

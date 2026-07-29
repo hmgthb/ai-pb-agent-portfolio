@@ -26,7 +26,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from backend import bizdate, brief, citations, compliance, db, f1, market, session_store
+from backend import (
+    bizdate,
+    brief,
+    citations,
+    compliance,
+    db,
+    f1,
+    market,
+    redact,
+    session_store,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 logger = logging.getLogger(__name__)
@@ -709,12 +719,23 @@ async def chat_stream(
     session_id = session or f"s-{uuid.uuid4().hex[:16]}"
 
     portfolio: dict | None = None
+    redaction: dict | None = None
     if customer_id is not None:
         row = await db.get_customer(customer_id)
         if row is None or row["pb"] != PB_NAME:
             raise HTTPException(404, "고객을 찾을 수 없습니다.")
         # 사실 계산은 순수 함수가 한다(LLM 미개입). 반환값에 이름·계좌는 들어가지 않는다.
-        portfolio = f1.portfolio_facts(_customer_to_dict(row))
+        # 그다음 **비식별화 경계**를 지난다: 잔고는 구간으로, 종목별 평가금액은 비중으로.
+        # 현실 배치에서 망분리 GPU가 서는 자리이고, 여기서는 규칙(순수 코드)이 대신한다.
+        # ⚠️ 화면이 받는 고객 데이터(`/api/customers`)는 이 경계 밖이라 실금액 그대로다 —
+        #    가리는 것은 **외부 모델로 나가는 쪽뿐**이다.
+        cust = _customer_to_dict(row)
+        portfolio, redaction = redact.redact_portfolio(
+            f1.portfolio_facts(cust), customer_id=cust.get("id"), age=cust.get("age")
+        )
+    # 담당 고객 명단 — 반출 가드가 자유 텍스트에 섞인 이름을 대조한다. 고객을 안 고른
+    # 전역 F1(FAB)에서도 필요하다: 이름을 쳐 넣는 건 오히려 그쪽이 쉽다.
+    customer_names = await db.list_customer_names(PB_NAME)
 
     async def event_gen():
         try:
@@ -733,6 +754,19 @@ async def chat_stream(
         blocked = compliance.input_guard(q)
         if blocked:
             yield _sse("blocked", {"violations": blocked})
+            yield _sse("done", {})
+            return
+
+        # 1-1. 반출 가드 1차 — **질문 문장만** 본다. 아래 3-1의 전체 검사와 같은 함수지만
+        #      자리가 다른 게 핵심이다: 종목 질문은 3번에서 에이전트가 도므로(a1·a2·a4 =
+        #      크레딧), 이름이 섞인 질문을 거기까지 끌고 가면 **돈을 쓰고 막힌다.**
+        #      payload는 아직 없으니 None을 넘긴다 — 여기서 보는 건 이름·계좌 형식뿐이다.
+        leaked_q = compliance.egress_guard(q, None, customer_names)
+        if leaked_q:
+            await db.append_audit("egress_blocked", None, None, {
+                "customer_id": customer_id, "agent": None, "violations": leaked_q,
+            })
+            yield _sse("blocked", {"violations": leaked_q, "stage": "egress"})
             yield _sse("done", {})
             return
 
@@ -774,11 +808,31 @@ async def chat_stream(
             async for chunk in _collect_chat_data(routing, data):
                 yield chunk
 
+        # 3-1. 반출 가드 — 프롬프트가 만들어진 뒤, 모델에 넘기기 **전**이다.
+        #      input_guard가 들어오는 텍스트의 문지기라면 이쪽은 나가는 프롬프트의 문지기다:
+        #      비식별화가 제 일을 했는지, 자유 텍스트에 고객 이름이 섞이지 않았는지 본다.
+        #      걸리면 차단하고 에이전트를 돌리지 않는다(크레딧 0) — 지우고 진행하면
+        #      무엇이 지워졌는지 모른 채 나온 답을 PB가 검증할 수 없다.
+        prompt_text = f1.answer_input(q, routing, data)
+        leaked = compliance.egress_guard(prompt_text, data.get("portfolio"), customer_names)
+        if leaked:
+            await db.append_audit("egress_blocked", None, None, {
+                "customer_id": customer_id, "agent": routing["agent"], "violations": leaked,
+            })
+            yield _sse("blocked", {"violations": leaked, "stage": "egress"})
+            yield _sse("done", {})
+            return
+
+        # 무엇이 가려진 채 나갔는지 화면에 알린다. 가드를 통과한 뒤에 보내는 이유:
+        # 이 배지의 뜻은 "이렇게 가릴 것이다"가 아니라 **"이것이 실제로 나갔다"**이다.
+        if redaction is not None:
+            yield _sse("redaction", {**redaction, "payload": data.get("portfolio")})
+
         # 4. 2차 query — f1 답변자를 메인 에이전트로 돌려 답변을 토큰 스트리밍
         yield _sse("progress", {"agent": "f1", "step": "answer", "status": "started"})
         answer_texts: list[str] = []
         async for message in query(
-            prompt=_prompt_stream(f1.answer_input(q, routing, data)),
+            prompt=_prompt_stream(prompt_text),
             options=ClaudeAgentOptions(
                 cwd=str(REPO_ROOT),
                 include_partial_messages=True,
@@ -1130,6 +1184,24 @@ async def get_customer_detail(customer_id: int):
     if row is None or row["pb"] != PB_NAME:
         raise HTTPException(404, "고객을 찾을 수 없습니다.")
     return _customer_to_dict(row)
+
+
+@app.get("/api/customers/{customer_id}/egress-preview")
+async def get_egress_preview(customer_id: int):
+    """이 고객에 대해 질문하면 **외부 모델로 무엇이 나가는가** — 질문 없이 미리 보는 것.
+
+    LLM을 부르지 않는다(크레딧 0). `/api/chat/stream`이 실제로 쓰는 것과 **같은 함수**를
+    돌려 같은 값을 준다 — 미리보기가 다른 계산을 하면 "이렇게 나갑니다"가 거짓말이 된다.
+    ⚠️ 프론트에서 비율을 다시 계산하지 말 것(분모·반올림은 `f1.portfolio_facts` 단일 출처).
+    """
+    row = await db.get_customer(customer_id)
+    if row is None or row["pb"] != PB_NAME:
+        raise HTTPException(404, "고객을 찾을 수 없습니다.")
+    cust = _customer_to_dict(row)
+    payload, report = redact.redact_portfolio(
+        f1.portfolio_facts(cust), customer_id=cust.get("id"), age=cust.get("age")
+    )
+    return {**report, "payload": payload}
 
 
 @app.get("/api/sessions")

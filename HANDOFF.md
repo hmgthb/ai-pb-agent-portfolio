@@ -12,7 +12,7 @@
 
 계획서 필수(W1~W6) + 선택(F1)이 전부 라이브 검증으로 닫혔다. **다음 할 일은 §7에서 고른다.**
 
-**데이터(2026-07-29)**: `notes`=5(draft·review·deliberation) · `briefs`=4 · `audit_log`=248 ·
+**데이터(2026-07-29)**: `notes`=6(draft·review·deliberation) · `briefs`=4 · `audit_log`=310 ·
 `pb_sessions`=12(pending 4) · `pb_customers`=50.
 
 **비어 있을 때 다시 채우기**
@@ -31,6 +31,23 @@
   (`BRIEF_SYSTEM_PROMPT`)인데 월요일엔 그 창이 토·일·월이다. 거래일 기준으로 잡으면 되는데
   `bizdate`에 영업일 계산이 없다. **아직 안 고쳤다.**
 - ⚠️ **노트와 브리프 종목이 겹쳐야** `PrepMemo`에 브리핑·노트가 같이 붙는다.
+
+**⚠️ 2026-07-29 현재 ANTHROPIC 크레딧이 소진됐다.** 모든 `query()`가 이렇게 끝난다:
+`AssistantMessage(error='billing_error', content=[TextBlock('Credit balance is too low')])` →
+SDK가 `Exception: Claude Code returned an error result: success`로 올린다. **코드 버그처럼
+보이지만 아니다** — 진단은 한 줄이면 된다:
+
+```
+docker compose exec -T backend python -c "
+import anyio; from claude_agent_sdk import query, ClaudeAgentOptions
+async def m():
+    async for msg in query(prompt='1+1은?', options=ClaudeAgentOptions(max_turns=1)): print(msg)
+anyio.run(m)"
+```
+
+크레딧이 없는 동안에도 되는 것: 자체 점검 11종 · 프론트 타입·린트 · **재생 SSE 화면 검증**
+(playwright로 `/api/chat/stream`·`/api/research/stream`을 가로채 SSE를 재생한다 — `scenario_check.mjs`).
+안 되는 것: F1 답변 문장, F2 브리프 생성, F3 노트 생성.
 
 **착수 전 필수**: `git pull` 후 `docker compose build backend && up -d --force-recreate backend`
 — `redis` 의존성 때문에 안 하면 F1이 `ModuleNotFoundError`로 죽는다.
@@ -155,10 +172,14 @@
 - **등락은 국내 관례**(상승=적/하락=청)이고 **상태색과 분리한다** — 뒤집으면 게이트 차단과 발행
   성공이 같이 뒤집힌다. ⚠️ `--mkt-up`과 `--critical`이 같은 값(`#ff5c72`)인 건 의도다. 가르는 건
   색이 아니라 **형태** — `▲`로 되돌리지 말 것.
-- **`⚑`가 사는 자리는 둘**: 고객 표 칸 = **맨 글리프**(`.flag.icon`, 테두리 없음 · 폭 20px는 칸
-  정렬용) · 이름 옆 = **테두리 알약**(`.flag`, `⚑ 위험 플래그`). ⚠️ 라벨이 붙는 쪽에 `.icon`을 달면
-  폭이 잘린다. 사유 줄(`.flag-reasons`)에는 `⚑`를 달지 않는다(이름 옆 배지와 3px 간격 중복).
-  ⚠️ 표 칸에서 형태를 나르는 건 테두리가 아니라 **글리프 자체**다 — 원(타원)을 거쳐 여기 왔다.
+- **`⚑`는 어디서나 맨 글리프다**(2026-07-29). 라벨도 테두리도 없다 — 형태를 나르는 건
+  테두리가 아니라 **글리프 자체**다(알약 → 원 → 맨 글리프를 거쳐 왔다). 사는 자리는 셋이고
+  모두 같은 모양이다: 고객 표 칸(`.flag.icon`) · 고객 상세 이름 옆(`.flag`) · `AI가 보는 정보`
+  쌍둥이의 가명 옆(`.flag`).
+  - `.icon`은 **폭 고정(20px) 변종일 뿐**이다 — 값이 있는 행과 없는 행의 칸 너비를 맞춘다.
+  - ⚠️ **`aria-label`·`title`을 빼지 마라.** 라벨이 없으니 그 둘이 유일한 설명이다.
+  - 사유 줄(`.flag-reasons`)에는 `⚑`를 달지 않는다(3px 위 글리프와 중복).
+  - ▲가 아닌 이유: 수익률 옆에서 상승 화살표로 읽힌다. ⚑는 방향이 없다.
 - **서체 = Inter(글) + IBM Plex Sans(숫자)**. ⚠️ 둘 다 **한글 글리프가 없어** 한글은 폴백으로
   떨어진다(의도한 것). `--font-num`은 **읽고 비교하는 수**에만.
 - **도넛 = 청록 4단계**(`charts.tsx` 단일 출처). ⚠️ 다크·라이트에서 **농도 순서가 뒤집힌다.**
@@ -168,7 +189,11 @@
 `260px | minmax(0,1fr) | minmax(0,1fr)` — 리스트 / 상세 / 채팅.
 
 - **채팅 = `포트폴리오 질문`**. 답하는 게 둘이다: **종목**(에이전트 조회) + **구성**(집중도·배분·
-  성향 대비 — **코드가 계산**). 칩도 두 종류(`page.PORTFOLIO_CHIPS`).
+  성향 대비 — **코드가 계산**). 칩도 두 종류(`types.PORTFOLIO_CHIPS`).
+  - ⚠️ **두 종류를 한 `.cchat-chips`에 담지 말 것**(2026-07-29). 한 상자면 종목이 많은 고객에서
+    `집중도`가 종목 사이에 끼어 줄바꿈된다. `<div>` 둘로 나눠 **종목 한 줄 · 분석 한 줄**로 두고,
+    인접한 두 줄만 `.cchat-chips + .cchat-chips`로 여백을 한 번으로 합친다.
+    보유가 0이면 종목 줄 자체를 안 낸다(빈 여백이 생긴다).
   - ⚠️ **주어는 포트폴리오까지만 넓혔지 사람으로 옮기지 않았다.** "이 고객에게 묻기"로 읽히면 답할
     수 없는 질문과 해서는 안 되는 질문(회신문 대필, 가드레일 4)을 부른다. **되돌리지 말 것** —
     입력 가드가 한글 이름을 못 잡아 방어선이 아직 UI다(§7).
@@ -188,11 +213,60 @@
 - **고객 상세에 요약 줄을 되살리지 말 것.** 세 조각 중 둘이 같은 패널에 이미 있었고(도넛 범례·`⚑`),
   남은 하나(주식 내 비중)는 **표에 빠진 열**이라 `.holdings .pct-eq`로 옮겼다. ⚠️ **화면에서 다시
   나누지 말 것** — 분모와 반올림은 `portfolio_facts`가 단일 출처다. 비중 열엔 **머리글이 필요하다.**
-  플래그가 없으면 `위험 플래그 없음`을 적는다(비면 "규칙을 안 돌렸다"와 구분되지 않는다).
+  **위험 플래그 사유는 플래그가 있을 때만 낸다**(2026-07-29) — 없을 때 적던 한 줄은 뺐다.
+  이름 옆 ⚑가 없다는 것이 이미 같은 말이고, 규칙이 돈다는 사실은 표의 ⚑ 열과 상단 타일이 말한다.
 - ⚠️ **`flex` 축약형 금지** — `flex: 1`은 basis `0%`인데 높이 미정 컨테이너에서 `content`로 해석돼
   표가 스크롤을 잃는다. `flex: 1 1 0px`도 소용없다(**Next 16 CSS 최적화가 `0px`를 떨어뜨린다**).
   `flex-grow: 1` + `height: 0`을 쓴다.
 - **반응형**: ≤1080px에서 채팅이 아래로, 로그는 `flex-grow:0`+`max-height:40vh`. ≤720px는 세로로 쌓인다.
+
+### 비식별화 경계 — 고객 데이터가 외부 모델로 나가기 전 (2026-07-29)
+
+현실 배치에서는 **망분리된 내부 GPU**가 원본에서 식별정보를 빼고 금액을 비율로 바꾼 뒤 외부
+모델에 넘긴다. 이 레포엔 그 GPU가 없어 **규칙(순수 코드)이 그 자리를 맡는다.**
+
+- ⚠️ **정직하게: LLM에게 비식별화를 시키는 것 자체는 보안이 아니다**(그 모델이 이미 원본을
+  봤다). 얻는 건 기밀성이 아니라 **구조** — 경계가 코드에 있고, 지나는 것이 검사받는다.
+- **경계는 `main.chat_stream` 한 곳**: `portfolio_facts`(원본) → `redact_portfolio` →
+  `egress_guard` → 프롬프트. ⚠️ **`portfolio_facts`를 고쳐 여기 맞추지 말 것** — 화면 보유 표의
+  비중이 쓰는 단일 출처다. 경계는 그 **뒤**에 선다.
+- **화면은 경계 안이라 실금액을 그대로 본다.** 변환본은 오직 프롬프트용이다.
+- 변환은 **규칙이 한다**(결정론적·크레딧 0·테스트 가능). ⚠️ dict 변환을 LLM에 맡기지 말 것 —
+  비율 자릿수가 회차마다 달라진다. 자유 텍스트 변환기는 아직 없다(`mode:'llm'` 자리만 비워 뒀다).
+- **삭제가 아니라 일반화**가 기본 수단이다(지우면 답변이 얕아진다): 이름 → 가명 `고객 #1` ·
+  나이 → 나이대 `30대` · 잔고 → 구간 `10억~50억` · 종목별 금액 → 비중 · 계좌번호 → 제외.
+  - ⚠️ **가명은 익명이 아니다** — 원본 DB와 대조하면 특정된다. 그래도 두는 건 대화의 **주어**가
+    필요해서다(`이름 없음`이라 적어 봤더니 주어가 빈 채로 읽혔다).
+  - ⚠️ **`customer_id`·`age`는 `portfolio_facts`에 담지 말 것**(가드레일 1) — `redact_portfolio`가
+    인자로 받아 그 자리에서 바꾼다.
+  - ⚠️ **구간 폭을 좁히지 말 것.** 비중이 같이 나가 `구간 × 비중`으로 금액이 역산된다 —
+    **폭이 곧 방어선**이다(잔고 5구간 · 나이 10년). `test_bands_are_wide_enough_…`가 고정한다.
+- **`egress_guard`가 실제 방어선**: 허용 키 화이트리스트 · 담당 고객명 대조 · 계좌 형식 ·
+  payload 안의 100만 이상 정수. 걸리면 차단이고 에이전트는 안 돈다(크레딧 0).
+  - ⚠️ **자리가 둘인 건 의도다**: ① 라우팅 **전**에 질문 문장만 ② 프롬프트 완성 후 전체.
+    ①이 없으면 종목 질문은 a1·a2·a4가 먼저 돌아 이름 하나 때문에 크레딧을 쓰고 막힌다.
+  - ⚠️ **큰 정수 규칙을 프롬프트 전체에 걸지 말 것** — KRX 종가·DART 재무수치가 공개데이터로
+    들어 있어 종목 질문이 통째로 막힌다(`test_guard_does_not_block_public_market_and_dart_numbers`).
+- **표시(`redaction.tsx`) = 고객 상세의 "가려진 쌍둥이"**. `.detail` 클래스를 그대로 빌려 같은
+  형식으로 그리고 값만 변환본으로 바꾼다 — 나란히 놓으면 제자리에서 갈린다.
+  - 라벨은 **`AI가 보는 정보`** 하나(뒷말 없음). ⚠️ `비식별화`로 되돌리지 말 것: 지금 하는 건
+    법 용어로 **가명처리**이고 `비식별화`는 현행법 용어가 아니다. 그렇다고 `가명처리`로도 안 간 건
+    **읽는 사람이 PB**여서다(같은 말투의 `AI가 오늘 한 일`과 짝이 된다).
+    **코드 어휘는 `redact`·`비식별화` 그대로 둔다** — a1·a2를 화면에 안 적는 것과 같은 규칙이다.
+  - ⚠️ **접이식은 알약이 아니다.** 테두리·면 없이 **꺾쇠 + 굵은 한 줄**(`.aiwork`와 같은 모양).
+    점선 알약이었을 때 바로 위 분석 칩과 구분이 안 됐다. **칩은 알약, 접이식은 꺾쇠.**
+  - ⚠️ **펼친 상자 안은 표 하나뿐이다.** 불릿 목록·설명문·원문 JSON을 차례로 뺐다 — 표가
+    제자리에서 말하는 걸 산문으로 되풀이하면 상자가 답변보다 길어진다.
+  - ⚠️ **평가금액 열을 지우지 말 것**(`가림`으로 남긴다) — 없으면 왼쪽 상세와 줄이 어긋난다.
+    플래그가 없으면 줄을 안 낸다(왼쪽 상세와 같은 규칙).
+  - ⚠️ 왼쪽 상세 마크업을 고치면 **여기도 같이 볼 것** — 형식이 갈리면 대조가 안 된다.
+- **프론트가 맡는 몫은 둘뿐이다.** ⚠️ **프론트에서 변환하지 말 것** — 브라우저는 이미
+  `/api/customers`로 원본을 받아 그린다(`₩14.3억`을 그리려면 그래야 한다). 거기서 가려도 외부
+  호출은 백엔드에서 나가 보장이 안 생기고, 같은 규칙이 두 곳으로 갈린다.
+  - **보내기 전 경고**(`F1Chat::outboundWarning`) — ⚠️ **차단이 아니다.** 보내기 버튼도 살려 둔다
+    (권위는 백엔드, 오탐이면 그냥 보낼 수 있어야 한다). 상자도 안 두른다(게이트 차단과 급이 다르다).
+  - **미리보기**(`GET /api/customers/{id}/egress-preview`) — 채팅과 **같은 백엔드 함수**(크레딧 0).
+    자리는 **고객 카드에만**. ⚠️ 프론트에서 비율을 다시 계산하지 말 것.
 
 ### 고객 문의 모달 = 확인할 사실 + 그 자리에서 묻기 (2026-07-29)
 
@@ -351,6 +425,7 @@ UNSOURCED로 올라갔다(2026-07-29). 지금은 **뜻의 서명** 세 갈래로
 ## 3. 백엔드 라우트 · 목업 데이터
 
 **라우트**: `/api/dashboard/{summary|queue|agents|audit}` · `/api/customers[/{id}]` ·
+`GET /api/customers/{id}/egress-preview`(비식별화 미리보기 · LLM 미개입) ·
 `/api/sessions` · `/api/sessions/{id}/{approve|reject}` · `GET /api/notes`(발행분 포함 색인) ·
 `POST /api/notes/{id}/ack`(§1-2) · `POST /api/notes/{id}/{review|deliberate|publish}` ·
 `POST /api/notes/{id}/{reject|discard}`(거절 2종) · SSE `research/stream`·`chat/stream` ·
@@ -423,7 +498,8 @@ UNSOURCED로 올라갔다(2026-07-29). 지금은 **뜻의 서명** 세 갈래로
      → brief.assemble(LLM 미개입) → 고지 강제 → 게이트 → 저장. 새 에이전트 0개
      공시 중요도(0주요 1정기 2기타 3지분): 지분공시는 빼지 않고 뒤로만 민다
 [F1] chat/stream → input_guard(에이전트 前) → f1.route → ①종목: 에이전트 ②포트폴리오:
-     portfolio_facts(순수·크레딧 0) → 2차 query → citations → 고지 → 게이트 → session_store
+     portfolio_facts(순수·크레딧 0) → redact(비식별화 경계) → egress_guard(反출)
+     → 2차 query → citations → 고지 → 게이트 → session_store
 [사람] 사실 확인(PB) → 심의 요청(PB) → [미인용 확인(준법)] → 발행(준법, 게이트 재검사)
 ```
 
@@ -433,10 +509,11 @@ UNSOURCED로 올라갔다(2026-07-29). 지금은 **뜻의 서명** 세 갈래로
 
 **파일 대응**: a5 작문 지침=`a5.md` / 출처매칭·문장범주·부착률=`citations.py`(단일 출처) /
 F1=`f1.py`·`session_store.py` / 브리프=`brief.py` / 지수=`market.py` /
-고지·게이트·입력가드=`compliance.py` / 상태·로그=`db.py` / **날짜 경계=`bizdate.py`** /
+고지·게이트·입력가드·**반출가드**=`compliance.py` / **비식별화 경계=`redact.py`** /
+상태·로그=`db.py` / **날짜 경계=`bizdate.py`** /
 배선·API=`main.py` / MCP=`mcp_servers/{dart,news,krx}_server.py` /
 화면=`dashboard/{page,ResearchCard,ReviewModal,F1Chat,PrepMemo,charts,api,types}.tsx` /
-**출처 표시=`sources.tsx`** / 색·서체=`dashboard.css` 머리주석 + `docs/design/DESIGN-binance.md` /
+**출처 표시=`sources.tsx`** / **비식별화 표시=`redaction.tsx`** / 색·서체=`dashboard.css` 머리주석 + `docs/design/DESIGN-binance.md` /
 테마=`app/layout.tsx` / **시드=`scripts/{reseed_holdings,seed_pb_sessions}.py`**(둘 다 SQL만
 출력하고 DB에 직접 안 쓴다 — 되돌릴 수 없는 조작은 사람이 실행한다).
 
@@ -447,8 +524,8 @@ F1=`f1.py`·`session_store.py` / 브리프=`brief.py` / 지수=`market.py` /
 - 앱: `docker compose up`(backend 8000 / frontend 3000 / postgres 5432 / redis 6379).
   **requirements 변경 시 `docker compose build backend && up -d --force-recreate backend`**.
 - 대시보드: http://localhost:3000/dashboard
-- **자체 점검(크레딧·네트워크 불필요, 10종)**:
-  `for t in compliance brief krx streaming tool_result a5_input brief_attribution citations run_outcome f1; do docker compose exec -T backend python -m backend.test_$t; done`
+- **자체 점검(크레딧·네트워크 불필요, 11종)**:
+  `for t in compliance brief krx streaming tool_result a5_input brief_attribution citations run_outcome f1 redact; do docker compose exec -T backend python -m backend.test_$t; done`
 - **프론트 검증**: `cd frontend && npx tsc --noEmit && npx eslint src --max-warnings=0`.
   ⚠️ **CSS는 이 둘이 검사하지 않는다.** Next.js 16: 코드 전 `frontend/node_modules/next/dist/docs/` 확인.
 - **화면 재생 검증**(크레딧 0, `frontend/`에서): `node scenario_check.mjs`.
@@ -488,9 +565,11 @@ F1=`f1.py`·`session_store.py` / 브리프=`brief.py` / 지수=`market.py` /
 **규제·경계에 대해 정직하게 말해야 할 것**
 - ❗ **"고객에게 말 걸지 않기"는 프롬프트 지시일 뿐 게이트 규칙이 아니다.** `compliance.py`는
   호칭·회신문 형식을 위반으로 세지 않는다(라이브 검사에서 발생은 0건이었다).
-- ❗ **입력 가드가 고객 이름을 못 잡는다.** `PII_PATTERNS`는 주민·계좌번호의 **숫자 형식**만 본다 —
-  "임민지 고객이…"는 그대로 LLM에 가고 감사로그에 남는다(가드레일 1 위반). 지금 막는 건 **인라인
-  채팅의 UI 프레이밍뿐.** 규칙화 경로는 있다(담당 고객명이 서버에 있으니 `input_guard`에 사전 대조).
+- **고객 이름 대조에 남은 구멍은 2글자 이름뿐이다**(§0-1) — 일반 낱말과 겹쳐 오탐이 커서
+  대조하지 않는다(목업 50명은 전원 3글자). `PII_PATTERNS`는 숫자 형식만 본다.
+- ❗ **자유 텍스트 비식별화기가 아직 없다.** 경계(`redact.py`)에 `mode: 'llm'` 자리는 뚫어 놨지만
+  구현은 규칙(구조화 dict)뿐이다. 고객 문의 원문·상담 메모처럼 **정규식으로 안 되는 텍스트**가
+  그 변환기의 일감이고, 실제 배치에서 망분리 GPU가 맡을 부분도 이쪽이다.
 - ❗ **역할 강제는 여전히 화면에만 있다.** 백엔드는 `actor`를 감사로그용 문자열로 받을 뿐 "발행은
   준법만"을 강제하지 않는다. **스코핑은 서버로 내려갔지만 권한은 아직 아니다.**
 - **감사로그 200건 캡은 노트에 한해 풀렸다**(§3). `note_id`가 없는 사건은 여전히 최근 200건까지만
@@ -500,14 +579,14 @@ F1=`f1.py`·`session_store.py` / 브리프=`brief.py` / 지수=`market.py` /
 **남은 검증**
 - ❓ 모달의 **'발행' 버튼 클릭 자체**는 아직 안 눌러 봤다(발행은 curl로).
 - ❓ **3시나리오 예외 상태는 재생 SSE 기준** — 라이브로 돌려본 건 아니다.
-- ❓ ⚠️ **색·레이아웃 육안 확인은 다크에서 했는데 첫 화면은 라이트다** — 확인 기준과 기본값이
-  어긋나 있다. 라이트에서만 갈라지는 토큰이 있어(`--accent-text`·`--on-critical`·`--alloc-*` 순서)
-  **라이트 전면 회귀 확인이 남았다.**(대비는 전 토큰 계산값, 타입·린트는 통과)
+- ❓ **라이트 전면 회귀 확인이 남았다.** 고객 카드·문의 모달·쌍둥이는 2026-07-29에 라이트·다크
+  양쪽을 봤지만, 나머지 화면(노트 모달·감시 탭·브리핑)은 다크 기준 확인이다. 라이트에서만
+  갈라지는 토큰이 있다(`--accent-text`·`--on-critical`·`--alloc-*` 순서).
 - ❓ **2026-07-29 노트 생성 카드 손질은 육안 확인 전이다** — 배지 색·뉴스 스크롤 높이(168px)·
   링크 hover·`↗` 위치가 화면에서 어떻게 보이는지는 안 봤다(타입·린트만 통과).
-- ✅ **고객 문의 모달은 라이트·다크 둘 다 육안 확인했고 라이브로 한 턴 돌렸다**(2026-07-29):
-  칩→입력창 프리필(안 보냄) → 보내기 → 포트폴리오 라우트 → 문장별 `보유` 배지 + 고지.
-  ⚠️ 확인 방법은 **playwright 직접 구동**이었다 — `scenario_check.mjs`가 쓰는 것과 같은 도구다.
+- ❓ **비식별화 경계는 LLM 답변까지 라이브로 못 봤다**(크레딧 소진, §0). 경계 자체는 LLM 앞이라
+  실데이터로 확인했다(자체 점검 11종 + `redaction` SSE payload + 화면 라이트/다크).
+  **못 본 것: 구간·비율만 받은 모델이 금액을 추정해 적지 않는지**(프롬프트로 금지만 해 뒀다).
 
 **작은 것**
 - 🔸 **`/api/sessions`는 프론트가 부르기만 하고 쓰지 않는다.** `page.tsx`가 받아 `data.sessions`에

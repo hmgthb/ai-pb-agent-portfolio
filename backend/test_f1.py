@@ -3,7 +3,7 @@
 실행: backend/.venv/bin/python -m backend.test_f1
 """
 
-from backend import f1
+from backend import f1, redact
 from backend.compliance import CHAT_NOTICE, input_guard, required_notice
 
 
@@ -143,6 +143,14 @@ _CUST = {
 }
 
 
+def _sanitized() -> dict:
+    """프롬프트에 실제로 실리는 모양 — 비식별화 경계를 지난 뒤다(main.chat_stream).
+    경계 자체의 검증은 `test_redact.py`가 한다."""
+    return redact.redact_portfolio(
+        f1.portfolio_facts(_CUST), customer_id=_CUST["id"], age=_CUST["age"]
+    )[0]
+
+
 def test_portfolio_route_needs_no_entity():
     """'분산 어때?'에는 종목이 없다 — 예전에는 clarify로 떨어져 답이 안 나갔다."""
     r = f1.route("분산 어때?", has_portfolio=True)
@@ -189,14 +197,35 @@ def test_portfolio_facts_carries_no_customer_identity():
 
 
 def test_portfolio_input_block_has_tag_and_internal_warning():
-    r = f1.route("집중도 어때?", has_portfolio=True)
-    text = f1.answer_input("집중도 어때?", r, {"portfolio": f1.portfolio_facts(_CUST)})
+    # ⚠️ 실제 경로와 같게 **비식별화를 거친 것**을 넘긴다(main.chat_stream). 원본을 그대로
+    #    넘기면 이 테스트는 통과하지만 프로덕션에 없는 모양을 검증하게 된다.
+    text = f1.answer_input("집중도 어때?", f1.route("집중도 어때?", has_portfolio=True),
+                           {"portfolio": _sanitized()})
     assert "[^hold]" in text
     assert "내부 계좌 보유데이터" in text
     assert "보유주식 내 70.3%" in text  # 계산은 코드가 했고 모델은 옮겨 적기만 한다
     assert "다시 계산하거나" in text
     # 종목이 없는 질문이라 '대상 종목' 블록 자체가 없어야 한다(빈 코드로 찍히면 안 된다)
     assert "종목코드 None" not in text
+
+
+def test_portfolio_input_block_carries_band_not_amount():
+    """경계를 지난 뒤라 실금액이 프롬프트에 없어야 한다 — 있으면 비식별화가 무의미하다."""
+    text = f1.answer_input("집중도 어때?", f1.route("집중도 어때?", has_portfolio=True),
+                           {"portfolio": _sanitized()})
+    assert "잔고 구간" in text and "비식별화" in text
+    assert f"{_CUST['balance']:,}" not in text
+    for h in _CUST["holdings"]:
+        assert f"{h['amt']:,}" not in text
+
+
+def test_portfolio_input_block_carries_pseudonym_and_age_band():
+    """이름 자리에는 가명이, 나이 자리에는 나이대가 선다 — 원본은 어느 쪽도 안 실린다."""
+    text = f1.answer_input("성향 대비 어때?", f1.route("성향 대비 어때?", has_portfolio=True),
+                           {"portfolio": _sanitized()})
+    assert "고객 #5" in text and "40대" in text
+    assert _CUST["name"] not in text and _CUST["acct"] not in text
+    assert "41세" not in text and "나이대까지만" in text
 
 
 def test_portfolio_facts_handles_empty_holdings():
@@ -285,7 +314,7 @@ def test_clarify_text_differs_by_kind():
 def test_portfolio_block_denies_per_holding_return():
     """수익률을 물을 수 있게 됐다 — 계좌 전체 값을 특정 종목 것으로 옮겨 적으면 안 된다."""
     r = f1.route("수익률 어때?", has_portfolio=True)
-    text = f1.answer_input("수익률 어때?", r, {"portfolio": f1.portfolio_facts(_CUST)})
+    text = f1.answer_input("수익률 어때?", r, {"portfolio": _sanitized()})
     assert "종목별 수익률은 이 데이터에 없다" in text
     assert "계좌 전체" in text
 

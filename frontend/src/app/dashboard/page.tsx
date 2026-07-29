@@ -56,6 +56,7 @@ import {
   RISK,
   type AgentCalls,
   type Brief,
+  type ChatRedaction,
   type Customer,
   type DashboardAudit,
   type NoteDetail,
@@ -396,6 +397,13 @@ export default function DashboardPage() {
     };
   }, [auditNote]);
 
+  /** 보내기 전 경고용 명단. 이미 화면(고객 표)에 그려지는 값이라 새로 노출되는 건 없다.
+   *  ⚠️ 이건 알림일 뿐이고 판정 권위는 백엔드(`compliance.egress_guard`)에 있다. */
+  const customerNames = useMemo(
+    () => (data?.customers ?? []).map((c) => c.name),
+    [data?.customers],
+  );
+
   /* ── 브리핑 실행 (F2) ────────────────────────────────────────────────
      예전엔 빈 카드가 `POST /api/briefs/run`을 문구로 알려 주고 끝이었다 — 화면 안에서
      끝낼 수 있는 일을 터미널로 내보내고 있었다.
@@ -527,6 +535,25 @@ export default function DashboardPage() {
       null,
     [visibleCustomers, selectedId],
   );
+
+  /* 고른 고객에 대해 물으면 **무엇이 외부 모델로 나가는가** — 질문 전에 미리 받아 둔다.
+     LLM을 안 부르므로 크레딧 0이고, 값은 채팅이 실제로 쓰는 것과 **같은 백엔드 함수**에서
+     온다(`redact.redact_portfolio`). ⚠️ 프론트에서 다시 계산하지 말 것 — 미리 본 것과 실제
+     나가는 것이 갈리면 미리보기가 약속 구실을 못 한다.
+     실패하면 조용히 감춘다: 이 상자는 부가 설명이라, 못 받았다고 오류를 띄우면 정작
+     읽어야 할 고객 정보를 밀어낸다(`.tbl-scroll` 옆 상세와 같은 칸이다). */
+  const [egress, setEgress] = useState<ChatRedaction | null>(null);
+  const selectedIdForEgress = selected?.id;
+  useEffect(() => {
+    if (selectedIdForEgress === undefined) return;
+    let alive = true;
+    api<ChatRedaction>(`/api/customers/${selectedIdForEgress}/egress-preview`)
+      .then((r) => alive && setEgress(r))
+      .catch(() => alive && setEgress(null));
+    return () => {
+      alive = false;
+    };
+  }, [selectedIdForEgress]);
 
   /* 상세에도 표와 **같은 순번**을 보여준다 — 다른 기준으로 세면 왼쪽 표의 3번과
      오른쪽 상세의 3번이 다른 사람을 가리키게 된다. 그래서 표가 그리는 목록
@@ -1141,16 +1168,17 @@ export default function DashboardPage() {
                               {c.ret.toFixed(1)}%
                             </td>
                             <td>
-                              {/* ▲가 아니다 — 수익률 옆에서 상승 화살표로 읽힌다.
-                                  ⚑는 방향이 없고 기능 이름("위험 플래그")과도 맞는다.
-                                  `.icon`은 글리프 하나짜리 원형 변종이다(라벨이 붙는
-                                  이름 옆 알약과 달리 폭이 내용에 안 늘어난다). */}
+                              {/* `.icon`은 **폭 고정 변종**이다 — 값이 있는 행과 없는 행의
+                                  칸 너비를 맞춘다. 모양 자체는 이름 옆 ⚑와 같다. */}
                               {c.flag && (
                                 <span
                                   className="flag icon"
                                   title={c.flagReasons
                                     .map((r) => r.text)
                                     .join(' · ')}
+                                  aria-label={`위험 플래그: ${c.flagReasons
+                                    .map((r) => r.text)
+                                    .join(' · ')}`}
                                 >
                                   ⚑
                                 </span>
@@ -1168,28 +1196,38 @@ export default function DashboardPage() {
                       <div className="name">
                         <span className="rowno">{selectedNo}</span>
                         {selected.name}{' '}
+                        {/* 표 칸과 **같은 글리프**다(2026-07-29). 예전엔 여기만 `⚑ 위험 플래그`
+                            테두리 알약이었는데 라벨을 걷어냈다 — 바로 아래 사유 줄이 이미
+                            무엇 때문인지 말하고 있어서 라벨이 세 번째 되풀이였다.
+                            ⚠️ 라벨이 없으니 `aria-label`이 유일한 설명이다 — 빼지 마라. */}
                         {selected.flag && (
-                          <span className="flag">⚑ 위험 플래그</span>
+                          <span
+                            className="flag"
+                            title={selected.flagReasons
+                              .map((r) => r.text)
+                              .join(' · ')}
+                            aria-label={`위험 플래그: ${selected.flagReasons
+                              .map((r) => r.text)
+                              .join(' · ')}`}
+                          >
+                            ⚑
+                          </span>
                         )}
                       </div>
                       <div className="acct">
                         {selected.acct} · {selected.age}세 ·{' '}
                         {RISK[selected.risk]}
                       </div>
-                      {/* 플래그가 **없어도 줄을 낸다.** 비어 있으면 "규칙에 안 걸렸다"와
-                          "규칙을 안 돌렸다"가 구분되지 않는다(HANDOFF §0-1). 예전엔 이 말을
-                          카드 맨 아래 요약 줄이 했는데, 플래그가 있는 고객에서는 이름 옆 ⚑·
-                          사유 줄과 **세 번** 겹쳤다 — 자리를 여기 하나로 모았다.
-                          사유 줄에는 ⚑를 달지 않는다 — 바로 위 이름 옆 `⚑ 위험 플래그`
-                          배지가 이미 마커이고, 3px 아래에서 같은 기호를 되풀이하면
-                          자기 라벨을 두 번 다는 셈이다. 적색은 위반 표시라 없을 때 뗀다. */}
-                      {selected.flag ? (
+                      {/* 플래그가 없으면 **줄을 안 낸다**(2026-07-29). 한동안 `위험 플래그
+                          없음`을 적었는데("규칙에 안 걸렸다"와 "규칙을 안 돌렸다"를 가르려고),
+                          같은 패널의 **이름 옆 `⚑ 위험 플래그` 배지가 없다는 것**이 이미 같은
+                          말을 하고 있었다. 규칙이 돈다는 사실은 표의 ⚑ 열과 상단 `위험 플래그
+                          N건` 타일이 말한다.
+                          사유 줄에는 ⚑를 달지 않는다 — 바로 위 이름 옆 배지가 이미 마커이고,
+                          3px 아래에서 같은 기호를 되풀이하면 자기 라벨을 두 번 다는 셈이다. */}
+                      {selected.flag && (
                         <div className="flag-reasons">
                           {selected.flagReasons.map((r) => r.text).join(' · ')}
-                        </div>
-                      ) : (
-                        <div className="flag-reasons none">
-                          위험 플래그 없음
                         </div>
                       )}
                       <div className="row">
@@ -1305,21 +1343,28 @@ export default function DashboardPage() {
                           보유·배분 · 공시 · 뉴스 · 지연시세
                         </span>
                       </div>
+                      {/* 종목 칩과 분석 칩은 **줄을 나눈다**(2026-07-29). 한 상자에 담으면
+                          종목이 많은 고객에서 `집중도`가 종목 사이에 끼어 줄바꿈되고, 두
+                          종류가 섞여 보인다. 보유가 없으면 이 줄 자체를 안 낸다(빈 여백). */}
+                      {selected.holdings.length > 0 && (
+                        <div className="cchat-chips">
+                          {selected.holdings.map((h) => (
+                            <button
+                              key={h.code}
+                              className="chip"
+                              onClick={() => askHolding(`${h.name} 최근 실적`)}
+                              title={`${h.name}(${h.code}) 질문 채우기`}
+                            >
+                              {h.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {/* 분석 칩 — 종목 칩과 **다른 종류**라 형태로 가른다(.chip.ana).
+                          보유 종목이 없어도 낸다: 자산배분·성향 대비는 주식이 하나도
+                          없어도 답이 되는 질문이고(현금성 100%도 구성이다), 오히려
+                          그때 물어볼 게 이것뿐이다. */}
                       <div className="cchat-chips">
-                        {selected.holdings.map((h) => (
-                          <button
-                            key={h.code}
-                            className="chip"
-                            onClick={() => askHolding(`${h.name} 최근 실적`)}
-                            title={`${h.name}(${h.code}) 질문 채우기`}
-                          >
-                            {h.name}
-                          </button>
-                        ))}
-                        {/* 분석 칩 — 종목 칩과 **다른 종류**라 형태로 가른다(.chip.ana).
-                            보유 종목이 없어도 낸다: 자산배분·성향 대비는 주식이 하나도
-                            없어도 답이 되는 질문이고(현금성 100%도 구성이다), 오히려
-                            그때 물어볼 게 이것뿐이다. */}
                         {PORTFOLIO_CHIPS.map((c) => (
                           <button
                             key={c.label}
@@ -1341,6 +1386,11 @@ export default function DashboardPage() {
                         compact
                         prefill={prefill}
                         customerId={selected.id}
+                        customerNames={customerNames}
+                        /* 미리보기는 **이 카드에만** 둔다. 여기가 고객을 살펴보는
+                           화면이라 "물어보면 뭐가 나가지?"가 질문보다 먼저 오고,
+                           고객 문의 모달은 이미 길다(거기서는 물어본 뒤 배지로 본다). */
+                        preview={egress}
                       />
                     </>
                   ) : (
@@ -1634,7 +1684,11 @@ export default function DashboardPage() {
                 }}
               />
             )}
-            {modal.kind === 'f1' && <F1Chat initial={modal.q} />}
+            {/* 전역 F1에는 고객이 없어 미리보기가 없다(변환할 것도 없다). 이름 경고는
+                오히려 여기가 더 필요하다 — 고객을 안 고른 채 자유롭게 치는 칸이다. */}
+            {modal.kind === 'f1' && (
+              <F1Chat initial={modal.q} customerNames={customerNames} />
+            )}
             {modal.kind === 'chat' &&
               (() => {
                 const it = data.queue.find(
@@ -1654,6 +1708,7 @@ export default function DashboardPage() {
                        돌리지 않는다(크레딧 0). */
                     brief={data.brief}
                     notes={data.notes}
+                    customerNames={customerNames}
                     onOpenNote={(code) => setModal({ kind: 'note', code })}
                     onClose={() => setModal(null)}
                     onChanged={() => void load()}

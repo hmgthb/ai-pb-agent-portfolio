@@ -68,6 +68,46 @@ export type NoteSource =
    *  as_of가 null인 건 pb_customers에 스냅샷 시각 컬럼이 없어서다. 지어내지 않는다. */
   | { type: 'holdings'; label: string; as_of: string | null };
 
+/** 비식별화 경계 보고 — **무엇이 가려진 채 외부 모델로 나갔는가**.
+ *  백엔드 `redact.redact_portfolio`의 report + 실제 전송된 payload.
+ *  ⚠️ `removed`에는 항목 **이름**만 온다(원본 값은 안 온다) — 이 이벤트 자체가 SSE로
+ *     화면까지 오므로, 여기에 실금액을 실으면 가린 의미가 없다. */
+/** 경계를 넘어 외부 모델로 나가는 포트폴리오. 백엔드 `redact.SANITIZED_KEYS`와 **1:1**이다.
+ *  ⚠️ 계약은 백엔드 화이트리스트다 — 키를 늘리면 두 곳을 같이 고친다(안 고치면 반출 가드가
+ *     "허용 목록에 없는 항목"으로 차단한다).
+ *  실금액(`balance`·`holdings[].amt`)이 **여기 없는 것이 요점**이다. */
+export type EgressPortfolio = {
+  /** 이름 자리에 서는 **가명**(`고객 #1`). ⚠️ 익명이 아니다 — 원본 DB와 대조하면 사람이
+   *  특정된다. 여기서 얻는 건 "모델이 이름을 못 본다"이지 "누구인지 알 수 없다"가 아니다. */
+  customer_ref: string | null;
+  /** 실나이가 아니라 나이대(`30대`). 일반화이지 삭제가 아니다 — 성향 대비 구성을 읽을 때
+   *  맥락이 된다. ⚠️ 폭을 좁히면(5년 단위 등) 재식별이 쉬워진다. */
+  age_band: string | null;
+  risk_label: string | null;
+  /** 실금액이 아니라 구간(`10억~50억`). 구간 폭이 곧 방어선이다(HANDOFF §0-1). */
+  balance_band: string | null;
+  return_pct: number | null;
+  alloc: { class: string; pct: number }[];
+  holdings: {
+    code: string;
+    name: string;
+    pct_of_equity: number | null;
+    pct_of_balance: number | null;
+  }[];
+  flags: FlagReason[];
+};
+
+export type ChatRedaction = {
+  /** rule = 규칙(순수 코드). 실제 배치에서는 이 자리가 망분리된 내부 GPU다. */
+  mode: 'rule' | 'llm';
+  /** ⚠️ `kind`로 두 가지를 갈라 센다: `mask`=민감해서 가린 것(실금액) · `drop`=사본이라
+   *  지운 것. 배지 숫자는 **mask만** 센다 — 섞으면 "5개나 가렸다"가 사실이 아니게 된다.
+   *  ⚠️ 화면은 이 목록을 **불릿으로 늘어놓지 않는다** — 무엇이 가려졌는지는 고객 상세와
+   *     같은 형식으로 그린 표(`EgressTwin`)가 제자리에서 말한다. 여기 남은 쓸모는 개수뿐이다. */
+  removed: { label: string; how: string; kind: 'mask' | 'drop' }[];
+  payload: EgressPortfolio;
+};
+
 /** F1 대화형 Q&A — 라우팅 배지·답변 문장·고지. 백엔드 /api/chat/stream SSE와 짝. */
 export type ChatRouting = {
   entity_code: string | null;

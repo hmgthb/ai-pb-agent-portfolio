@@ -9,6 +9,7 @@ CLAUDE.md 컴플라이언스 게이트 항목:
 - 시세 수치를 실었다면 지연시세임을 밝혔는가
 """
 
+import json
 import re
 
 from backend import citations
@@ -113,6 +114,68 @@ def input_guard(text: str) -> list[str]:
     for pattern in PII_PATTERNS:
         if re.search(pattern, text):
             violations.append("PII(주민·계좌번호 등) 의심 — 개인정보는 입력하지 마세요")
+    return violations
+
+
+# --- 반출 가드(egress) ------------------------------------------------------
+# `input_guard`가 **들어오는** 자유 텍스트의 문지기라면, 이쪽은 **나가는** 프롬프트의
+# 문지기다. 비식별화(`redact.py`)가 제 일을 했는지 그 뒤에서 한 번 더 확인한다 —
+# 변환기가 규칙이든 모델이든, 새 기능이 원본을 얹었든, 경계를 지나는 건 여기서 걸린다.
+#
+# ⚠️ **큰 정수 규칙은 payload에만 건다. 프롬프트 전체에 걸면 안 된다.**
+#    프롬프트에는 KRX 종가·DART 재무수치가 **공개데이터로서** 정상적으로 들어 있다
+#    (`10737700000000원` 같은 값). 전체에 걸면 종목 질문 답변이 통째로 막힌다.
+#    가려야 하는 건 고객 계좌 금액이고, 그건 payload 안에만 있다.
+_BIG_INT_RE = re.compile(r"\d{7,}")  # 100만 이상. 종목코드(6자리)는 안 걸린다.
+
+
+def egress_guard(
+    prompt: str,
+    payload: dict | None,
+    customer_names: list[str] | tuple[str, ...] = (),
+) -> list[str]:
+    """외부 모델로 나가기 직전 검사. 빈 리스트면 통과.
+
+    prompt: 실제로 전송될 문자열 전체(사용자 질문 포함).
+    payload: 경계를 지나는 고객 데이터(`redact.redact_portfolio`의 결과). None이면 종목 질문.
+    customer_names: 담당 고객 명단. 자유 텍스트에 이름이 섞이는 걸 여기서 잡는다 —
+        `PII_PATTERNS`는 **숫자 형식**만 봐서 한글 이름을 못 잡았다(HANDOFF §7).
+
+    ⚠️ 위반이면 **차단**이고 에이전트는 돌지 않는다(크레딧 0). 지우고 진행하지 않는 이유:
+       무엇이 지워졌는지 모른 채 나온 답은 PB가 검증할 수 없다.
+    """
+    from backend import redact  # 순환 import 방지 — redact는 compliance를 안 쓴다
+
+    violations: list[str] = []
+
+    if payload is not None:
+        extra = set(payload) - redact.SANITIZED_KEYS
+        if extra:
+            violations.append(
+                f"반출 허용 목록에 없는 항목: {', '.join(sorted(extra))} "
+                "(비식별화를 거치지 않은 원본으로 보입니다)"
+            )
+        for row in payload.get("holdings") or []:
+            extra_h = set(row) - redact.SANITIZED_HOLDING_KEYS
+            if extra_h:
+                violations.append(f"보유 종목에 허용되지 않은 항목: {', '.join(sorted(extra_h))}")
+                break
+        # 금액이 새는 마지막 그물. 비중(50.9)·수익률(-2.3)·종목코드(005930)는 안 걸린다.
+        blob = json.dumps(payload, ensure_ascii=False)
+        if _BIG_INT_RE.search(blob):
+            violations.append("계좌 금액으로 보이는 수치가 남아 있습니다 (100만 이상 정수)")
+
+    for name in customer_names:
+        # 2글자 이름은 대조하지 않는다 — 일반 낱말과 겹쳐 오탐이 크다. 못 잡는 건 한계로
+        # 남기고 지어내지 않는다(지금 목업 고객 50명은 전원 3글자다).
+        if len(name) >= 3 and name in prompt:
+            violations.append(f"고객 이름이 그대로 들어 있습니다: {name}")
+
+    for pattern in PII_PATTERNS:
+        if re.search(pattern, prompt):
+            violations.append("PII(주민·계좌번호 등)로 보이는 값이 들어 있습니다")
+            break
+
     return violations
 
 

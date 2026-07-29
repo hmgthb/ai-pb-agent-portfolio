@@ -382,12 +382,21 @@ def answer_input(question: str, routing: dict, data: dict) -> str:
 
 def _portfolio_block(p: dict) -> str:
     """포트폴리오 사실을 프롬프트 블록으로. **수치는 여기서 이미 계산돼 있고**, 모델은
-    고르고 옮겨 적기만 한다 — 나눗셈을 시키면 자릿수가 틀린다."""
-    lines = ["# 이 고객의 포트폴리오 (계좌 보유데이터 · 내부)"]
+    고르고 옮겨 적기만 한다 — 나눗셈을 시키면 자릿수가 틀린다.
+
+    ⚠️ 입력은 **비식별화를 거친 것**이다(`redact.redact_portfolio`) — 실금액(`balance`·
+    `holdings[].amt`)은 여기 오지 않는다. 원본을 그대로 넘기면 이 함수가 조용히 금액 줄을
+    빼먹는 게 아니라 `compliance.egress_guard`가 차단한다(허용 키 화이트리스트)."""
+    ref = p.get("customer_ref") or "이 고객"
+    lines = [f"# {ref}의 포트폴리오 (계좌 보유데이터 · 내부 · 비식별화 거침)"]
+    if p.get("age_band"):
+        # 실나이가 아니라 나이대다 — 성향 대비 구성을 읽을 때 맥락이 되지만, 그 이상의
+        # 해상도는 넘어오지 않는다.
+        lines.append(f"- 나이대: {p['age_band']}")
     if p.get("risk_label"):
         lines.append(f"- 등록 위험성향: {p['risk_label']}")
-    if p.get("balance") is not None:
-        lines.append(f"- 잔고: {int(p['balance']):,}원")
+    if p.get("balance_band"):
+        lines.append(f"- 잔고 구간: {p['balance_band']} (실금액은 외부로 보내지 않는다)")
     if p.get("return_pct") is not None:
         lines.append(f"- 연초 대비 수익률: {p['return_pct']}%")
     if p.get("alloc"):
@@ -395,10 +404,10 @@ def _portfolio_block(p: dict) -> str:
         lines.append(f"- 자산배분(위험도 낮은 순): {spread}")
 
     if p.get("holdings"):
-        lines.append("- 보유 종목(평가금액 큰 순) · ※ **종목별 수익률은 이 데이터에 없다**")
+        lines.append("- 보유 종목(비중 큰 순) · ※ **종목별 수익률은 이 데이터에 없다**")
         for h in p["holdings"]:
             lines.append(
-                f"    · {h['name']}({h['code']}) {int(h['amt']):,}원"
+                f"    · {h['name']}({h['code']})"
                 f" — 보유주식 내 {h['pct_of_equity']}% / 잔고 대비 {h['pct_of_balance']}%"
             )
 
@@ -413,6 +422,10 @@ def _portfolio_block(p: dict) -> str:
         "각주 태그로는 `[^hold]`를 써라. 이 수치는 공개데이터가 아니라 **내부 계좌 보유데이터**이고, "
         "스냅샷 시점 정보가 없으므로 '현재 기준'이라고 단정하지 마라. "
         "위 숫자를 다시 계산하거나 반올림하지 말고 그대로 인용하라 — 새 비율을 만들어 내지 마라. "
+        "**잔고와 종목별 평가금액의 실제 금액은 이 입력에 없다**(비식별화로 제외됐다). "
+        "구간과 비율로만 말하고, 금액을 추정해 적지 마라. "
+        "이름·계좌번호·실나이도 입력에 없다 — 고객을 가리켜야 하면 '이 포트폴리오'라고 쓰고, "
+        "나이는 나이대까지만 말하라(실나이를 추정하지 마라). "
         "위 수익률은 **계좌 전체** 값이다. 특정 종목의 수익률로 옮겨 적지 마라 — 종목별 "
         "수익률은 데이터에 없으니 물으면 없다고 답하라. "
         "고객의 이름·계좌번호·나이는 입력에 없고, 답변에도 쓰지 마라."
