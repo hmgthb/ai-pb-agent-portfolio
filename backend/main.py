@@ -1089,9 +1089,19 @@ def _customer_to_dict(row) -> dict:
         "flag": len(flag_reasons) > 0,
         "flagReasons": flag_reasons,
     }
+    # 보유 종목에 **주식 내 비중**을 붙인다(2026-07-29). 표가 금액만 주던 시절엔 집중도가
+    # 화면에 없어서 카드 맨 아래 요약 줄이 최대 단일 종목 하나만 따로 말해 주고 있었다 —
+    # 그 줄을 걷어내고 수치를 원래 자리(표)로 보낸 것이다.
+    # ⚠️ 여기서 나눗셈을 다시 하지 않는다. 분모(보유 종목 합계)와 반올림 자리를 f1이 이미
+    #    정해 뒀고, 같은 산술을 두 곳에서 구현하면 표의 비중과 채팅 답변의 비중이 언젠가
+    #    갈라진다 — `portfolio_facts`가 단일 출처다.
+    facts_by_code = {h["code"]: h for h in f1.portfolio_facts(c)["holdings"]}
+    for h in c["holdings"]:
+        h["pct_of_equity"] = (facts_by_code.get(h.get("code")) or {}).get(
+            "pct_of_equity"
+        )
     # `pb_customers.diagnosis`(시드 문구)는 **더 이상 읽지 않는다** — 50명에 6종뿐인 목업이었고
     # 문구가 조정 지시였다(f1.portfolio_summary 주석). 컬럼은 지우지 않고 그대로 둔다(§2 시드 보존).
-    c["diag"] = f1.portfolio_summary(c)
     return c
 
 

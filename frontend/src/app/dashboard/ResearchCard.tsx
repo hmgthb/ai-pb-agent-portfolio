@@ -307,6 +307,9 @@ export default function ResearchCard({
           maxLength={6}
           placeholder="000000"
           aria-label="종목 코드"
+          /* 브라우저 자동완성을 끈다 — 안 끄면 6자리 숫자 칸에 저장된 이름·주소가 뜬다.
+             localhost:3000은 다른 프로젝트와 오리진을 공유해서 남의 입력 이력까지 올라온다. */
+          autoComplete="off"
           /* 입력칸도 같이 오류 상태가 된다 — 메시지만 빨개지면 "무엇이" 잘못됐는지는
              말하지 않는다. 테두리는 이 속성이 그대로 끌고 간다(dashboard.css). */
           aria-invalid={codeInvalid || undefined}

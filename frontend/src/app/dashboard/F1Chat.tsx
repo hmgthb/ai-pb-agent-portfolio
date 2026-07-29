@@ -262,6 +262,9 @@ export default function F1Chat({
       <div className="chat-input">
         <input
           className="search"
+          /* 자동완성 끄기 — 제안이 뜨는 것보다, 여기 친 질문이 브라우저 입력 이력에
+             남는 쪽이 문제다(가드레일 1: 고객 관련 텍스트가 들어올 수 있는 칸이다). */
+          autoComplete="off"
           placeholder={
             compact
               ? customerId != null

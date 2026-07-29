@@ -17,12 +17,16 @@ export type Customer = {
   risk: number;
   balance: number;
   ret: number;
-  holdings: { code: string; name: string; amt: number }[];
+  /** `pct_of_equity` = **보유 종목 합계 대비** 비중(잔고 대비가 아니다). 분모와 반올림은
+   *  백엔드 `f1.portfolio_facts`가 단일 출처다 — 화면에서 다시 나누지 말 것. 표의 비중과
+   *  포트폴리오 채팅이 말하는 비중이 갈리면 안 된다. */
+  holdings: {
+    code: string;
+    name: string;
+    amt: number;
+    pct_of_equity: number | null;
+  }[];
   alloc: Record<string, number>;
-  /** 구성 요약 한 줄. **AI가 쓴 문장이 아니다** — 백엔드 `f1.portfolio_summary`가 계좌
-   *  데이터에서 계산한다(수치는 코드, 위험 판정은 저장된 flag_reasons 인용). 화면 라벨도
-   *  `AI 진단`이 아니라 `구성 요약`이다. */
-  diag: string;
   flag: boolean;
   flagReasons: FlagReason[];
 };

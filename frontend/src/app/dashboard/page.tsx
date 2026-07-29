@@ -24,9 +24,11 @@ import {
 import './dashboard.css';
 import {
   api,
+  apiPost,
   ago,
   bizDay,
   detailStr,
+  errorMessage,
   fmtDate,
   fmtDateTime,
   fmtKRW,
@@ -111,9 +113,11 @@ const ROLES: Record<
    PB가 매일 보는 화면이 할 일이 아니다. F1 입구는 우하단 고정 버튼으로 옮겼다. */
 
 /* ── 라이트/다크 전환 — 바이낸스 top-nav 오른쪽 묶음에 있는 그 토글 ──────────────
-   이 화면의 기본은 **다크**이고(dashboard.css의 :root가 곧 다크), 라이트는 밝은 곳에서
-   보기 위한 선택지다. OS 설정(prefers-color-scheme)은 따라가지 않는다 — 이 화면의
-   정체성이 다크라, 밝은 OS를 쓴다는 이유만으로 옐로가 안 보이는 테마로 떨어지면 안 된다.
+   처음 열면 **라이트**다(layout.tsx가 <html data-theme="light">를 서버에서 박는다).
+   ⚠️ CSS 쪽 기본은 여전히 다크다 — dashboard.css의 :root가 다크 토큰이고 라이트는
+      [data-theme='light'] 블록이다. 바꾼 건 토큰이 아니라 **속성이 없을 때가 아니라
+      항상 붙어 있게 한 것**이라, 두 파일을 같이 봐야 기본값이 읽힌다.
+   OS 설정(prefers-color-scheme)은 따라가지 않는다 — 고른 값만 반영한다.
 
    테마의 **정본은 React 상태가 아니라 DOM 속성**이다: 첫 페인트 전에 layout.tsx의
    부트스트랩 스크립트가 이미 값을 써 놓기 때문이다(그래야 라이트 사용자가 검은 화면을
@@ -125,9 +129,9 @@ type Theme = 'dark' | 'light';
 const themeListeners = new Set<() => void>();
 
 const readTheme = (): Theme =>
-  document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
-/** 서버 렌더·하이드레이션 시점의 값. CSS 기본값과 같아야 화면이 튀지 않는다. */
-const serverTheme = (): Theme => 'dark';
+  document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+/** 서버 렌더·하이드레이션 시점의 값. layout.tsx가 <html>에 박는 값과 같아야 화면이 안 튄다. */
+const serverTheme = (): Theme => 'light';
 
 function subscribeTheme(cb: () => void) {
   themeListeners.add(cb);
@@ -488,6 +492,40 @@ export default function DashboardPage() {
       alive = false;
     };
   }, [auditNote]);
+
+  /* ── 브리핑 실행 (F2) ────────────────────────────────────────────────
+     예전엔 빈 카드가 `POST /api/briefs/run`을 문구로 알려 주고 끝이었다 — 화면 안에서
+     끝낼 수 있는 일을 터미널로 내보내고 있었다.
+
+     이 버튼은 크레딧을 쓴다(에이전트 팬아웃 + 40~50초). 그래도 **확인 단계를 두지 않는다** —
+     한 번 눌렀다가 물리려면 다시 누르면 되고(노트 보류·반려처럼 되돌릴 수 없는 조작이
+     아니다), 자주 쓰는 버튼에 두 번 누르기를 걸면 비용이 이득을 넘는다.
+     자리는 둘이고 생김새가 다르다: 브리프가 **없으면** 빈 상태 본문의 1차 CTA(`브리핑`,
+     옐로), **있으면** 머리말 오른쪽의 조용한 버튼(`↻ 다시 생성`, 옐로 아님).
+     진행 표시가 라벨 하나뿐인 건 이 라우트가 SSE가 아니라 **블로킹 POST**여서다. F3처럼
+     단계를 보여주려면 백엔드에 스트림 라우트가 따로 필요하다(HANDOFF §7). */
+  const [briefRunning, setBriefRunning] = useState(false);
+  const [briefError, setBriefError] = useState('');
+
+  const runBrief = useCallback(async () => {
+    setBriefError('');
+    setBriefRunning(true);
+    try {
+      const r = await apiPost('/api/briefs/run', {});
+      if (!r.ok) {
+        setBriefError(errorMessage(r.body, '브리핑 생성에 실패했습니다.'));
+        return;
+      }
+      // 카드만이 아니라 전체를 다시 받는다 — 브리프 생성은 감사로그(`brief_created`)와
+      // "AI가 오늘 한 일"까지 같이 움직인다.
+      await load();
+    } catch (e) {
+      // 40~50초짜리 요청이라 네트워크가 끊기면 fetch 자체가 던진다(위 !r.ok와 다른 경로).
+      setBriefError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBriefRunning(false);
+    }
+  }, [load]);
 
   const cfg = ROLES[role];
 
@@ -916,7 +954,35 @@ export default function DashboardPage() {
                 {data.brief.brief_date} 생성
               </span>
             )}
+            {/* 재실행은 머리말 오른쪽. 브리프가 없을 때의 1차 CTA는 여기가 아니라
+                **빈 상태 본문**에 있다 — 아무것도 없는 카드에서 눈이 가는 곳은
+                머리말이 아니라 비어 있는 본문이다. */}
+            {data.brief && (
+              <span className="head-acts">
+                {/* 한 번 누르면 실행이다. 확인 단계(무장 → `취소`)를 뒀다가 걷어냈다 —
+                    브리프 재생성은 되돌릴 수 없는 조작이 아니라 **다시 누르면 되는 조작**이고
+                    (노트 보류·반려와 그 점이 다르다), 하루에 몇 번 쓰는 버튼에 두 번 누르기를
+                    걸면 비용이 이득을 넘는다. 잃는 건 하나뿐이다: 화면에 떠 있던 브리프가
+                    새 것으로 바뀐다(옛 브리프 행은 DB에 남는다 — `latest`가 새 것을 볼 뿐).
+                    ⚠️ 옐로(.primary)를 쓰지 않는다 — 브리핑은 첫 화면에서 가장 큰 카드라
+                       그 머리말의 강조색이 페이지 전체의 시선을 가져간다. 1차 CTA는 이
+                       카드가 **비어 있을 때**의 `브리핑` 하나뿐이다(HANDOFF §0-1).
+                    진행 표시는 곁말이 아니라 **라벨**이 맡는다. */}
+                <button
+                  className="btn"
+                  disabled={briefRunning}
+                  onClick={() => void runBrief()}
+                >
+                  {briefRunning ? '생성 중…' : '↻ 다시 생성'}
+                </button>
+              </span>
+            )}
           </div>
+          {briefError && (
+            <div className="hint" style={{ color: 'var(--critical)' }}>
+              ⛔ {briefError}
+            </div>
+          )}
           {data.brief ? (
             <>
               {/* 오늘 시장 — PB가 고객에게 가장 먼저 듣는 질문이 개별 종목이 아니라 시장이다.
@@ -1044,9 +1110,28 @@ export default function DashboardPage() {
               )}
             </>
           ) : (
-            <div className="hint" style={{ marginTop: 10 }}>
-              아직 생성된 브리프가 없습니다. <code>POST /api/briefs/run</code>
-              으로 배치를 실행하세요.
+            /* 빈 상태 = 오류가 아니라 "아직 없다"다(백엔드도 404로 그렇게 말한다).
+               그래서 경고색이 아니라 **할 수 있는 일 하나**를 놓는다.
+               ⚠️ 진행 표시는 **버튼 라벨이 맡는다**(`브리핑` → `생성 중…`). 옆에 곁말로
+                  두면 버튼과 문구가 두 덩어리로 서고, 비활성 버튼이 "왜 안 눌리지"로 먼저
+                  읽힌다 — 라벨이 바뀌면 그 자리에서 답이 된다.
+                  누르기 전 예상 소요는 안 적는다(망설이게만 한다). 다만 **라벨 전환 자체는
+                  지우지 말 것**: 이 라우트는 SSE가 아니라 블로킹 POST라 40~50초 동안 화면이
+                  조용해서, 없으면 멈춘 것으로 읽힌다. */
+            <div className="brief-empty">
+              <p className="hint" style={{ margin: 0 }}>
+                아직 오늘 브리핑이 없습니다. 담당 고객 보유 상위 종목의
+                공시·뉴스와 지수를 모아 생성합니다.
+              </p>
+              <div className="brief-empty-run">
+                <button
+                  className="btn primary"
+                  onClick={() => void runBrief()}
+                  disabled={briefRunning}
+                >
+                  {briefRunning ? '생성 중…' : '브리핑'}
+                </button>
+              </div>
             </div>
           )}
         </section>
@@ -1101,6 +1186,9 @@ export default function DashboardPage() {
                     type="search"
                     placeholder="검색"
                     aria-label="검색"
+                    /* 셋 중 여기가 제일 중요하다 — PB가 치는 값이 고객 이름이라,
+                       자동완성을 켜 두면 브라우저 입력 이력에 고객명이 쌓인다. */
+                    autoComplete="off"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />
@@ -1176,11 +1264,18 @@ export default function DashboardPage() {
                         {selected.acct} · {selected.age}세 ·{' '}
                         {RISK[selected.risk]}
                       </div>
-                      {selected.flag && (
+                      {/* 플래그가 **없어도 줄을 낸다.** 비어 있으면 "규칙에 안 걸렸다"와
+                          "규칙을 안 돌렸다"가 구분되지 않는다(HANDOFF §0-1). 예전엔 이 말을
+                          카드 맨 아래 요약 줄이 했는데, 플래그가 있는 고객에서는 이름 옆 ⚑·
+                          사유 줄과 **세 번** 겹쳤다 — 자리를 여기 하나로 모았다.
+                          ⚑와 적색은 위반 표시라 없을 때는 둘 다 뗀다. */}
+                      {selected.flag ? (
                         <div className="flag-reasons">
                           ⚑{' '}
                           {selected.flagReasons.map((r) => r.text).join(' · ')}
                         </div>
+                      ) : (
+                        <div className="flag-reasons none">위험 플래그 없음</div>
                       )}
                       <div className="row">
                         <div className="kv">
@@ -1218,6 +1313,16 @@ export default function DashboardPage() {
                         </div>
                       </div>
                       <table className="holdings" aria-label="보유 종목">
+                        {/* 머리글이 필요한 이유는 **비중 열 하나** 때문이다 — 맨 `50.9%`는
+                            "무엇의 50.9%"가 안 정해진다(잔고 대비인지 주식 내인지). 예전엔
+                            카드 맨 아래 요약 줄이 `(주식 내)`라고 괄호로 붙여 주고 있었다. */}
+                        <thead>
+                          <tr>
+                            <th>종목</th>
+                            <th className="num">평가금액</th>
+                            <th className="num">주식 내</th>
+                          </tr>
+                        </thead>
                         <tbody>
                           {selected.holdings.map((h) => (
                             <tr key={h.code}>
@@ -1230,6 +1335,13 @@ export default function DashboardPage() {
                                 </span>
                               </td>
                               <td className="num">₩{fmtKRW(h.amt)}</td>
+                              {/* 비중이 없으면 빈칸이 아니라 `—`. 빈칸은 "0%"로도
+                                  "아직 안 셌다"로도 읽힌다. */}
+                              <td className="num pct-eq">
+                                {h.pct_of_equity == null
+                                  ? '—'
+                                  : `${h.pct_of_equity}%`}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -1240,14 +1352,14 @@ export default function DashboardPage() {
                         notes={data.notes}
                         onOpenNote={(code) => setModal({ kind: 'note', code })}
                       />
-                      {/* 라벨이 `AI 진단`이 아닌 이유: 이 줄은 AI가 쓴 것이 아니라
-                          **코드가 계좌 데이터에서 계산한 것**이다(f1.portfolio_summary).
-                          예전 시드 문구를 그대로 내면서 `AI 진단`이라 부르던 게 이 카드에서
-                          유일하게 사실이 아닌 부분이었다. */}
-                      <div className="diag">
-                        <span className="tag">요약</span>
-                        {selected.diag}
-                      </div>
+                      {/* 여기 있던 `요약` 줄(f1.portfolio_summary)을 걷어냈다(2026-07-29).
+                          세 조각 중 둘이 이 패널에 이미 있었다: `국내주식 74%`는 도넛 범례와
+                          **글자까지 같았고**, `위험 플래그 …`는 이름 옆 ⚑와 사유 줄이 이미
+                          말하고 있었다. 남는 하나(최대 단일 종목의 주식 내 비중)는 요약이
+                          따로 말할 게 아니라 **보유 표에 없던 열**이었다 — 그래서 표로 옮겼고,
+                          한 종목이 아니라 전 종목의 비중이 보이게 됐다.
+                          ⚠️ 되돌리지 말 것. 되돌리려면 먼저 "표의 비중 열로 안 되는 이유"가
+                             있어야 한다. `portfolio_summary`와 그 테스트는 백엔드에 남아 있다. */}
                     </>
                   )}
                 </div>
