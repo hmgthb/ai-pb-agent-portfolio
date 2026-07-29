@@ -177,6 +177,37 @@ def test_self_disclaimer_is_boilerplate():
         assert citation_stats(s) == (0, 0, 0)
 
 
+def test_self_disclaimer_with_modifier_is_boilerplate():
+    """수식어가 끼어든 어형도 잡는다 (2026-07-29 실측 재발).
+
+    한화에어로 노트에서 a5가 '작성한 **미검증** 초안'이라고 써서, `작성한\\s*초안`을 기대하던
+    패턴이 빗나가 또 UNSOURCED로 올라갔다. 어형을 하나씩 좇지 않고 뜻의 서명으로 잡는다."""
+    for line in [
+        "*(이 노트는 AI가 작성한 미검증 초안이며, 투자권유·광고가 아닌 내부 참고용입니다.)*",
+        "이 노트는 AI 초안으로 미검증 상태입니다.",
+        "본 문서는 투자권유가 아닙니다.",
+    ]:
+        s = _parse(line)
+        assert all(x["kind"] == "boilerplate" for x in s), (line, s)
+        assert unsourced_count(s) == 0
+
+
+def test_real_note_sentences_are_not_boilerplate():
+    """⚠️ 위 패턴을 넓힌 대가를 고정한다 — 본문이 boilerplate로 새면 부착률이 **후해지고**,
+    컴플라이언스 지표는 그 방향으로 틀리면 안 된다(HANDOFF §1-1).
+
+    실제 노트(한화에어로 #4)에서 뽑은 문장들이다. '이번 노트의 …'처럼 자기 고지와 겹쳐
+    보이는 것도 일부러 넣었다 — '이 노트는'과 달리 boilerplate가 아니어야 한다."""
+    for line in [
+        "이번 노트의 재무 근거는 영업이익 한 항목뿐이므로, 원문 공시를 함께 확인해야 한다.",
+        "전기 실적은 앞선 사업보고서에 기재된 수치다.",
+        "회사 측은 이르면 다음 달 양산 계약을 체결할 것으로 알려졌다.",
+        "보도된 사업 규모(약 496억 원)는 회사 전체 매출 대비 크지 않은 편이다.",
+    ]:
+        s = _parse(line)
+        assert all(x["kind"] != "boilerplate" for x in s), (line, s)
+
+
 def test_legacy_rows_without_kind():
     """DB에 이미 저장된 옛 문장(kind 없음)도 사실 주장으로 세어 하위호환한다."""
     legacy = [{"text": "매출액은 300조원이다.", "source": {"type": "dart"}, "is_heading": False}]
