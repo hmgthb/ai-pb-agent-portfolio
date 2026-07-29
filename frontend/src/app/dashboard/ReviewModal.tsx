@@ -282,16 +282,16 @@ export function NoteModal({
     });
     if (!r.ok) return { blocked: errorMessage(r.body) };
     if (action === 'publish') {
-      toast('발행 완료 — 감사로그에 기록되었습니다');
-      return { ok: '게이트 통과 — 발행되었습니다.' };
+      toast('발행했습니다. 감사로그에 남았습니다');
+      return { ok: '게이트를 통과해 발행되었습니다.' };
     }
     /* 반려·폐기는 `ok`(초록 ✓ 상자)로 알리지 않는다 — 동작은 성공했지만 결과는 "통과"가
        아니라서 체크 표시가 뜻을 뒤집는다. 토스트로 알리고, 바뀐 상태는 머리말 알약이 말한다. */
     if (action === 'reject') {
-      toast(`반려 — 검토중으로 되돌렸습니다 (${reason})`);
+      toast(`검토중으로 반려했습니다 (${reason})`);
     }
     if (action === 'discard') {
-      toast(`보류 처리 — 처리 대기에서 빠집니다 (${reason})`);
+      toast(`보류했습니다. 처리 대기에서 빠집니다 (${reason})`);
     }
     return {};
   };
@@ -416,7 +416,7 @@ export function NoteModal({
           <div className={blocking ? 'ackbar' : 'ackbar done'}>
             {blocking
               ? `출처 없는 문장 ${blocking}개가 발행을 막고 있습니다. 각주를 붙일 수 없는 문장이면 사유를 골라 확인하세요.`
-              : '미인용 문장이 모두 확인되었습니다 — 발행할 수 있습니다.'}
+              : '미인용 문장을 모두 확인했습니다. 이제 발행할 수 있습니다.'}
             {current.acks.length > 0 &&
               ` (확인 ${current.acks.length}개, 감사로그에 기록됨)`}
           </div>
@@ -516,10 +516,10 @@ export function ChatModal({
     if (!r.ok) return { blocked: errorMessage(r.body) };
     setStatus('done');
     toast(
-      `처리 완료 — 처리 대기에서 내렸습니다. ${customer.name} 고객 회신은 PB가 직접 작성합니다`,
+      `처리 대기에서 내렸습니다. ${customer.name} 고객 회신은 PB가 직접 작성합니다`,
     );
     return {
-      ok: '처리 완료 — 회신 작성은 사람이 합니다(AI가 대신 보내지 않습니다).',
+      ok: '처리했습니다. 회신은 PB가 직접 작성합니다(AI가 대신 보내지 않습니다).',
     };
   };
 

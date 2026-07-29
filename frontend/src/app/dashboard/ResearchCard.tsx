@@ -176,7 +176,7 @@ export default function ResearchCard({
     setFailed('');
     setMsg({
       kind: 'info',
-      text: '에이전트를 실행하고 있습니다 — 완료까지 1~2분 걸립니다.',
+      text: '에이전트 실행 중입니다. (최대 1분)',
     });
 
     const es = new EventSource(streamUrl(code.trim(), actor));
@@ -218,7 +218,7 @@ export default function ResearchCard({
       setMsg({
         kind: 'done',
         text:
-          `${d.corp_name}(${code.trim()}) 종목 노트 초안 생성 완료 — 처리 대기 큐에 올라갔습니다.` +
+          `${d.corp_name}(${code.trim()}) 종목 노트 초안을 처리 대기 큐에 올렸습니다.` +
           (d.violations.length
             ? ` 게이트 지적 ${d.violations.length}건은 검토 화면에서 확인하세요.`
             : ''),
@@ -258,8 +258,8 @@ export default function ResearchCard({
         setMsg({
           kind: 'error',
           text: d.outcome?.reasons.length
-            ? '노트가 생성되지 않았습니다 — 아래 사유를 확인하세요.'
-            : '에이전트 실행은 끝났지만 노트가 생성되지 않았습니다 — 진행 단계에서 실패 지점을 확인하세요.',
+            ? '노트가 생성되지 않았습니다. 아래 사유를 확인하세요.'
+            : '에이전트 실행은 끝났지만 노트가 생성되지 않았습니다. 진행 단계에서 실패 지점을 확인하세요.',
         });
       }
       if (runErrored) setMsg(null);
@@ -366,7 +366,7 @@ export default function ResearchCard({
                   : '재무 핵심수치를 확보하지 못했습니다.'}
                 {outcome.disclosure_count === 0 &&
                   !outcome.failed_tools.includes('mcp__dart__dart_search') &&
-                  ' 최근 공시도 0건입니다 — 조회는 정상 동작했습니다.'}
+                  ' 최근 공시도 0건입니다. 조회는 정상이었습니다.'}
               </div>
             </div>
           )}
@@ -426,7 +426,7 @@ export default function ResearchCard({
               <div className="empty-body">
                 {outcome.failed_tools.includes('mcp__news__news_search')
                   ? '뉴스 조회에 실패했습니다 (뉴스 API 오류).'
-                  : '관련 뉴스가 없습니다 — 조회는 정상 동작했고 결과가 0건입니다.'}
+                  : '관련 뉴스가 0건입니다. 조회는 정상이었습니다.'}
               </div>
             </div>
           )}

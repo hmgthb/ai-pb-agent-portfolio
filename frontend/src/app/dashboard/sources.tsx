@@ -104,7 +104,7 @@ export function SourceBadge({
          (출처 URL은 공시·뉴스에서 온 값이라 우리가 통제하는 주소가 아니다). */
       target="_blank"
       rel="noopener noreferrer"
-      title={`${title} — 새 탭에서 열기`}
+      title={`${title} (새 탭에서 열기)`}
     >
       {label}
       <span className="sbadge-ext" aria-hidden="true">
@@ -220,7 +220,7 @@ export function FootnoteList({
                   href={href}
                   target="_blank"
                   rel="noopener noreferrer"
-                  title={`${sourceDetail(src)} — 새 탭에서 열기`}
+                  title={`${sourceDetail(src)} (새 탭에서 열기)`}
                 >
                   {sourceDetail(src)}
                   <span className="sbadge-ext" aria-hidden="true">

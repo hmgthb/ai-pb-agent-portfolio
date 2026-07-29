@@ -46,7 +46,7 @@ export function errorMessage(body: unknown, fallback = '처리에 실패했습�
   const detail = (body as { detail?: unknown } | null)?.detail;
   if (typeof detail === 'string') return detail;
   const d = detail as { message?: string; violations?: string[] } | undefined;
-  if (d?.violations?.length) return `컴플라이언스 게이트 차단 — ${d.violations.join(' / ')}`;
+  if (d?.violations?.length) return `컴플라이언스 게이트 차단: ${d.violations.join(' / ')}`;
   return d?.message ?? fallback;
 }
 

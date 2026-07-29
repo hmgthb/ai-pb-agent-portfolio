@@ -689,8 +689,13 @@ export default function DashboardPage() {
             <h2>백엔드에 연결하지 못했습니다</h2>
           </div>
           <div className="hint" style={{ padding: '8px 0' }}>
-            {error} — <code>docker compose up</code>으로 백엔드(8000)가 떠
-            있는지 확인하세요.
+            {/* 오류 원문은 제 줄에 둔다. fetch 예외의 e.message라 `Failed to fetch`
+                같은 영문이 들어오는데, 한글 안내문에 이어 붙이면 한 문장으로 읽히지
+                않는다(예전엔 사이를 —로 이었다). */}
+            {error}
+            <br />
+            <code>docker compose up</code>으로 백엔드(8000)가 떠 있는지
+            확인하세요.
             <br />
             목업 데이터로 화면만 보려면 시안 파일{' '}
             <code>docs/design/pb-admin-dashboard.html</code>을 직접 열면 됩니다.
@@ -1104,7 +1109,9 @@ export default function DashboardPage() {
                   className="hint"
                   style={{ marginTop: 10, color: 'var(--critical)' }}
                 >
-                  ⛔ 컴플라이언스 게이트 미통과 —{' '}
+                  {/* 구분자는 콜론이다(api.ts::errorMessage의 게이트 차단 문구와 같은 형태).
+                      여기 —는 접속사가 아니라 라벨과 목록을 가르는 자리였다. */}
+                  ⛔ 컴플라이언스 게이트 미통과:{' '}
                   {data.brief.violations.join(' / ')}
                 </div>
               )}
@@ -1410,7 +1417,7 @@ export default function DashboardPage() {
                             key={c.label}
                             className="chip ana"
                             onClick={() => askHolding(c.q)}
-                            title={`${c.q} — 질문 채우기`}
+                            title={`${c.q} 질문 채우기`}
                           >
                             {c.label}
                           </button>
