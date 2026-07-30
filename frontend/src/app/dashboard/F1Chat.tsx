@@ -1,6 +1,6 @@
 'use client';
 
-/** F1 대화형 종목 Q&A (수직 슬라이스 · 단일턴).
+/** F1 대화형 종목 Q&A (멀티턴).
  *
  *  `GET /api/chat/stream?q=...`의 SSE를 말풍선으로 옮긴다:
  *    blocked      → 입력 가드(MNPI·인젝션·PII) 차단 — 빨간 말풍선, 에이전트 안 돎
@@ -9,7 +9,15 @@
  *    answer       → 최종 문장별 출처 배지 + 지연시세 고지
  *    run_error    → 실행 오류(연결 끊김과 구분)
  *
- *  멀티턴(Redis 세션)은 이 슬라이스 범위 밖 — 지금은 매 질문이 독립이다.
+ *  멀티턴은 백엔드가 발급한 세션 id(`session` 이벤트)를 다음 턴에 붙여 이어간다 — Redis에는
+ *  라우팅 맥락만 남고(TTL 1시간) 답변 본문은 담기지 않는다.
+ *
+ *  ⚠️ **대화는 이 컴포넌트의 state다.** 그래서 전역 F1(우하단 고정 버튼)은 모달을 닫아도
+ *     **언마운트하지 않고 hidden으로만 감춘다**(page.tsx) — 언마운트되면 turns가 사라지는
+ *     것은 물론이고 cleanup이 EventSource를 닫아 **답변이 오는 중이면 크레딧만 쓰고 버린다**
+ *     (F3 생성 뷰와 같은 이유·같은 처방, HANDOFF §0-1).
+ *  ⚠️ **새로 고치면 지워지는 건 그대로 둔다.** 답변을 sessionStorage에 남기면 고객 이야기가
+ *     브라우저 저장소에 쌓인다 — 아래 입력창의 autoComplete를 끈 것과 같은 이유다.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -73,16 +81,31 @@ function outboundWarning(text: string, names: string[]): string | null {
  *  문자열이 아니라 **눌린 횟수(n)를 같이** 들고 다닌다 — 값이 같으면 effect가 안 돈다. */
 export type ChatPrefill = { q: string; n: number };
 
+/** 언마운트를 넘겨 대화를 들고 있는 자리. **부모가 소유한다**(여기서 만들면 같이 사라진다).
+ *
+ *  전역 F1은 모달을 `hidden`으로만 감춰서 이것이 필요 없다. 이건 **감출 수 없는 자리**를 위한
+ *  것이다 — 고객 문의 모달은 큐의 한 건에 딸려 있어, 감춰 두면 어느 문의의 대화인지가 화면에서
+ *  사라진다. 그래서 대화를 **문의별로** 들고 있다가 같은 건을 다시 열 때 돌려준다.
+ *  ⚠️ 키가 갈리면 대화도 갈린다 — 다른 문의의 대화가 번져 오면 앞 건의 종목을 이어받는다.
+ *  ⚠️ 새로 고치면 사라진다(전역 F1과 같은 기준) — `sessionStorage`에 담지 않는 이유도 같다. */
+export type ChatKeep = Map<string, { turns: ChatTurn[]; session: string | null; input: string }>;
+export type ChatTurn = Turn;
+
 export default function F1Chat({
-  initial,
   prefill,
   compact,
   customerId,
   customerNames,
   preview,
+  onClose,
+  active,
+  onRunningChange,
+  keep,
+  keepKey,
 }: {
-  initial?: string;
-  /** 마운트 뒤에도 입력창을 채우는 경로(고객 카드의 보유 종목 칩). */
+  /** 입력창을 채우는 유일한 경로(고객 카드의 보유 종목 칩·분석 칩).
+   *  ⚠️ 마운트 시점 prop(`initial`)은 걷어냈다 — 전역 F1은 닫아도 언마운트되지 않으므로
+   *     두 번째 열기부터 조용히 무시된다. 채워 여는 길은 이것 하나여야 한다. */
   prefill?: ChatPrefill | null;
   /** 카드 안에 인라인으로 놓을 때. 모달용 큰 머리말·안내문을 접고 높이를 부모에 맞춘다. */
   compact?: boolean;
@@ -95,13 +118,31 @@ export default function F1Chat({
   /** 이 고객에 대해 물으면 무엇이 나가는가 — 질문 전에 미리 보여준다(크레딧 0).
    *  `GET /api/customers/{id}/egress-preview`가 준 값 그대로. */
   preview?: ChatRedaction | null;
+  /** 머리말에 닫기(×)를 낸다. 모달로 열린 경우에만 넘어온다 — 인라인(카드 안)은 닫을
+   *  것이 없고, 고객 문의 모달은 자기 ×가 이미 있다(둘이면 어느 쪽이 무엇을 닫는지 모른다). */
+  onClose?: () => void;
+  /** 지금 화면에 보이나. 감춰진 동안(`display: none`)은 높이가 0이라 자동 스크롤이 먹지
+   *  않아서, 다시 열릴 때 한 번 더 내려야 최신 답변이 보인다. 안 넘기면 항상 보이는 것으로
+   *  본다(인라인). */
+  active?: boolean;
+  /** 실행 중인지를 밖에 알린다 — 모달을 닫아도 스트림은 계속 도는데, 닫아 둔 동안에는
+   *  화면에 그 사실을 말할 자리가 고정 버튼밖에 없다(F3 탭 라벨의 `●`과 같은 처방). */
+  onRunningChange?: (running: boolean) => void;
+  /** 언마운트를 넘겨 대화를 보관한다(`ChatKeep`). 둘 다 줘야 동작한다.
+   *  ⚠️ 고객 카드에는 붙이지 않는다 — 그쪽은 `key={고객id}`로 **새로 시작하는 것이 결정**이다.
+   *     여기에 보관을 붙이면 앞 고객으로 돌아갈 때 그 대화가 되살아나 결정이 뒤집힌다. */
+  keep?: ChatKeep;
+  keepKey?: string;
 } = {}) {
-  // 상담 준비 메모에서 종목을 눌러 열면 질문이 채워진 채로 시작한다. **보내지는 않는다** —
-  // 실행은 크레딧을 쓰고 답변은 고객 앞에서 쓰일 수 있으니, 시작 버튼은 사람이 누른다.
-  const [input, setInput] = useState(initial ?? '');
-  const [turns, setTurns] = useState<Turn[]>([]);
+  // 보관된 대화가 있으면 그것으로 시작한다(`useState` 초기값은 마운트에만 쓰인다 —
+  // 다시 열릴 때 새 마운트이므로 여기서 한 번 읽는 것이 맞다).
+  const kept = keep && keepKey ? keep.get(keepKey) : undefined;
+  // 칩을 누르면 질문이 채워진 채로 선다. **보내지는 않는다** — 실행은 크레딧을 쓰고
+  // 답변은 고객 앞에서 쓰일 수 있으니, 시작 버튼은 사람이 누른다.
+  const [input, setInput] = useState(kept?.input ?? '');
+  const [turns, setTurns] = useState<Turn[]>(kept?.turns ?? []);
   // 멀티턴: 백엔드가 발급한 세션 id를 들고 다음 턴에 붙인다 → "관련 뉴스는?"이 종목을 이어받는다.
-  const sessionRef = useRef<string | null>(null);
+  const sessionRef = useRef<string | null>(kept?.session ?? null);
   const esRef = useRef<EventSource | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const running = turns.length > 0 && turns[turns.length - 1].running;
@@ -109,10 +150,43 @@ export default function F1Chat({
   // effect로 두면 한 글자 늦게 뜬다. 순수 문자열 검사라 비용도 없다.
   const warning = outboundWarning(input, customerNames ?? []);
 
-  useEffect(() => () => esRef.current?.close(), []);
+  // 대화·입력을 보관 자리에 계속 흘려 둔다(Map에 대입하는 것뿐이라 값이 싸다).
+  // 세션 id는 ref라 여기서 읽는 값이 곧 현재값이다 — `session` 이벤트 뒤에는 반드시 turns가
+  // 한 번 더 바뀌므로(답변·done) 마지막 기록에는 세션이 들어 있다.
   useEffect(() => {
+    if (keep && keepKey) keep.set(keepKey, { turns, session: sessionRef.current, input });
+  }, [turns, input, keep, keepKey]);
+
+  useEffect(
+    () => () => {
+      esRef.current?.close();
+      // 닫는 순간 스트림도 끊긴다. 보관된 마지막 턴이 `running`으로 남으면 다시 열었을 때
+      // **끝나지 않는 `조회 중…`**이 서므로, 끊겼다는 사실을 그 자리에 적어 둔다.
+      if (!keep || !keepKey) return;
+      const c = keep.get(keepKey);
+      const last = c?.turns[c.turns.length - 1];
+      if (!c || !last?.running) return;
+      keep.set(keepKey, {
+        ...c,
+        turns: [
+          ...c.turns.slice(0, -1),
+          { ...last, running: false, error: '모달을 닫아 중단됐습니다. 다시 물어보세요.' },
+        ],
+      });
+    },
+    [keep, keepKey],
+  );
+  // 감춰진 동안에는 상자 높이가 0이라 여기서 내려도 scrollTop이 0에 머문다 — 그래서
+  // `active`도 의존성이다. 다시 열리는 프레임에 한 번 더 돌아야 방금 온 답변이 보인다.
+  useEffect(() => {
+    if (active === false) return;
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
-  }, [turns]);
+  }, [turns, active]);
+  // ResearchCard는 setRunning과 짝지어 직접 부르는데(effect 없이), 여기서는 running이
+  // state가 아니라 **마지막 턴에서 파생된 값**이라 감시하는 쪽이 정확하다.
+  useEffect(() => {
+    onRunningChange?.(running);
+  }, [running, onRunningChange]);
   // 칩을 누르면 입력창만 채운다(보내지 않는 건 위와 같은 이유다).
   // effect가 아니라 **렌더 중 조정**이다 — 프리필은 화면에 그려지기 전에 반영돼야 하고,
   // effect로 하면 빈 입력창이 한 번 그려졌다가 채워진다. 신호는 n으로 소비 여부를
@@ -127,6 +201,22 @@ export default function F1Chat({
     setTurns((ts) =>
       ts.map((t, i) => (i === ts.length - 1 ? { ...t, ...p } : t)),
     );
+
+  /** 새 대화 — 모달을 닫아도 대화가 남게 된 뒤로, 끊는 자리가 여기밖에 없다.
+   *  말풍선만 비우는 게 아니라 **세션 id도 버린다**: 다음 질문이 앞 대화의 종목을
+   *  이어받으면(멀티턴 last_entity) 다른 고객 이야기를 하는 중에 엉뚱한 종목이 답으로
+   *  나온다. 고객 카드가 `key`로 대화를 새로 시작하는 것과 같은 이유이고, 여기는 고객이
+   *  없으니 사람이 끊어 준다.
+   *  ⚠️ 입력창은 비우지 않는다 — 지금 쓰고 있는 질문은 지난 대화가 아니라 사람의 것이다. */
+  function reset() {
+    if (running) return;
+    esRef.current?.close();
+    esRef.current = null;
+    sessionRef.current = null;
+    setTurns([]);
+    // 보관 자리도 같이 비운다 — 안 비우면 다시 열었을 때 지운 대화가 돌아온다.
+    if (keep && keepKey) keep.delete(keepKey);
+  }
 
   function send() {
     const q = input.trim();
@@ -199,7 +289,27 @@ export default function F1Chat({
       {!compact && (
         <>
           <div className="m-head">
-            <h3>종목 질문</h3>
+            <h3>채팅 질문</h3>
+            {/* 조작 둘을 한 상자에 모은다 — `.m-close` 혼자면 자기 `margin-left: auto`가
+                오른쪽으로 밀어 주는데, 형제가 하나 늘면 auto가 둘로 갈려 사이가 벌어진다.
+                `새 대화`는 대화가 있을 때만 낸다(빈 화면에서 비울 것이 없다). */}
+            <div className="m-acts">
+              {turns.length > 0 && (
+                <button
+                  className="btn"
+                  onClick={reset}
+                  disabled={running}
+                  title="지금까지의 대화를 비웁니다. 다음 질문은 이전 종목을 이어받지 않습니다."
+                >
+                  ↻ 새 대화
+                </button>
+              )}
+              {onClose && (
+                <button className="m-close" aria-label="닫기" onClick={onClose}>
+                  ×
+                </button>
+              )}
+            </div>
           </div>
           <div className="chat-hint">
             상담 중 나온 질문을 물어보세요. (예: 삼성전자 최근 실적 → 주가는? →

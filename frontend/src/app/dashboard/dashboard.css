@@ -413,6 +413,20 @@ tr:focus-visible,
 .fab:hover {
   background: var(--accent-active);
 }
+/* 모달을 닫아도 답변 스트림은 계속 돈다(언마운트하지 않는다) — 닫아 둔 동안 그 사실을
+   말할 자리가 여기뿐이다. 탭 라벨의 `●`(.cat-run)과 같은 어휘·같은 깜빡임을 쓴다.
+   ⚠️ 색은 물려받는다(--on-accent) — .cat-run의 --accent-text는 어두운 면 위 값이라
+      옐로 버튼에서는 사라진다. */
+.fab .fab-run {
+  font-size: 9px;
+  vertical-align: 2px;
+  animation: cat-run-blink 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fab .fab-run {
+    animation: none;
+  }
+}
 .fab:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 2px;
@@ -1650,7 +1664,10 @@ th.rownum {
    예전에는 overlay가 스크롤을 맡고 모달은 위(flex-start)에 붙어 있었다 — 노트가 길면
    상자 자체가 아래로 자라 화면 밖으로 나갔고, 스크롤은 페이지 전체가 움직이는 것처럼
    느껴졌다. 이제 바깥은 안 움직인다(overflow: hidden). */
-#overlay {
+/* id가 아니라 class인 이유: 오버레이가 **동시에 둘** 있을 수 있다. 전역 F1은 닫아도
+   언마운트하지 않고 `hidden`으로만 감추므로(page.tsx), 노트 모달이 열려 있는 동안
+   감춰진 F1 오버레이가 DOM에 같이 남는다 — id면 문서에 같은 id가 둘이 된다. */
+.overlay {
   position: fixed;
   inset: 0;
   z-index: 5;
@@ -1663,10 +1680,12 @@ th.rownum {
   padding: 24px 16px;
   overflow: hidden;
 }
-:root[data-theme='light'] #overlay {
+:root[data-theme='light'] .overlay {
   background: rgba(11, 14, 17, 0.45);
 }
-#overlay[hidden] {
+/* `display: flex`가 UA의 `[hidden] { display: none }`을 이기므로 여기서 다시 눌러 준다.
+   전역 F1이 감춰지는 경로가 이 한 줄이다 — 지우면 닫은 모달이 화면에 남는다. */
+.overlay[hidden] {
   display: none;
 }
 .modal {
@@ -1689,7 +1708,8 @@ th.rownum {
   overscroll-behavior: contain;
 }
 /* 제목·상태·닫기(×)와 그 아래 메타 줄은 **스크롤 밖**이다 — 긴 노트에서 ×가 위로
-   사라지면 닫는 방법이 배경 클릭뿐이 된다(이 모달은 Esc로도 안 닫힌다).
+   사라지면 닫는 방법이 배경 클릭과 Esc뿐이 된다(둘 다 눌러야 알 수 있는 길이라, 보이는
+   닫기는 스크롤 밖에 남는다).
    sticky로도 해 봤지만 상자 안쪽 여백(padding) 구간을 문장이 스쳐 지나가서, 아예
    스크롤 영역 밖으로 뺐다. flex-shrink: 0이 없으면 본문에 밀려 이 줄이 찌그러진다. */
 .m-head {
@@ -1702,6 +1722,18 @@ th.rownum {
   margin: 0;
   font-size: 16px;
   letter-spacing: -0.01em;
+}
+/* 머리말 오른쪽에 조작이 둘 이상일 때(F1 채팅: `새 대화` · 닫기). `.m-close`는 자기
+   `margin-left: auto`로 오른쪽에 붙는데, 형제가 하나 늘면 auto가 둘로 갈려 사이가
+   벌어진다 — 묶어서 auto를 상자에 한 번만 준다. */
+.m-head .m-acts {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.m-head .m-acts .m-close {
+  margin-left: 0;
 }
 .m-close {
   margin-left: auto;
@@ -2069,6 +2101,37 @@ a.fn-title:hover {
 }
 .btn.danger:hover {
   border-color: var(--critical);
+}
+/* 자주 쓰지 않는 조작 — 면도 테두리도 없는 글자다(브리핑 `삭제`).
+   `.btn`보다 급이 한 단 낮다: 같은 머리말에 `↻ 다시 생성`(.btn)이 서 있고, 삭제는
+   그보다도 뒤라 **테두리를 가지면 둘이 같은 무게로 읽힌다.** 밑줄은 hover에만 준다. */
+.btn-quiet {
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 5px 6px;
+  border-radius: var(--r-md);
+}
+.btn-quiet:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+/* 무장 상태 — 두 번째 누름이 실제로 지운다. 색은 게이트 차단과 같은 `--critical`이고
+   가르는 건 **형태**다(막대가 아니라 글자 하나). 새 색을 만들지 않는다. */
+.btn-quiet.danger {
+  color: var(--critical);
+  font-weight: 600;
+}
+.btn-quiet.danger:hover {
+  color: var(--critical);
+}
+.btn-quiet[disabled] {
+  cursor: not-allowed;
+  color: var(--muted);
+  text-decoration: none;
 }
 /* 바이낸스 button-primary-disabled — 투명도로 죽이지 않고 **탁한 어두운 노랑**으로 간다.
    opacity는 뒤 배경이 비쳐 면이 흐려지는데, 여기 면은 색 블록이라 단차가 깨진다. */

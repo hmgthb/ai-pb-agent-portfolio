@@ -9,7 +9,7 @@
 
 import { useState } from 'react';
 import { apiPost, errorMessage, fmtKRW, hhmm } from './api';
-import F1Chat, { type ChatPrefill } from './F1Chat';
+import F1Chat, { type ChatKeep, type ChatPrefill } from './F1Chat';
 import PrepMemo from './PrepMemo';
 import {
   ACK_REASONS,
@@ -505,6 +505,7 @@ export function ChatModal({
   onOpenNote,
   onOpenPortfolio,
   toast,
+  chatKeep,
 }: {
   item: QueueChat;
   customer: Customer;
@@ -523,6 +524,9 @@ export function ChatModal({
    *  준법에게는 고객 포트폴리오 카드 자체가 없으므로 넘어오지 않는다 — 정보장벽. */
   onOpenPortfolio?: () => void;
   toast: (m: string) => void;
+  /** 문의별 대화 보관 자리 — **부모가 소유한다**(이 모달은 닫히면 언마운트되므로 여기서
+   *  만들면 대화도 같이 사라진다). 안 넘기면 예전처럼 닫을 때 대화가 사라진다. */
+  chatKeep?: ChatKeep;
 }) {
   const [res, setRes] = useState<Result>({});
   const [status, setStatus] = useState(item.status);
@@ -681,11 +685,17 @@ export function ChatModal({
                   </button>
                 ))}
               </div>
+              {/* 대화는 **문의별로** 보관된다 — 이 모달은 닫으면 언마운트되기 때문이다
+                  (감춰 두면 어느 문의의 대화인지가 화면에서 사라진다, HANDOFF §7).
+                  키는 문의 id다: 같은 건을 다시 열면 아까 대화가 그대로 서고, 다른 건은
+                  자기 대화를 갖는다(번지면 앞 건의 종목을 이어받는다). */}
               <F1Chat
                 compact
                 customerId={customer.id}
                 customerNames={customerNames}
                 prefill={prefill}
+                keep={chatKeep}
+                keepKey={`session-${item.id}`}
               />
             </div>
           </>

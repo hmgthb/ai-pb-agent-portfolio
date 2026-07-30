@@ -24,6 +24,13 @@ export async function apiPost(path: string, body: unknown): Promise<PostResult> 
   return { ok: r.ok, status: r.status, body: await r.json().catch(() => null) };
 }
 
+/** 본문 없는 삭제. 지우는 대상은 경로가 말하고 그 밖의 선택지는 없다 — 몸통이 필요해지면
+ *  그건 삭제가 아니라 상태 전이라는 뜻이다(노트가 그 경우다: 사유를 골라 `POST`로 간다). */
+export async function apiDelete(path: string): Promise<PostResult> {
+  const r = await fetch(BASE + path, { method: 'DELETE' });
+  return { ok: r.ok, status: r.status, body: await r.json().catch(() => null) };
+}
+
 /** `actor`는 목 로그인 사용자 — 노트의 생성자로 남아 "내가 만든 노트"를 찾을 수 있게 한다. */
 export const streamUrl = (stockCode: string, actor?: string) =>
   `${BASE}/api/research/stream?stock_code=${encodeURIComponent(stockCode)}` +

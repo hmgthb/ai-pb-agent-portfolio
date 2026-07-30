@@ -18,12 +18,14 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from 'react';
 import './dashboard.css';
 import {
   api,
+  apiDelete,
   apiPost,
   ago,
   bizDay,
@@ -44,7 +46,7 @@ import {
   Tip,
   useTip,
 } from './charts';
-import F1Chat, { type ChatPrefill } from './F1Chat';
+import F1Chat, { type ChatKeep, type ChatPrefill } from './F1Chat';
 import PrepMemo from './PrepMemo';
 import ResearchCard from './ResearchCard';
 import { ChatModal, NoteModal } from './ReviewModal';
@@ -173,8 +175,6 @@ function ThemeToggle() {
  *  도는 곳이라, 언마운트하면 실행이 끊기고 크레딧만 쓰고 노트가 안 나온다. */
 type View = 'cust' | 'note' | 'ai';
 
-type Session = { id: number; started_at: string };
-
 type Data = {
   customers: Customer[];
   queue: QueueItem[];
@@ -185,7 +185,10 @@ type Data = {
   summary: Summary;
   audit: DashboardAudit[];
   agents: AgentCalls[];
-  sessions: Session[];
+  /* ⚠️ `sessions`를 여기 다시 넣지 말 것(2026-07-30에 뺐다). `/api/sessions`를 받아
+     담아 두기만 하고 **읽는 곳이 한 군데도 없었다** — 화면에 닿는 상담 데이터는 큐
+     (`pending`만)와 `summary.sessions_pending`뿐이다. 문의 상세가 필요해지면 그때
+     라우트를 다시 부르되, 쓰는 자리와 같이 들여올 것. */
   brief: Brief | null;
 };
 
@@ -225,6 +228,9 @@ const AUDIT_CAT: Record<string, AuditCat> = {
   // "AI가 막힌 건수"를 셀 때 사람 판단이 섞인다.
   deliberation_rejected: 'human',
   note_discarded: 'human',
+  // 브리프를 만든 건 에이전트지만(tool) **치운 건 사람이다** — 같은 칸에 두면 원장에서
+  // "AI가 한 일"을 셀 때 사람이 지운 것이 섞인다.
+  brief_deleted: 'human',
   brief_created: 'tool',
   chat_answered: 'tool',
   tool_use_start: 'tool',
@@ -266,9 +272,23 @@ export default function DashboardPage() {
   const [modal, setModal] = useState<
     | { kind: 'note'; code: string }
     | { kind: 'chat'; id: number }
-    | { kind: 'f1'; q?: string }
+    /* `f1`은 여는 신호일 뿐 질문을 실어 오지 않는다(예전 `q`는 걷어냈다) — 이 모달은
+       닫아도 언마운트되지 않으므로(아래 오버레이 주석) 마운트 시점에만 읽는 prop은
+       두 번째 열기부터 조용히 무시된다. 채워 열어야 하면 고객 카드처럼 `prefill`로 넘길 것. */
+    | { kind: 'f1' }
     | null
   >(null);
+  /** 전역 F1 답변이 도는 중인가 — 모달을 닫아도 스트림은 계속 돈다(언마운트하지 않는다).
+   *  닫아 둔 동안 그 사실을 말할 자리는 고정 버튼뿐이다. */
+  const [f1Running, setF1Running] = useState(false);
+  /** 고객 문의 모달의 대화를 **문의별로** 들고 있는 자리. 그 모달은 닫으면 언마운트되므로
+   *  (전역 F1처럼 감춰 둘 수 없다 — 감추면 어느 문의의 대화인지가 사라진다) 대화를 여기
+   *  페이지 쪽에 둔다. ⚠️ **고객 카드 채팅에는 넘기지 않는다** — 그쪽은 고객을 바꾸면 새로
+   *  시작하는 것이 결정이다(`key={selected.id}`).
+   *  ⚠️ `useRef`가 아니라 `useState`인 건 규칙 때문이다 — 렌더 중에 `ref.current`를 읽어
+   *     자식에게 넘기면 `react-hooks/refs`가 잡는다. 초기화 함수로 주면 **한 번만** 만들어지고
+   *     같은 Map이 계속 넘어간다(값을 바꾸지 않으므로 리렌더도 유발하지 않는다). */
+  const [chatKeep] = useState<ChatKeep>(() => new Map());
   const [toastMsg, setToastMsg] = useState('');
   /** 고객 카드 안 채팅의 입력창을 채우는 신호(보유 종목 칩).
    *  같은 종목을 두 번 눌러도 다시 채워지도록 n을 올린다 — q만 보면 값이 같아 구분되지 않는다.
@@ -328,7 +348,7 @@ export default function DashboardPage() {
 
   const load = useCallback(async () => {
     try {
-      const [customers, queue, noteIndex, summary, audit, agents, sessions] =
+      const [customers, queue, noteIndex, summary, audit, agents] =
         await Promise.all([
           api<Customer[]>('/api/customers'),
           api<QueueItem[]>('/api/dashboard/queue'),
@@ -336,7 +356,6 @@ export default function DashboardPage() {
           api<Summary>('/api/dashboard/summary'),
           api<DashboardAudit[]>('/api/dashboard/audit?limit=200'),
           api<AgentCalls[]>('/api/dashboard/agents'),
-          api<Session[]>('/api/sessions'),
         ]);
       // 노트 본문·감사로그는 목록에 없으므로 건별 상세를 따로 받는다.
       // 목록을 큐가 아니라 /api/notes에서 받는 이유: 큐는 발행분을 빼기 때문에, 큐를 쓰면
@@ -367,7 +386,6 @@ export default function DashboardPage() {
         summary,
         audit,
         agents,
-        sessions,
         brief,
       });
       setError('');
@@ -437,6 +455,80 @@ export default function DashboardPage() {
       setBriefRunning(false);
     }
   }, [load]);
+
+  /* ── 브리핑 삭제 ────────────────────────────────────────────────────
+     ⚠️ 위 재생성과 **반대 성질이라 생김새도 반대다.** 재생성은 다시 누르면 되는 조작이라
+        즉시 실행이지만, 이건 **되돌릴 수 없다**(다시 만들려면 크레딧·40~50초를 쓰고 내용도
+        같지 않다) — 그래서 **두 번 누른다**(무장 → 실행). 노트 보류·반려와 같은 급이다.
+     ⚠️ 지우는 범위는 화면이 정하지 않는다 — 서버가 그 브리프의 **날짜에 속한 행 전부**를
+        지운다(`db.delete_briefs_on`). 같은 날 재실행 회차가 쌓여 있어서, 보이는 한 행만
+        지우면 직전 회차가 올라와 아무 일도 안 일어난 것처럼 보인다.
+     자주 쓰는 조작이 아니라 머리말 오른쪽 끝의 작은 글자 버튼(`.btn-quiet`)이다 —
+     1차 CTA도 아니고 재생성보다도 뒤다. */
+  const [briefArmed, setBriefArmed] = useState(false);
+  const [briefDeleting, setBriefDeleting] = useState(false);
+
+  const deleteBrief = useCallback(
+    async (id: number) => {
+      setBriefError('');
+      setBriefDeleting(true);
+      try {
+        const r = await apiDelete(`/api/briefs/${id}`);
+        if (!r.ok) {
+          setBriefError(errorMessage(r.body, '브리핑을 삭제하지 못했습니다.'));
+          return;
+        }
+        const n = (r.body as { deleted?: number } | null)?.deleted ?? 0;
+        toast(`브리핑을 삭제했습니다 (${n}건).`);
+        setBriefArmed(false);
+        // 생성과 같은 이유로 전체를 다시 받는다 — 감사로그에 `brief_deleted`가 붙는다.
+        await load();
+      } catch (e) {
+        setBriefError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBriefDeleting(false);
+      }
+    },
+    [load, toast],
+  );
+
+  /* 고정 버튼(FAB)이 인라인 채팅의 `보내기` 오른쪽 끝을 덮는다 — 떠 있는 것은 무엇이든
+     덮으므로 자리를 옮겨서 풀 문제가 아니다. **둘이 같은 일(F1)을 하니**, 인라인 채팅이
+     화면에 서 있는 동안에는 떠다니는 바로가기를 내리는 쪽으로 푼다.
+     ⚠️ 관찰 대상은 카드 전체가 아니라 **채팅 칸**이다(`.cust-chat`) — 고객 카드는 크고
+        첫 화면을 거의 채워서, 카드로 잡으면 그 탭에서 FAB이 거의 늘 사라진다.
+     ⚠️ 뷰는 `hidden` 토글이라 DOM에 남아 있는데, `display: none`이면 교차가 0이라
+        관찰자가 그대로 "안 보임"으로 준다 — 탭을 옮길 때 따로 손볼 것이 없다. */
+  const inlineChatRef = useRef<HTMLDivElement | null>(null);
+  const [inlineChatSeen, setInlineChatSeen] = useState(false);
+  useEffect(() => {
+    const el = inlineChatRef.current;
+    if (!el) {
+      setInlineChatSeen(false);
+      return;
+    }
+    const io = new IntersectionObserver(
+      ([e]) => setInlineChatSeen(e.isIntersecting),
+      { threshold: 0.15 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [role, view, data]);
+
+  /* Esc로 모달을 닫는다. 여는 자리가 여럿이라(큐 · 고객 표 · 고정 버튼) 닫는 규칙은 여기
+     한 곳에 둔다 — 배경 클릭·`×`와 **같은 일**을 해야 하므로 같은 `setModal(null)`을 쓴다.
+     ⚠️ 전역 F1도 같이 닫히지만 그쪽은 `hidden` 토글이라 **대화는 남는다**(끊는 건 `새 대화`).
+     ⚠️ 무장 상태(반려 사유 셀렉트 등)를 Esc로 되돌리지는 않는다 — 그 상태는 모달 안에 살고
+        모달이 닫히면 같이 사라지므로, 여기서 단계를 하나 더 두면 "한 번 더 눌러야 닫히는"
+        모달이 된다. */
+  useEffect(() => {
+    if (!modal) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setModal(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [modal]);
 
   const cfg = ROLES[role];
 
@@ -612,7 +704,7 @@ export default function DashboardPage() {
     return (
       <div className="wrap">
         <header className="topbar">
-          <div className="brand">AI PB 어시스턴트</div>
+          <div className="brand">AI PB Agent</div>
         </header>
         <section className="card">
           <div className="card-head">
@@ -790,7 +882,7 @@ export default function DashboardPage() {
   return (
     <div className="wrap">
       <header className="topbar">
-        <div className="brand">AI PB 어시스턴트</div>
+        <div className="brand">AI PB Agent</div>
         <div className="right">
           {/* 역할 전환이 아니라 **화면 전환**이다 — 이 대시보드의 사용자는 PB 한 명이고,
               준법은 이 화면을 같이 쓰는 사람이 아니라 승인 단계를 맡는 다른 사람이다.
@@ -910,6 +1002,40 @@ export default function DashboardPage() {
                 >
                   {briefRunning ? '생성 중…' : '↻ 다시 생성'}
                 </button>
+                {/* 삭제 — 자주 쓰는 조작이 아니라 옆 버튼보다 작고 조용하다(면도 테두리도
+                    없는 글자). 그래도 **되돌릴 수 없어서 두 번 눌러야 실행된다**: 첫 누름은
+                    무장뿐이고, 무장은 라벨이 아니라 **색(적색)과 옆에 선 `취소`**가 말한다.
+                    ⚠️ 무장 상태의 색은 `--critical`이다 — 게이트 차단과 같은 색이지만 여기서는
+                       형태가 다르다(막대가 아니라 글자). 새 색을 만들지 않는다(HANDOFF §0-1). */}
+                {briefArmed ? (
+                  <>
+                    <button
+                      className="btn-quiet danger"
+                      disabled={briefDeleting}
+                      onClick={() => {
+                        if (data.brief) void deleteBrief(data.brief.id);
+                      }}
+                    >
+                      {briefDeleting ? '삭제 중…' : '삭제'}
+                    </button>
+                    <button
+                      className="btn-quiet"
+                      disabled={briefDeleting}
+                      onClick={() => setBriefArmed(false)}
+                    >
+                      취소
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="btn-quiet"
+                    disabled={briefRunning}
+                    onClick={() => setBriefArmed(true)}
+                    title={`${data.brief.brief_date} 브리핑을 지웁니다. 같은 날 다시 생성한 회차까지 함께 지워지고, 되돌릴 수 없습니다.`}
+                  >
+                    삭제
+                  </button>
+                )}
               </span>
             )}
           </div>
@@ -1331,7 +1457,7 @@ export default function DashboardPage() {
                     ⚠️ 입력 가드(compliance.PII_PATTERNS)는 주민·계좌번호 '숫자 형식'만
                     잡는다 — 한글 이름은 안 걸린다. 이름을 안 쓰게 만드는 건 지금도
                     이 UI의 몫이다(HANDOFF §7). */}
-                <div className="cust-chat">
+                <div className="cust-chat" ref={inlineChatRef}>
                   {selected ? (
                     <>
                       {/* 제목의 주어는 **사물(포트폴리오)**이지 사람(고객)이 아니다 —
@@ -1621,10 +1747,12 @@ export default function DashboardPage() {
           바이낸스의 footer-light(어두운 본문을 밝은 면으로 닫는다)를 여기에 쓴 건
           장식이 아니라 **대비** 때문이다: 이 문장은 반드시 읽혀야 하는데, 밝은 면 위
           검은 글자가 다크 캔버스에서 낼 수 있는 어떤 회색보다 세다.
-          ⚠ 상담 전 브리핑 카드만 예외다: 백엔드가 만든 "ℹ 내부 참고용" 고지가
-          content_md에 있는데 화면 타입(Brief)에 그 필드가 없어 카드가 그리지 않는다.
-          이 줄이 위에 있을 땐 그게 가려졌지만, 아래로 내린 지금은 브리핑이 첫 화면에서
-          고지 없이 보인다 — 카드 자체 고지를 붙이는 게 맞다(미결). */}
+          ⚠ 상담 전 브리핑 카드는 예외다: **자기 고지를 달지 않는다**(2026-07-30 결정).
+          백엔드가 만든 "ℹ 내부 참고용" 고지는 briefs.content_md에 그대로 남아 게이트가
+          검사하고, 화면에서는 이 줄이 같은 말을 한다(내부 참고용 · 투자권유·광고 아님).
+          이 줄이 페이지 맨 아래라 브리핑과 한 화면에 잡히지는 않는다는 것을 알고 내린
+          결정이다. ⚠️ 화면 타입(Brief)에 content_md 필드가 없는 건 누락이 아니라 그
+          결과다 — "브리핑에 고지가 없다"고 다시 열지 말 것(HANDOFF 열린 항목에서도 지웠다). */}
       <footer className="page-footer">
         <p className="disclaimer" role="note">
           <span className="dot" aria-hidden="true">
@@ -1642,23 +1770,36 @@ export default function DashboardPage() {
           본문 흐름에는 끼지 않으며, 모달로 열려 보고 있던 화면을 잃지 않는다.
           준법 화면에는 띄우지 않는다 — 에이전트를 돌려 산출물을 만드는 쪽은 PB고,
           준법은 그걸 통과시키는 쪽이다(cfg.research와 같은 경계). */}
-      {cfg.research && !modal && (
+      {/* 인라인 채팅이 화면에 서 있으면 내린다 — 위 `inlineChatSeen` 주석 참조.
+          ⚠️ 답변이 도는 중이라도 내린다(`●`이 그때 안 보인다). 그 자리에는 같은 일을 하는
+             채팅이 이미 서 있고, 스크롤을 조금만 움직이면 표시등째로 다시 뜬다. */}
+      {cfg.research && !modal && !inlineChatSeen && (
         <button
           className="fab"
           /* 라벨이 제거되면서 접근 가능한 이름이 aria-hidden 이모지 하나만 남아 있었다
              (HANDOFF §7). 버튼 모양을 손보는 김에 이름을 돌려준다. */
-          aria-label="종목 즉답 열기"
+          aria-label={
+            f1Running ? '종목 즉답 열기 (답변 생성 중)' : '종목 즉답 열기'
+          }
           title="종목 즉답 (F1)"
           onClick={() => setModal({ kind: 'f1' })}
         >
           <span aria-hidden="true">💬</span>
+          {/* 닫아 둔 동안에도 답변이 계속 온다 — 그 사실을 알리는 유일한 신호다.
+              (이름은 aria-label이 말한다. 글리프는 스크린리더에서 뺀다.) */}
+          {f1Running && (
+            <span className="fab-run" aria-hidden="true">
+              ●
+            </span>
+          )}
         </button>
       )}
 
       {/* ── 모달 ─────────────────────────────────────────────── */}
-      {modal && (
+      {/* F1은 여기서 빠진다 — 아래에 **따로 늘 마운트된 오버레이**가 있다. */}
+      {modal && modal.kind !== 'f1' && (
         <div
-          id="overlay"
+          className="overlay"
           onClick={(e) => {
             if (e.target === e.currentTarget) setModal(null);
           }}
@@ -1684,11 +1825,6 @@ export default function DashboardPage() {
                 }}
               />
             )}
-            {/* 전역 F1에는 고객이 없어 미리보기가 없다(변환할 것도 없다). 이름 경고는
-                오히려 여기가 더 필요하다 — 고객을 안 고른 채 자유롭게 치는 칸이다. */}
-            {modal.kind === 'f1' && (
-              <F1Chat initial={modal.q} customerNames={customerNames} />
-            )}
             {modal.kind === 'chat' &&
               (() => {
                 const it = data.queue.find(
@@ -1712,6 +1848,7 @@ export default function DashboardPage() {
                     onOpenNote={(code) => setModal({ kind: 'note', code })}
                     onClose={() => setModal(null)}
                     onChanged={() => void load()}
+                    chatKeep={chatKeep}
                     /* 준법에게는 고객 포트폴리오 카드가 없다(정보장벽) — 그때는 넘기지
                        않아서 버튼 자체가 안 그려진다. */
                     onOpenPortfolio={
@@ -1733,6 +1870,41 @@ export default function DashboardPage() {
                   />
                 );
               })()}
+          </div>
+        </div>
+      )}
+
+      {/* ── 전역 F1 모달 — **언마운트하지 않는다** ──────────────
+          닫기는 `hidden` 토글이다(F3 생성 뷰와 같은 처방, HANDOFF §0-1). 잃는 것이 둘이라서다:
+          ① 말풍선이 F1Chat의 state라 언마운트되면 대화가 사라진다 — PB는 상담 중에 화면을
+             오가며 묻는데, 닫았다 열면 방금 확인한 사실이 없어졌다.
+          ② cleanup이 EventSource를 닫는다 — 답변이 오는 중에 닫으면 **크레딧만 쓰고 버린다.**
+          그래서 닫아 둔 동안에도 스트림은 계속 돌고, 그 사실은 고정 버튼의 `●`이 말한다.
+          ⚠️ 대화를 끊는 것은 이제 닫기가 아니라 머리말의 `새 대화`다(세션 id까지 버린다).
+          ⚠️ `cfg.research`가 꺼지면(준법 화면) 언마운트되고 대화도 사라진다 — 의도한 것이다.
+             그 화면에는 F1 입구가 없어 감춘 채 들고 있을 이유가 없다(정보장벽과 같은 경계). */}
+      {cfg.research && (
+        <div
+          className="overlay"
+          hidden={modal?.kind !== 'f1'}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setModal(null);
+          }}
+        >
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="종목 질문"
+          >
+            {/* 전역 F1에는 고객이 없어 미리보기가 없다(변환할 것도 없다). 이름 경고는
+                오히려 여기가 더 필요하다 — 고객을 안 고른 채 자유롭게 치는 칸이다. */}
+            <F1Chat
+              customerNames={customerNames}
+              onClose={() => setModal(null)}
+              active={modal?.kind === 'f1'}
+              onRunningChange={setF1Running}
+            />
           </div>
         </div>
       )}
