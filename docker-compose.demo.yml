@@ -1,0 +1,25 @@
+# 발표 데모용 겹쳐쓰기. 기본 compose 위에 얹는다:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d --force-recreate frontend
+#
+# 바꾸는 것은 프론트 하나뿐이다(백엔드·DB·Redis는 그대로).
+#   ① 브라우저가 백엔드를 직접 안 부르게 한다 — API_BASE를 비워 상대경로로 만들고
+#      Next rewrites(`next.config.ts`)가 컨테이너 네트워크에서 백엔드로 넘긴다.
+#      → 공개 URL 하나로 끝나고 same-origin이라 CORS를 안 건드려도 된다.
+#   ② 비밀번호 한 겹(`src/proxy.ts`)을 켠다. 화면과 API를 같이 덮는다.
+#   ③ dev 서버가 아니라 프로덕션 빌드로 돌린다 — 터널 너머에서 dev의 HMR 소켓이
+#      계속 재연결을 시도하고, 첫 렌더도 느리다.
+#
+# ⚠️ 터널은 **3000에만** 뚫는다. 8000을 노출하면 ①의 구조가 무의미해지고 비밀번호가 우회된다.
+# ⚠️ `npm run build`는 1~3분 걸린다. 발표 당일 아침에 미리 올려 둘 것.
+services:
+  frontend:
+    command: sh -c "npm install && npm run build && npm run start -- -H 0.0.0.0"
+    environment:
+      # 빈 문자열이라 `api.ts`의 BASE가 ''가 되고 모든 호출이 상대경로가 된다.
+      # (`?? `는 nullish 병합이라 빈 문자열을 기본값으로 덮지 않는다 — 의도한 동작이다.)
+      NEXT_PUBLIC_API_BASE_URL: ''
+      BACKEND_ORIGIN: http://backend:8000
+      DEMO_USER: ${DEMO_USER:-pb}
+      # 없으면 컨테이너를 아예 안 띄운다 — 비밀번호 없이 공개되는 사고를 막는다.
+      DEMO_PASSWORD: ${DEMO_PASSWORD:?DEMO_PASSWORD를 .env에 설정하세요}
