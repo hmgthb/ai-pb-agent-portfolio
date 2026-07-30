@@ -179,6 +179,31 @@ def egress_guard(
     return violations
 
 
+def live_acks(acks: list[dict], sentences: list[dict]) -> list[dict]:
+    """확인 기록 중 **지금 문장과 여전히 맞는 것**만 (HANDOFF §1-2).
+
+    확인은 문장 **인덱스**로 저장되는데, 분류기를 고치고 재파싱하면(`scripts/reparse_notes.py`)
+    그 인덱스가 다른 문장을 가리킬 수 있다. 그래서 저장할 때 원문 앞 60자를 같이 남기고
+    여기서 대조한다 — 어긋나면 무효다. 컴플라이언스 판정은 어긋날 때 **막히는** 쪽으로
+    틀려야 한다(통과하는 쪽으로 틀리면 아무도 모르게 확인되지 않은 문장이 발행된다).
+
+    ⚠️ **이 판정이 사는 곳은 여기 하나여야 한다.** 게이트(`check_note`의 `acked_indices`)와
+       화면에 보내는 목록이 **같은 함수**에서 나와야, "화면은 확인됐다는데 발행은 막히는"
+       상태가 생기지 않는다(2026-07-30에 실제로 그랬다 — 화면이 저장된 목록을 그대로 셌다).
+    ⚠️ **저장은 건드리지 않는다**(`notes.acks_json`은 지금 상태만 들고, 이력은 감사로그에
+       `ack_added`/`ack_removed`로 남는다). 여기서 걸러도 잃는 기록이 없고, 재파싱을 되돌리면
+       다시 유효해진다.
+    """
+    out: list[dict] = []
+    for a in acks:
+        i = a.get("index")
+        if not isinstance(i, int) or not 0 <= i < len(sentences):
+            continue
+        if sentences[i].get("text", "")[:60] == a.get("text"):
+            out.append(a)
+    return out
+
+
 def check_note(
     content_md: str,
     sentences: list[dict],

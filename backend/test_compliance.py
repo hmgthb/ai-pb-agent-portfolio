@@ -3,7 +3,13 @@
 실행: backend/.venv/bin/python -m backend.test_compliance
 """
 
-from backend.compliance import BRIEF_NOTICE, WATERMARK, apply_notice, check_note
+from backend.compliance import (
+    BRIEF_NOTICE,
+    WATERMARK,
+    apply_notice,
+    check_note,
+    live_acks,
+)
 
 SOURCED = [{"text": "매출액은 300조원이다.", "source": {"type": "dart"}, "is_heading": False}]
 
@@ -116,6 +122,44 @@ def test_acked_sentence_clears_unsourced_only():
     assert any("출처 없는 문장 1개" in x for x in check_note(body, [interp, notice_line], "F3", {0}))
     # 둘 다 확인 — 게이트 통과. 해석뿐 아니라 분류기가 claim으로 본 고지 문장도 사람이 푼다
     assert check_note(body, [interp, notice_line], "F3", {0, 1}) == []
+
+
+def _sent(text, kind="claim"):
+    return {"text": text, "source": None, "is_heading": False, "kind": kind}
+
+
+def test_live_acks_drops_confirmations_that_moved():
+    """재파싱으로 인덱스가 밀린 확인은 무효다 — 원문 앞 60자로 대조한다(§1-2)."""
+    sentences = [_sent("첫 문장이다."), _sent("두 번째 문장이다."), _sent("세 번째 문장이다.")]
+    ok = {"index": 1, "text": "두 번째 문장이다.", "reason": "해석·전망", "actor": "준법"}
+    moved = {"index": 0, "text": "두 번째 문장이다.", "reason": "해석·전망", "actor": "준법"}
+    gone = {"index": 9, "text": "사라진 문장이다.", "reason": "해석·전망", "actor": "준법"}
+
+    assert live_acks([ok], sentences) == [ok]        # 그 자리에 그 문장이 그대로
+    assert live_acks([moved], sentences) == []       # 문장이 밀렸다 → 무효
+    assert live_acks([gone], sentences) == []        # 인덱스가 범위 밖 → 무효
+    # 섞여 있으면 유효한 것만 남는다(무효 때문에 유효한 것까지 버리지 않는다)
+    assert live_acks([gone, ok, moved], sentences) == [ok]
+
+
+def test_gate_and_screen_count_the_same_acks():
+    """**화면 목록과 게이트가 같은 함수에서 나와야 한다.**
+
+    저장된 목록을 그대로 세면 "확인 2개 · 남은 것 0개"라고 말한 뒤 발행이 막힌다 —
+    2026-07-30에 실제로 그 상태였다(화면은 raw, 게이트는 live).
+    """
+    sentences = [_sent("근거가 필요한 주장이다."), _sent("해석에 가까운 문장이다.", "interpretation")]
+    body = apply_notice("근거가 필요한 주장이다. 해석에 가까운 문장이다.", "F3")
+    stale = {"index": 0, "text": "옛 문장이다.", "reason": "해석·전망", "actor": "준법"}
+    fresh = {"index": 1, "text": "해석에 가까운 문장이다.", "reason": "해석·전망", "actor": "준법"}
+
+    live = live_acks([stale, fresh], sentences)
+    assert live == [fresh]
+    # 화면이 셀 수(len(live))와 게이트가 남긴다고 보는 수가 어긋나지 않는다
+    remaining = check_note(body, sentences, "F3", {a["index"] for a in live})
+    assert any("출처 없는 문장 1개" in x for x in remaining)
+    # 저장된 목록을 그대로 쓰면(옛 동작) 게이트가 통과해 버린다 — 그래서 무효를 걸러야 한다
+    assert check_note(body, sentences, "F3", {a["index"] for a in [stale, fresh]}) == []
 
 
 def test_ack_cannot_waive_forbidden_phrase():

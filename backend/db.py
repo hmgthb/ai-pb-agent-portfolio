@@ -265,6 +265,29 @@ async def latest_brief() -> asyncpg.Record | None:
     return await pool().fetchrow("SELECT * FROM briefs ORDER BY id DESC LIMIT 1")
 
 
+async def brief_date_of(brief_id: int):
+    """그 브리프의 날짜. 없으면 None."""
+    row = await pool().fetchrow("SELECT brief_date FROM briefs WHERE id = $1", brief_id)
+    return row["brief_date"] if row else None
+
+
+async def delete_briefs_on(brief_date) -> list[int]:
+    """그 날짜의 브리프를 **전부** 지우고 지운 id를 돌려준다.
+
+    한 행이 아니라 날짜 단위인 이유: 같은 날 재실행분이 회차로 쌓이는데(`create_brief`는
+    행을 더할 뿐이다) 화면은 `latest_brief()` 하나만 그린다. 보이는 한 행만 지우면 직전
+    회차가 올라와 **날짜 표기까지 같은 화면이 다시 서서** 아무 일도 안 일어난 것처럼 보인다.
+    브리프는 날짜 단위 산출물이고 같은 날 재생성분은 같은 것의 회차다.
+
+    ⚠️ 감사로그는 건드리지 않는다 — `brief_created`는 실제로 일어난 일이고, 원장은
+       append-only다(HANDOFF §0-1). 지운 사실은 `brief_deleted`를 **더해서** 남긴다.
+    """
+    rows = await pool().fetch(
+        "DELETE FROM briefs WHERE brief_date = $1 RETURNING id", brief_date
+    )
+    return [r["id"] for r in rows]
+
+
 # --- 대시보드 조회 --------------------------------------------------------
 # 모든 수치는 실제 테이블에서 집계한다. 데이터가 없으면 0을 반환하고 그럴듯한 값을
 # 지어내지 않는다 (가드레일 3: 확인할 수 없는 수치를 임의로 채우지 않는다).

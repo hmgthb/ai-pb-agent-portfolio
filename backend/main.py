@@ -64,7 +64,11 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
-    allow_methods=["GET", "POST"],
+    # ⚠️ **라우트를 새 메서드로 추가하면 여기도 같이 늘려야 한다.** 안 늘리면 예비요청(OPTIONS)이
+    #    400 "Disallowed CORS method"로 끊겨 브라우저 `fetch`가 던지고, 화면에는 원인과 상관없는
+    #    `Load failed`(WebKit) / `Failed to fetch`(Chromium)만 남는다 — 서버 로그에는 그 라우트가
+    #    아예 안 찍혀 라우트 버그처럼 안 보인다. DELETE는 브리핑 삭제가 쓴다.
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -930,31 +934,25 @@ DISCARD_REASONS = ("사실관계 오류", "내용 부족", "중복·불필요")
 
 
 def _valid_acks(row, sentences: list[dict]) -> set[int]:
-    """확인 기록 중 **지금 문장과 여전히 맞는 것**의 인덱스.
-
-    재파싱(scripts/reparse_notes.py)으로 문장 배열이 바뀌면 저장된 인덱스가 다른 문장을
-    가리킬 수 있다. 그때는 확인을 무효로 본다 — 컴플라이언스 판정은 어긋나면 **막히는**
-    쪽으로 틀려야 한다(통과하는 쪽으로 틀리면 아무도 모르게 새 문장이 발행된다).
-    """
-    valid: set[int] = set()
-    for a in json.loads(row["acks_json"]):
-        i = a.get("index")
-        if isinstance(i, int) and 0 <= i < len(sentences):
-            if sentences[i]["text"][:60] == a.get("text"):
-                valid.add(i)
-    return valid
+    """게이트에 넘길 확인 인덱스. 판정 자체는 `compliance.live_acks` 한 곳에 있다 —
+    화면에 보내는 목록도 같은 함수에서 나온다(HANDOFF §1-2)."""
+    return {a["index"] for a in compliance.live_acks(json.loads(row["acks_json"]), sentences)}
 
 
 def _note_to_dict(row, audit_rows) -> dict:
+    sentences = json.loads(row["sentences_json"])
     return {
         "id": row["id"],
         "stock_code": row["stock_code"],
         "corp_name": row["corp_name"],
         "status": row["status"],
         "content_md": row["content_md"],
-        "sentences": json.loads(row["sentences_json"]),
+        "sentences": sentences,
         "violations": json.loads(row["violations_json"]),
-        "acks": json.loads(row["acks_json"]),
+        # ⚠️ **무효가 된 확인은 내보내지 않는다.** 화면은 이 목록으로 "몇 개 확인됐나"를 적고
+        #    문장마다 `확인함` 배지를 그리는데, 게이트가 안 세는 것을 여기서 보내면 **화면은
+        #    확인됐다는데 발행은 막힌다.** 저장된 원본은 그대로 남는다(`compliance.live_acks`).
+        "acks": compliance.live_acks(json.loads(row["acks_json"]), sentences),
         "reviewer": row["reviewer"],
         "deliberator": row["deliberator"],
         "publisher": row["publisher"],
@@ -1093,10 +1091,13 @@ async def ack_sentence(note_id: int, body: AckBody):
         {"index": body.index, "reason": body.reason, "text": s["text"][:60]},
     )
     # 남은 차단 사유를 같이 돌려준다 — 화면이 "몇 개 남았나"를 스스로 계산하지 않아도 된다.
+    # ⚠️ 여기도 **발행과 같은 기준**으로 센다(`live_acks`). 저장된 목록을 그대로 쓰면 무효가 된
+    #    확인까지 세어, 이 응답은 "0개 남음"인데 발행은 409로 막힌다.
+    live = compliance.live_acks(acks, sentences)
     remaining = compliance.check_note(
-        row["content_md"], sentences, "F3", {a["index"] for a in acks}
+        row["content_md"], sentences, "F3", {a["index"] for a in live}
     )
-    return {"acks": acks, "violations": remaining}
+    return {"acks": live, "violations": remaining}
 
 
 @app.post("/api/notes/{note_id}/publish")
@@ -1631,3 +1632,26 @@ async def get_latest_brief():
         "violations": json.loads(row["violations_json"]),
         "created_at": row["created_at"].isoformat(),
     }
+
+
+@app.delete("/api/briefs/{brief_id}")
+async def delete_brief(brief_id: int, actor: str = PB_NAME):
+    """화면에 떠 있는 브리프를 삭제한다 — **그 브리프의 날짜에 속한 행 전부**를 지운다.
+
+    id를 받고 날짜로 넓히는 이유: 화면은 자기가 보고 있는 것의 id만 알고, 어디까지가 "같은
+    브리프"인지는 서버가 판단할 일이다(회차 누적은 저장 쪽 사정이다 — `db.delete_briefs_on`).
+
+    ⚠️ **되돌릴 수 없다.** 다시 만들려면 `POST /api/briefs/run`을 돌려야 하고(크레딧·40~50초)
+       같은 내용이 나오지도 않는다 — 화면에서 두 번 눌러야 실행되는 이유다.
+    ⚠️ 노트와 달리 승인 흐름이 없어(내부 참고용) 상태 전이가 아니라 삭제다. 노트는 **지우지
+       않는다** — 발행 이력이라 종결 상태(`보류됨`)로만 간다.
+    """
+    brief_date = await db.brief_date_of(brief_id)
+    if brief_date is None:
+        raise HTTPException(404, "그 브리프가 없습니다 (이미 지워졌을 수 있습니다).")
+    deleted = await db.delete_briefs_on(brief_date)
+    await db.append_audit(
+        "brief_deleted", None, actor,
+        {"brief_id": brief_id, "brief_date": brief_date.isoformat(), "deleted_ids": deleted},
+    )
+    return {"brief_date": brief_date.isoformat(), "deleted": len(deleted)}
