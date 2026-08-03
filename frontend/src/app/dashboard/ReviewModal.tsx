@@ -13,10 +13,13 @@ import F1Chat, { type ChatKeep, type ChatPrefill } from './F1Chat';
 import PrepMemo from './PrepMemo';
 import {
   ACK_REASONS,
+  ackBadgeLabel,
+  ackReasonLabel,
   ACTOR,
   actorLabel,
   DISCARD_REASONS,
   MY_PB,
+  PB_MARK_LABEL,
   PILL,
   PORTFOLIO_CHIPS,
   REJECT_REASONS,
@@ -26,8 +29,10 @@ import {
   type Customer,
   type NoteAck,
   type NoteDetail,
+  type NoteMark,
   type NoteSentence,
   type NoteSource,
+  type PbMark,
   type QueueChat,
   type Role,
 } from './types';
@@ -50,9 +55,13 @@ function sourcesOf(s: NoteSentence): NoteSource[] {
  *  0 UNSOURCED: 근거 없는 사실 주장이라 가장 먼저 확인한다.
  *  1 해석·전망: 각주가 없는 것이 규칙상 맞지만, 발행 전 사람 판단은 필요하다.
  *  2 공시·시세 인용 · 3 뉴스 인용: 읽기만 할 근거 문장은 아래로 모은다.
+ *  4 PB 제거: **맨 아래**다(2026-08-03). 준법 확인 셀렉트가 잠겨 있어 이 화면에서 할 일이
+ *    없는 문장인데, 미인용이라 그냥 두면 0등급으로 맨 위에 서서 손댈 것을 가린다.
+ *    본문에서 지우지는 않는다 — 무엇을 빼기로 했는지도 감사 대상이다.
  *  정렬은 stable이라 같은 등급 안에서는 원문 순서가 유지되고, 확인(ack)은 **원본 인덱스**로
  *  저장되므로 이 정렬에 영향받지 않는다(HANDOFF §1-2). */
-function reviewTier(s: NoteSentence): number {
+function reviewTier(s: NoteSentence, mark?: NoteMark): number {
+  if (mark?.mark === 'remove') return 4;
   const srcs = sourcesOf(s);
   if (!srcs.length) return s.kind === 'interpretation' ? 1 : 0;
   return srcs.some((x) => x.type === 'news') ? 3 : 2;
@@ -65,14 +74,22 @@ function SentenceRows({
   acks,
   canAck,
   onAck,
+  marks,
+  canMark,
+  onMark,
 }: {
   rows: { s: NoteSentence; i: number }[];
   acks: NoteAck[];
   /** 준법 + 심의 단계에서만 확인할 수 있다 */
   canAck: boolean;
   onAck: (index: number, reason: string | null) => void;
+  marks: NoteMark[];
+  /** PB + 검토 단계에서만 판정할 수 있다 — 확인(ack)과 단계가 겹치지 않는다 */
+  canMark: boolean;
+  onMark: (index: number, mark: PbMark | null) => void;
 }) {
   const ackOf = new Map(acks.map((a) => [a.index, a]));
+  const markOf = new Map(marks.map((m) => [m.index, m]));
   /* 출처는 **번호 각주**로 나간다(2026-07-28). 예전에는 문장 옆에 날짜 배지를 붙였는데,
      `.stext`가 55%로 눌려 배지 2개짜리 문장이 4줄로 흘렀다(배지 없는 문장은 2줄).
      번호만 남기면 문장이 폭을 다 쓰고, 같은 출처를 여러 번 인용해도 번호가 하나라
@@ -84,6 +101,7 @@ function SentenceRows({
       {rows.map(({ s, i }) => {
         const srcs = sourcesOf(s);
         const ack = ackOf.get(i);
+        const mark = markOf.get(i);
         return (
           <div className="srow" key={i}>
             {/* 표시는 전부 **문장 흐름 안에** 둔다. `.sbadges`를 형제 칸으로 두면
@@ -100,10 +118,13 @@ function SentenceRows({
                 (ack ? (
                   // 사람이 확인한 문장 — 누가·언제·무슨 사유였는지가 배지에 남는다.
                   <span
-                    className="sbadge ack inline"
+                    /* `제거`는 **`PB 제거`와 같은 적색 배지**로 단다(`.un`) — 문장을 뺀다는
+                       같은 판단이라 색까지 같아야 둘이 한 종류로 읽히고, 확인(통과)과는
+                       색으로 갈린다. 나머지 사유는 그대로 `.ack`(확인함 · 사유). */
+                    className={`sbadge inline ${ack.reason === '제거' ? 'un' : 'ack'}`}
                     title={`${actorLabel(ack.actor)} · ${hhmm(ack.ts)} 확인`}
                   >
-                    확인함 · {ack.reason}
+                    {ackBadgeLabel(ack.reason)}
                   </span>
                 ) : s.kind === 'interpretation' ? (
                   // 각주가 없는 게 규칙대로인 문장. UNSOURCED로 칠하면 검토자가 위반으로
@@ -117,24 +138,111 @@ function SentenceRows({
                 ) : (
                   <span className="sbadge un inline">UNSOURCED</span>
                 ))}
+              {/* PB 판정은 위 배지를 **대신하지 않고 뒤에 붙는다** — UNSOURCED·해석은
+                  "왜 이 문장을 보고 있나"이고 이건 "보고 나서 어떻게 하기로 했나"라,
+                  하나가 다른 하나를 지우면 판단의 근거가 화면에서 사라진다.
+                  (확인 배지가 대체하는 것과 다른 이유: 저건 게이트를 여는 조작이라
+                  미인용이라는 상태 자체가 풀린다.) */}
+              {/* 출처 있는 문장을 준법이 뺀 경우 — 미인용 배지 자리가 없으므로 여기서
+                  따로 단다. 미인용 문장은 위 블록이 이미 `준법 제거`를 그린다. */}
+              {srcs.length > 0 && ack?.reason === '제거' && (
+                <span
+                  className="sbadge un inline"
+                  title={`${actorLabel(ack.actor)} · ${hhmm(ack.ts)} 제거`}
+                >
+                  준법 제거
+                </span>
+              )}
+              {!srcs.length && mark && (
+                <span
+                  className={`sbadge inline ${mark.mark === 'remove' ? 'un' : 'pbok'}`}
+                  title={`${actorLabel(mark.actor)} · ${hhmm(mark.ts)} 판정`}
+                >
+                  {PB_MARK_LABEL[mark.mark]}
+                </span>
+              )}
             </span>
             {/* 확인 UI는 미인용 문장에만 붙는다. 출처가 있는 문장은 애초에 게이트를
                 막고 있지 않으므로 풀 것도 없다. 이것만 조작이라 문장 밖에 남긴다. */}
-            {canAck && !srcs.length && (
+            {/* **`PB 승인` 문장에만 열린다(2026-08-03).** 준법이 여는 게이트는 "이대로
+                내보내도 되나"의 답인데, PB가 빼기로 했거나(제거) 아직 안 본 문장에는 그
+                질문이 성립하지 않는다.
+                `PB 제거`에는 셀렉트를 **아예 그리지 않는다** — 빼기로 이미 결론이 난
+                문장이라 고를 것이 없고, 잠긴 셀렉트를 남겨 두면 맨 아래 줄에 조작처럼
+                보이는 것이 하나 서 있게 된다(`.acksel:disabled`로 눌러 죽여 봤지만
+                여전히 눌러 보게 된다). 판정이 없는 문장은 잠근 채로 남긴다 — 그건
+                "여기서 못 한다"가 아니라 "PB가 아직 안 봤다"라 자리가 비면 안 된다.
+                ⚠️ 어느 쪽이든 **발행 차단에는 그대로 남는다** — 푸는 길은 PB가 검토
+                   단계에서 판정을 `승인`으로 바꾸는 것뿐이다(위 ackbar가 개수를 말한다). */}
+            {canAck && !srcs.length && mark?.mark !== 'remove' && (
               <span className="sbadges">
                 <select
                   className="acksel"
                   aria-label="확인 사유"
+                  disabled={mark?.mark !== 'approve'}
+                  title={
+                    mark?.mark === 'approve'
+                      ? undefined
+                      : 'PB 판정이 없는 문장입니다 — PB 승인 문장만 확인할 수 있습니다'
+                  }
                   value={ack?.reason ?? ''}
                   onChange={(e) => onAck(i, e.target.value || null)}
                 >
                   <option value="">확인 안 함</option>
                   {ACK_REASONS.map((r) => (
                     <option key={r} value={r}>
-                      {r}(으)로 확인
+                      {ackReasonLabel(r)}
                     </option>
                   ))}
                 </select>
+              </span>
+            )}
+            {/* 출처 있는 문장에 준법이 쓰는 조작은 **`제거` 하나뿐**이다. 확인(사유)은
+                미인용 문장을 여는 조작이라 여기서는 뜻이 없고, 남는 판단은 "이 문장을
+                최종본에 둘 것인가"뿐이라 셀렉트가 아니라 토글 버튼으로 둔다(PB 판정
+                버튼과 같은 모양·같은 규칙 — 다시 누르면 풀린다).
+                필요한 이유: 지연시세 고지처럼 **문장을 고쳐야 풀리는 위반**이 출처 있는
+                문장에서 나면, 뺄 길이 없는 한 준법에게 남는 선택지가 반려뿐이었다. */}
+            {canAck && srcs.length > 0 && (
+              <span className="sbadges">
+                <button
+                  className="markbtn remove"
+                  aria-pressed={ack?.reason === '제거'}
+                  title={
+                    ack?.reason === '제거'
+                      ? '다시 누르면 되돌립니다'
+                      : '이 문장을 최종본에서 뺍니다'
+                  }
+                  onClick={() => onAck(i, ack?.reason === '제거' ? null : '제거')}
+                >
+                  제거
+                </button>
+              </span>
+            )}
+            {/* PB 판정 — 셀렉트가 아니라 버튼 둘이다. 고를 것이 둘뿐이라 목록을 열어
+                고르는 것보다 한 번 누르는 게 짧고, 지금 무엇으로 판정돼 있는지가
+                접힌 목록 안이 아니라 눌린 버튼으로 그대로 보인다.
+                **누른 것을 다시 누르면 판정이 풀린다** — 확인 셀렉트의 `확인 안 함`에
+                해당하는 출구이고, 없으면 잘못 누른 판정을 되돌릴 방법이 없다.
+                (확인과 달리 두 번 누르는 무장 단계를 두지 않는 이유도 같다: 되돌릴 수 있는
+                조작은 즉시 실행이 맞다 — `.acksel`과 같은 규칙.) */}
+            {canMark && !srcs.length && (
+              <span className="sbadges">
+                {(['remove', 'approve'] as const).map((m) => (
+                  <button
+                    key={m}
+                    className={`markbtn ${m}`}
+                    aria-pressed={mark?.mark === m}
+                    title={
+                      mark?.mark === m
+                        ? '다시 누르면 판정이 풀립니다'
+                        : PB_MARK_LABEL[m]
+                    }
+                    onClick={() => onMark(i, mark?.mark === m ? null : m)}
+                  >
+                    {m === 'remove' ? '제거' : '승인'}
+                  </button>
+                ))}
               </span>
             )}
           </div>
@@ -304,54 +412,49 @@ export function NoteModal({
      권한이었는데, 1인용 대시보드에는 관리자가 없다. 마지막 단계(발행)만 준법에게 남긴다:
      **만드는 사람과 통과시키는 사람이 갈리는 지점이 여기 하나**이고, 그게 이 제품의 핵심이다.
      그래서 PB 화면에서 심의중 노트는 상태만 보이고 버튼이 없다(아래 deny 문구가 이유를 말한다). */
+  /* 초안(`draft`) 갈래는 없앴다(2026-08-03) — 노트는 **검토중으로 만들어진다**(backend
+     db.py SCHEMA 주석). 여기 있던 `사실 확인` 버튼은 상태를 한 칸 옮기는 것 말고 하는 일이
+     없어서, 문장을 훑기도 전에 클릭을 한 번 요구하고 있었다. 사람이 판단하는 지점은
+     그대로다: 문장 판정(승인·제거) → `확인`(심의로) 또는 `보류`(종결). */
   /* 각 단계마다 **앞으로 가는 길과 거절하는 길이 같이 있다.** 거절이 없으면 이 화면은
      "사람이 확인한다"가 아니라 "사람이 눌러 준다"가 된다 — 게이트 차단(publish_blocked)은
      기계의 거절이라 사람의 판단을 대신하지 못한다.
      두 거절은 뜻이 다르다: **폐기**(검토중, PB)는 고쳐 쓸 게 아니라는 종결이고,
      **반려**(심의중, 준법)는 고쳐서 다시 올리라는 되돌림이다. */
   const actions: Action[] =
-    current.status === 'draft'
+    current.status === 'review'
       ? [
           {
-            label: '사실 확인',
+            label: '확인',
             ok: role === 'pb',
-            deny: '노트의 사실 확인은 PB가 합니다.',
-            run: () => act('review'),
+            deny: '심의 요청은 PB가 합니다.',
+            run: () => act('deliberate'),
+          },
+          {
+            label: '보류',
+            ok: role === 'pb',
+            danger: true,
+            reasons: DISCARD_REASONS,
+            run: (reason) => act('discard', reason),
           },
         ]
-      : current.status === 'review'
+      : current.status === 'deliberation'
         ? [
             {
-              label: '확인',
-              ok: role === 'pb',
-              deny: '심의 요청은 PB가 합니다.',
-              run: () => act('deliberate'),
+              label: '발행',
+              ok: role === 'comp',
+              deny: '준법 심의 중입니다.',
+              run: () => act('publish'),
             },
             {
-              label: '보류',
-              ok: role === 'pb',
+              label: '반려',
+              ok: role === 'comp',
               danger: true,
-              reasons: DISCARD_REASONS,
-              run: (reason) => act('discard', reason),
+              reasons: REJECT_REASONS,
+              run: (reason) => act('reject', reason),
             },
           ]
-        : current.status === 'deliberation'
-          ? [
-              {
-                label: '발행',
-                ok: role === 'comp',
-                deny: '준법 심의 중입니다.',
-                run: () => act('publish'),
-              },
-              {
-                label: '반려',
-                ok: role === 'comp',
-                danger: true,
-                reasons: REJECT_REASONS,
-                run: (reason) => act('reject', reason),
-              },
-            ]
-          : [];
+        : [];
 
   /* 단계별 담당자 줄("확인 PB · 심의 요청 PB · 발행 —")은 뺐다(2026-07-28).
      역할이 `PB`/`준법` 둘뿐이라 어느 노트에서나 같은 값이 나왔고, "어디까지 갔나"는
@@ -363,26 +466,65 @@ export function NoteModal({
   // 원본 인덱스를 들고 다닌다 — 확인 기록이 그 인덱스로 저장되기 때문이다.
   // 정렬은 reviewTier: 미인용(확인 필요) → 공시·시세 → 뉴스. 노트를 산문으로 읽는 화면이
   // 아니라 **문장별로 출처를 확인하는 화면**이라 서술 순서보다 처리 순서를 따른다.
+  // PB 판정은 정렬(제거는 맨 아래)과 확인 셀렉트의 잠금에 둘 다 쓰인다 — 한 번만 만든다.
+  const markOf = new Map((current.marks ?? []).map((m) => [m.index, m]));
   const body = current.sentences
     .map((s, i) => ({ s, i }))
     .filter(({ s }) => !s.is_heading && s.kind !== 'boilerplate')
-    .sort((a, b) => reviewTier(a.s) - reviewTier(b.s));
+    .sort(
+      (a, b) =>
+        reviewTier(a.s, markOf.get(a.i)) - reviewTier(b.s, markOf.get(b.i)),
+    );
 
   /* 각주를 붙일 수 없는 문장(해석·고지·데이터 설명)이 실제로 있어서, 게이트가 그걸 전부
      잠그면 사람이 열 방법이 없다 — 그래서 준법이 사유를 적어 확인하면 미인용 집계에서
-     빠진다. 확인은 **심의 단계에서만**(초안에서 미리 풀면 검토가 형식이 된다) 그리고
+     빠진다. 확인은 **심의 단계에서만**(검토 단계에서 미리 풀면 검토가 형식이 된다) 그리고
      발행과 같은 권한(준법)에게만 연다. */
   const canAck = role === 'comp' && current.status === 'deliberation';
   const acked = new Set(current.acks.map((a) => a.index));
-  const blocking = body.filter(
-    ({ s, i }) => !(s.sources?.length || s.source) && !acked.has(i),
-  ).length;
+  /* 발행을 막는 문장 = 출처가 없고, 확인되지도 않았고, **PB가 빼기로 하지도 않은** 것.
+     `PB 제거`를 빼는 것이 백엔드 게이트와 같은 규칙이다(main.`_gate_exempt`) — 여기서
+     다르게 세면 화면은 "1개 남았다"는데 발행은 되거나 그 반대가 된다. */
+  const unacked = body.filter(
+    ({ s, i }) =>
+      !(s.sources?.length || s.source) &&
+      !acked.has(i) &&
+      markOf.get(i)?.mark !== 'remove',
+  );
+  const blocking = unacked.length;
+  /* 그중 **이 화면에서 풀 수 없는 것** = PB 판정이 없는 문장. 확인 셀렉트가 `PB 승인`
+     문장에만 열리므로 준법이 손댈 수 없는데 게이트는 그대로 센다 — 몇 개가 그런지
+     말하지 않으면 "왜 발행이 안 되는지"를 셀렉트를 눌러 보고 알아내야 한다.
+     (`PB 제거`는 위에서 이미 빠졌다 — 세지도 않고 막지도 않는다.) */
+  const lockedBlocking = unacked.filter(({ i }) => !markOf.get(i)).length;
 
   const ack = async (index: number, reason: string | null) => {
     const r = await apiPost(`/api/notes/${current.id}/ack`, {
       actor,
       index,
       reason,
+    });
+    if (!r.ok) {
+      setRes({ blocked: errorMessage(r.body) });
+      return;
+    }
+    const fresh = await onChanged();
+    if (fresh) setCurrent(fresh);
+  };
+
+  /* PB 판정 — 노트가 아직 PB 손에 있는 동안(검토중) 각주 없는 문장을 훑는다.
+     확인(ack)과 단계가 겹치지 않으므로 한 문장에 두 조작이 같이 서는 일은 없다.
+     ⚠️ 이 판정은 **게이트를 열지 않는다**(backend PB_MARKS 주석) — 미인용 문장을
+        발행 가능하게 만드는 건 준법의 확인뿐이다. 여기서 바뀌는 건 표시와 감사로그다.
+     ⚠️ 다만 준법의 확인 셀렉트는 `PB 승인` 문장에만 열리므로(위 SentenceRows 주석),
+        **여기서 판정하지 않고 올린 문장은 준법이 풀 수 없다.** 여기가 그 단계다. */
+  const canMark = role === 'pb' && current.status === 'review';
+
+  const mark = async (index: number, m: PbMark | null) => {
+    const r = await apiPost(`/api/notes/${current.id}/mark`, {
+      actor,
+      index,
+      mark: m,
     });
     if (!r.ok) {
       setRes({ blocked: errorMessage(r.body) });
@@ -419,7 +561,10 @@ export function NoteModal({
         {current.status === 'deliberation' && (
           <div className={blocking ? 'ackbar' : 'ackbar done'}>
             {blocking
-              ? `출처 없는 문장 ${blocking}개가 발행을 막고 있습니다. 각주를 붙일 수 없는 문장이면 사유를 골라 확인하세요.`
+              ? `출처 없는 문장 ${blocking}개가 발행을 막고 있습니다. 각주를 붙일 수 없는 문장이면 사유를 골라 확인하세요.` +
+                (lockedBlocking
+                  ? ` 그중 ${lockedBlocking}개는 PB 판정이 없어 잠겨 있습니다 — PB가 검토 단계에서 판정해야 풀립니다.`
+                  : '')
               : '미인용 문장을 모두 확인했습니다. 이제 발행할 수 있습니다.'}
             {current.acks.length > 0 &&
               ` (확인 ${current.acks.length}개, 감사로그에 기록됨)`}
@@ -430,6 +575,9 @@ export function NoteModal({
           acks={current.acks}
           canAck={canAck}
           onAck={ack}
+          marks={current.marks ?? []}
+          canMark={canMark}
+          onMark={mark}
         />
         {/* 필수 고지 — 출처 목록 **아래**, 조작 줄 위. 페이지 전체 고지(.disclaimer)가
             맨 아래 한 줄인 것과 같은 배치다: 문서를 다 읽은 자리에서 "이건 미검증 초안"을

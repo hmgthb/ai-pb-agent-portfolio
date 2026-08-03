@@ -41,7 +41,10 @@ services:
       BACKEND_ORIGIN: http://backend:8000
 
   postgres:
-    image: pgvector/pgvector:pg16
+    # 순정 16이다. 기획서는 F5(규정 RAG)에 pgvector를 쓴다고 적어 두었지만 지금 스키마에
+    # 벡터 컬럼도, 코드에 임베딩 경로도 없다 — 안 쓰는 확장을 이미지로 끌고 다니지 않는다.
+    # F5를 실제로 붙일 때 pgvector/pgvector:pg16으로 되돌리고 CREATE EXTENSION vector를 더한다.
+    image: postgres:16
     environment:
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app

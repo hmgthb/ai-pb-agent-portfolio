@@ -1065,6 +1065,43 @@ th.rownum {
   padding-right: 10px;
   color: var(--muted);
 }
+/* 화면에는 안 보이고 낭독에만 실리는 글. `display:none`·`visibility:hidden`은 낭독에서도
+   빠지므로 쓸 수 없다 — 1px로 잘라 두는 표준 수법이다. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+/* 고객 목록 구분선 — 위(문의 있는 고객)와 아래(전체 1~50)를 가른다.
+   행 사이 구분선(1px --grid)보다 **한 단 진하고 두껍다**: 같은 굵기면 그냥 한 줄 띈
+   것으로 읽혀 목록이 왜 다시 시작하는지가 안 보인다.
+   ⚠️ 선 위 여백은 없앴다(2026-08-03, height 9px → 0). 빈 줄이 하나 낀 것처럼 보여
+      묶음이 끝난 자리가 아니라 목록이 끊긴 자리로 읽혔다. 여백 없이도 굵기·색이
+      이미 "여기서 갈린다"를 말한다. */
+.tsep td {
+  padding: 0;
+  height: 0;
+  border-bottom: 2px solid var(--baseline);
+}
+/* 바로 위 행의 1px 선은 지운다 — 여백을 없앤 뒤로 두 선이 맞붙어 3px 겹선으로 보인다.
+   구분선은 하나여야 한다. */
+.tbl-scroll tbody tr:has(+ tr.tsep) td {
+  border-bottom: 0;
+}
+/* 누르는 행이 아니다 — 아래 `.tbl-scroll tbody tr` 규칙이 커서·hover를 전부에 주므로
+   여기서 되돌린다(선택 표시는 aria-selected가 없어 애초에 안 걸린다). */
+.tbl-scroll tbody tr.tsep {
+  cursor: default;
+}
+.tbl-scroll tbody tr.tsep:hover {
+  background: transparent;
+}
 /* hover 강조·포인터 커서·선택 표시는 **누를 수 있는 표에만** 준다.
    전역 `tbody tr`로 두면 보유 종목 표와 노트의 재무 수치 표(.holdings)까지 눌리는 것처럼
    보인다 — 둘 다 클릭 핸들러가 없어 아무 일도 안 일어난다. 지금 누르는 표는 고객 목록
@@ -1115,6 +1152,27 @@ th.rownum {
   width: 20px;
   justify-content: center;
 }
+/* 미처리 고객 문의 표시 — 이름 바로 옆의 물음표.
+   ⚑와 달리 제 칸을 안 쓰고 이름에 붙는 건 성격이 달라서다: ⚑는 훑으면서 걸러내는 축이라
+   열이 맞아야 하고(빈 행도 폭을 차지한다), 이쪽은 "이 고객을 열어 볼 이유"라 이름에
+   딸려 다녀야 한다. 색은 큐에서 쓰던 고객 문의 배지와 **같은 파랑**이다 — 큐 목록에서
+   내렸어도 같은 것을 가리키므로 색까지 갈라 놓을 이유가 없다.
+   ⚠️ 라벨이 없으므로 `aria-label`·`title`이 유일한 설명이다 — 빼지 마라. */
+.askmark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  margin-left: 5px;
+  vertical-align: 1px;
+  border-radius: var(--r-pill);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--chip-chat);
+  background: var(--chip-chat-bg);
+}
 /* 위험 플래그 사유 — **플래그가 있을 때만** 선다(2026-07-29). 없을 때 `위험 플래그 없음`을
    적던 `.none` 변형은 걷어냈다: 같은 패널의 이름 옆 ⚑가 없다는 것이 이미 같은 말이고,
    규칙이 돈다는 사실은 표의 ⚑ 열과 상단 타일이 말한다.
@@ -1157,6 +1215,43 @@ th.rownum {
   font-size: 15px;
   font-weight: 700;
   letter-spacing: -0.01em;
+}
+/* 고객이 남긴 미처리 문의 — 질문 칩 **위**에 선다. 대화 로그(아래)와 헷갈리면 안 되므로
+   말풍선이 아니라 왼쪽에 선을 세운 인용 블록으로 둔다: 이건 주고받은 대화가 아니라
+   아직 답하지 않은 채로 들어와 있는 원문이다. 선 색은 이름 옆 물음표와 같은 파랑이라
+   목록에서 물음표를 보고 넘어온 사람이 같은 것을 보고 있다는 걸 색으로 안다.
+   ⚠️ 여기에 회신 입력칸을 붙이지 마라 — 고객에게 나가는 말은 PB가 직접 쓴다(가드레일 4).
+      이 블록은 읽는 자리이고, 아래 질문칸은 **AI에게** 사실을 묻는 자리다. */
+.cust-chat .cchat-ask {
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-left: 2px solid var(--chip-chat);
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+  background: var(--elevated);
+}
+.cust-chat .ask-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cust-chat .ask-topic {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+.cust-chat .ask-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+/* 원문 그대로다 — 줄바꿈을 살리되 긴 낱말이 칸을 밀지 않게 끊는다. */
+.cust-chat .ask-body {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 /* 근거 줄 — 고객 카드의 머리말과 고객 문의 모달의 `.blabel` 둘 다 쓴다(같은 채팅이
    두 자리에 있는 것이라 같은 말을 같은 모양으로 적는다). 그래서 스코프를 벗겨 뒀다. */
@@ -2021,6 +2116,41 @@ a.fn-title:hover {
   color: var(--good-text);
   background: color-mix(in srgb, var(--good) 14%, transparent);
 }
+/* PB 승인 — 제거(.un, 빨강)와 **같은 꽉 찬 알약**이다. 판정 둘이 한 쌍이라 모양이
+   같아야 하고, 갈리는 건 색뿐이어야 한다. 옐로는 이 화면의 강조색이라 면으로 쓰면
+   글자는 검정이다(--on-accent, 12.2:1 — 흰 글자로 뒤집지 말 것).
+   확인(.ack, 녹)과 색이 다른 건 뜻이 달라서다: 저건 게이트를 연 것이고 이건 PB가
+   "이대로 둔다"고 표시한 것뿐이라, 같은 초록이면 통과된 문장으로 읽힌다. */
+.sbadge.pbok {
+  color: var(--on-accent);
+  background: var(--accent);
+}
+/* 판정 버튼(제거·승인) — `.acksel`과 같은 급의 작은 조작이라 크기·테두리를 맞춘다.
+   누른 것은 배지와 같은 색으로 채워, 지금 무엇으로 판정돼 있는지가 버튼에서 바로 보인다. */
+.markbtn {
+  flex: none;
+  font: inherit;
+  font-size: 11px;
+  color: var(--ink-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 1px 7px;
+  background: var(--card);
+  cursor: pointer;
+}
+.markbtn:hover {
+  border-color: var(--baseline);
+}
+.markbtn[aria-pressed='true'].remove {
+  color: var(--on-critical);
+  background: var(--critical);
+  border-color: var(--critical);
+}
+.markbtn[aria-pressed='true'].approve {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
 .acksel {
   flex: none;
   font-size: 11px;
@@ -2029,6 +2159,15 @@ a.fn-title:hover {
   border-radius: var(--r-md);
   padding: 1px 4px;
   background: var(--card);
+}
+/* 잠긴 확인 셀렉트 — `PB 승인` 문장에만 열린다(ReviewModal). **감추지 않고 눌러 죽인다**:
+   자리가 비면 확인할 것이 없는 문장으로 보이는데, 실제로는 확인이 필요한데 여기서 못 하는
+   문장이다. 회색으로 내려앉히되 값은 읽히게 둔다(무엇으로 확인돼 있었는지도 정보다). */
+.acksel:disabled {
+  color: var(--muted);
+  border-color: var(--grid);
+  background: transparent;
+  cursor: not-allowed;
 }
 /* 심의 단계에서 "무엇이 남아 발행을 막는가" — 상자가 아니라 **왼쪽 색 막대**다.
    면을 채우면 바로 위 고지와 같은 무게의 덩어리가 둘 생겨 어느 쪽을 먼저 읽을지

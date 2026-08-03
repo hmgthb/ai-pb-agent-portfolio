@@ -94,7 +94,10 @@ const ROLES: Record<
     research: true,
     brief: true,
     defaultView: 'cust',
-    queueFilter: null,
+    // 큐는 **종목 노트만** 담는다. 고객 문의(pb_sessions)는 데이터도 API도 그대로
+    // 살아 있고 여기서 목록에 안 낼 뿐이다 — 다시 내려면 이 줄을 null로 되돌리고
+    // 큐 카드에 종류 필터 줄을 같이 되살린다(그 줄은 지금 없다).
+    queueFilter: (it) => it.type === 'note',
     custFilter: null,
   },
   // 준법은 이 대시보드의 사용자가 아니다 — **다른 사람의 화면**을 데모로 미리 보는 모드다.
@@ -221,6 +224,10 @@ const AUDIT_CAT: Record<string, AuditCat> = {
   note_created: 'human',
   ack_added: 'human',
   ack_removed: 'human',
+  // PB가 각주 없는 문장에 남긴 판정(제거/승인). 준법의 확인(ack)과 같은 '사람' 칸이다 —
+  // 단계와 사람이 다를 뿐 둘 다 사람이 문장을 보고 내린 판단이다.
+  pb_mark_set: 'human',
+  pb_mark_cleared: 'human',
   session_approved: 'human',
   session_rejected: 'human',
   // 거절 2종도 사람의 판단이다 — 게이트 차단(block)과 **같은 칸에 두지 않는다**.
@@ -250,6 +257,68 @@ function auditCat(a: DashboardAudit): AuditCat {
 const whenLabel = (iso: string) => fmtDateTime(iso).slice(5).replace('-', '/');
 const AUDIT_PAGE = 20;
 
+/** 고객 목록의 한 줄. 같은 행이 **두 자리에 선다** — 위(문의 있는 고객 바로가기)와
+ *  아래(전체 목록). 두 벌을 따로 적으면 한쪽만 고치는 일이 생기므로 한 곳에서 그린다.
+ *  `no`는 **전체 목록에서의 자리**다(위 묶음도 그 수를 그대로 쓴다). */
+function CustomerRow({
+  c,
+  no,
+  asks,
+  selected,
+  onSelect,
+}: {
+  c: Customer;
+  no: number;
+  /** 미처리 문의 건수. 0이면 물음표를 안 낸다 */
+  asks: number;
+  selected: boolean;
+  onSelect: (id: number) => void;
+}) {
+  const askLabel = `미처리 고객 문의 ${asks}건`;
+  const flagLabel = c.flagReasons.map((r) => r.text).join(' · ');
+  return (
+    <tr
+      tabIndex={0}
+      aria-selected={selected}
+      onClick={() => onSelect(c.id)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') onSelect(c.id);
+      }}
+    >
+      <td className="num rownum">{no}</td>
+      <td>
+        <strong>{c.name}</strong>
+        {/* 미처리 고객 문의가 있다는 표시. 이름 **옆**에 붙는다 — 플래그(⚑)와 달리 제 칸을
+            쓰지 않는 건, 훑을 때 걸러내는 축(위험)이 아니라 이 고객을 열어야 할 이유라서다.
+            숫자는 배지에 적지 않고 aria-label·title에만 둔다: 한 고객에 두 건 이상은 드물고,
+            표에서 필요한 건 "있다/없다"뿐이다(내역은 오른쪽 상세에 그대로 있다). */}
+        {asks > 0 && (
+          <span className="askmark" title={askLabel} aria-label={askLabel}>
+            ?
+          </span>
+        )}
+      </td>
+      <td className={`num delta ${c.ret >= 0 ? 'up' : 'down'}`}>
+        {c.ret >= 0 ? '+' : ''}
+        {c.ret.toFixed(1)}%
+      </td>
+      <td>
+        {/* `.icon`은 **폭 고정 변종**이다 — 값이 있는 행과 없는 행의 칸 너비를 맞춘다.
+            모양 자체는 이름 옆 ⚑와 같다. */}
+        {c.flag && (
+          <span
+            className="flag icon"
+            title={flagLabel}
+            aria-label={`위험 플래그: ${flagLabel}`}
+          >
+            ⚑
+          </span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
 export default function DashboardPage() {
   // 기본 역할은 PB다 — 이 제품의 사용자가 PB이므로 첫 화면도 PB가 보는 화면이어야 한다.
   const [role, setRole] = useState<Role>('pb');
@@ -259,7 +328,6 @@ export default function DashboardPage() {
   const [noteRunning, setNoteRunning] = useState(false);
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState('');
-  const [filter, setFilter] = useState<'all' | 'note' | 'chat'>('all');
   const [auditPage, setAuditPage] = useState(0);
   /** 감사로그를 노트 한 건으로 좁힌다(null = 전체 최근 200건).
    *  노트를 고르면 **그 노트의 전건**을 따로 받는다 — 전체 목록은 최근 200건 창인데
@@ -585,19 +653,31 @@ export default function DashboardPage() {
     () => pending.filter((it) => !cfg.queueFilter || cfg.queueFilter(it)),
     [pending, cfg],
   );
-  /** 타입 필터(전체/노트/문의)는 큐에 여러 종류가 섞일 때만 의미 있다. 준법 큐는 심의 단계
-   *  종목 노트만 담고(고객 문의는 PB 일) 한 종류뿐이라, 필터 줄을 안 내고 남아 있던 filter
-   *  상태도 무시한다. cfg.queueFilter가 있으면 = 큐가 단일 종류로 좁혀진 역할(지금은 준법). */
-  const showTypeTabs = !cfg.queueFilter;
-  /** 지금 선택된 탭에서 실제로 보이는 건. 목록과 건수 표시가 **같은 값**을 써야 한다 —
-   *  따로 세면 필터 조건이 바뀔 때 한쪽만 고치고 넘어가기 쉽다. */
-  const shownQueue = useMemo(
+  /* 종류 필터(전체/종목 노트/고객 문의)는 없앴다 — 두 역할 다 queueFilter로 종목 노트만
+     남기므로 고를 것이 하나뿐이었다. 큐에 다시 종류가 섞이면 그때 필터 줄을 되살린다. */
+
+  /* 아직 처리하지 않은 고객 문의 — 큐 목록에서는 뺐지만 데이터는 그대로 살아 있고,
+     이제 **고객 카드 쪽**에서 쓴다(이름 옆 물음표 · 선택한 고객의 문의 내역 · 타일 수).
+     `status === 'pending'`으로 명시해 거른다: 처리 완료(done)는 화면에 남을 이유가 없고,
+     "완료가 아닌 것"을 남기는 식으로 세면 나중에 상태가 하나 늘 때 조용히 섞인다.
+     ⚠️ 고객 스코핑은 서버가 한다(main.PB_NAME) — 여기 오는 문의는 전부 담당 고객 것이다. */
+  const pendingChats = useMemo(
     () =>
-      showTypeTabs
-        ? roleQueue.filter((it) => filter === 'all' || it.type === filter)
-        : roleQueue,
-    [roleQueue, filter, showTypeTabs],
+      (data?.queue ?? []).filter(
+        (it): it is QueueChat => it.type === 'chat' && it.status === 'pending',
+      ),
+    [data],
   );
+  /** 고객 id → 그 고객의 미처리 문의. 한 고객이 여러 건일 수 있어 배열이다. */
+  const chatsByCustomer = useMemo(() => {
+    const m = new Map<number, QueueChat[]>();
+    pendingChats.forEach((c) => {
+      const list = m.get(c.customer_id);
+      if (list) list.push(c);
+      else m.set(c.customer_id, [c]);
+    });
+    return m;
+  }, [pendingChats]);
   const roleCustomers = useMemo(
     () =>
       cfg.custFilter
@@ -609,6 +689,18 @@ export default function DashboardPage() {
   const visibleCustomers = useMemo(
     () => roleCustomers.filter((c) => c.name.includes(search.trim())),
     [roleCustomers, search],
+  );
+
+  /** 목록 맨 위에 한 번 더 세울 고객 — 미처리 문의가 있는 사람들. **거르는 게 아니라
+   *  겹쳐 보이는 것**이라 아래 전체 목록은 그대로 남는다.
+   *  `no`를 여기서 같이 들고 가는 건 위·아래 순번을 하나로 묶기 위해서다 — 전체 목록에서의
+   *  자리를 그대로 쓰고, 위 묶음에서 1부터 다시 매기지 않는다. */
+  const askRows = useMemo(
+    () =>
+      visibleCustomers
+        .map((c, i) => ({ c, no: i + 1 }))
+        .filter(({ c }) => chatsByCustomer.has(c.id)),
+    [visibleCustomers, chatsByCustomer],
   );
 
   /* 종목코드 → 이 종목을 보유한 **내 고객** 수. 브리프가 "왜 이 종목인가"를 화면에서 스스로
@@ -735,8 +827,6 @@ export default function DashboardPage() {
     return <div className="wrap"></div>;
   }
 
-  const noteCount = roleQueue.filter((i) => i.type === 'note').length;
-  const chatCount = roleQueue.filter((i) => i.type === 'chat').length;
   const flagged = roleCustomers.filter((c) => c.flag).length;
 
   /* "AI가 오늘 한 일" — 백엔드가 감사로그에서 센 오늘치만 쓴다(프론트에서 audit 목록을
@@ -767,20 +857,19 @@ export default function DashboardPage() {
   const tiles =
     role === 'pb'
       ? [
-          // 설명줄은 바로 위 숫자를 쪼갠 것이어야 한다 — 종목 노트·고객 문의는 고객 수가
-          // 아니라 처리 대기 건수의 내역이다(6 + 4 = 10).
+          // 설명줄은 바로 위 숫자를 쪼갠 것이어야 한다.
           {
             label: '담당 고객',
             value: String(roleCustomers.length),
             breakdown: `위험 플래그 ${flagged}`,
           },
           {
-            label: '처리 대기',
-            value: String(roleQueue.length),
-            breakdown: `종목 노트 ${noteCount} · 고객 문의 ${chatCount}`,
-            // 큐가 다른 탭으로 갔으므로 이 타일이 그리로 가는 길이 된다 — 첫 화면에서
-            // "오늘 할 일"이 사라지지 않게 붙잡아 두는 유일한 고리다.
-            go: 'note' as const,
+            // 아직 답하지 않은 고객 문의 수. 내역줄이 없는 건 쪼갤 것이 없어서다 —
+            // 쪼갤 게 없는데 적으면 바로 위 숫자를 그대로 되풀이하게 된다.
+            // 누르는 곳이 아니다(go 없음): 문의는 이 화면 아래 고객 목록에서 물음표로
+            // 표시되고 고른 고객의 상세에 내역이 붙는다 — 갈 곳이 따로 없다.
+            label: '고객 문의',
+            value: String(pendingChats.length),
           },
         ]
       : // 준법 심의 탭엔 타일을 두지 않는다. 심의 대기 수는 아래 처리 대기 카드("N건"+목록)에,
@@ -826,38 +915,20 @@ export default function DashboardPage() {
   const queueCard = (
     <section className="card" aria-labelledby="q-title">
       <div className="card-head">
-        <h2 id="q-title">처리 대기</h2>
-        {/* 건수는 두 화면 모두 **제목 옆**에 둔다 — 필터 줄 오른쪽 끝에 있으면 세는 대상
-            (제목)에서 멀어져 표 헤더처럼 읽혔다. 필터를 바꾸면 이 수도 같이 바뀐다.
-            aria-live: 목록이 갈리는 변화가 스크린리더에는 안 들리므로 수를 읽어 준다. */}
+        <h2 id="q-title">종목 노트</h2>
+        {/* 건수는 두 화면 모두 **제목 옆**에 둔다 — 세는 대상(제목)에서 멀어지면 표 헤더처럼
+            읽힌다. aria-live: 목록이 갈리는 변화가 스크린리더에는 안 들리므로 수를 읽어 준다. */}
         <span className="hint" aria-live="polite">
-          {shownQueue.length}건
+          {roleQueue.length}건
         </span>
       </div>
-      {showTypeTabs && (
-        <div className="tabs" role="group" aria-label="대기 항목 필터">
-          {(['all', 'note', 'chat'] as const).map((f) => (
-            <button
-              key={f}
-              className="tab"
-              aria-pressed={filter === f}
-              onClick={() => setFilter(f)}
-            >
-              {f === 'all' ? '전체' : f === 'note' ? '종목 노트' : '고객 문의'}
-            </button>
-          ))}
-          {/* 건수는 탭마다 붙이지 않고 **선택된 탭의 것 하나만** 낸다(위 헤더) — 세 개를
-              늘어놓으면 지금 보고 있는 게 어느 수인지가 오히려 흐려진다. */}
-        </div>
-      )}
       <div className="queue">
-        {shownQueue.map((it) => {
+        {roleQueue.map((it) => {
           const [label, cls] = PILL[it.status] ?? [it.status, ''];
           return (
             <div className="qrow" key={`${it.type}-${it.id}`}>
-              <span className={`chip ${it.type}`}>
-                {it.type === 'note' ? '종목 노트' : '고객 문의'}
-              </span>
+              {/* 종류 배지(`종목 노트`)는 뺐다 — 목록이 한 종류뿐이라 모든 행이 카드
+                  제목을 그대로 반복했다. 종류가 다시 섞이면 되살릴 자리다. */}
               <span className="title">{it.title}</span>
               {/* 담당자(it.who)는 적지 않는다 — 1인용 대시보드에서 이 큐의 건은 전부
                         한 사람 몫이라 "미배정/관리자/박PB"가 구분하는 게 없다. 누가 무엇을
@@ -872,7 +943,7 @@ export default function DashboardPage() {
             </div>
           );
         })}
-        {!shownQueue.length && (
+        {!roleQueue.length && (
           <div className="hint" style={{ padding: '10px 4px' }}>
             표시할 대기 건이 없습니다.
           </div>
@@ -945,31 +1016,20 @@ export default function DashboardPage() {
         {/* 타일이 없으면(준법: 아래 처리 대기 카드가 같은 정보를 담는다) 빈 그리드를 안 낸다. */}
         {tiles.length > 0 && (
           <div className="tile-row">
-            {tiles.map((t) => {
-              // 갈 곳이 있는 타일은 버튼이다 — div에 onClick만 얹으면 키보드로 못 누른다.
-              const go = 'go' in t ? t.go : undefined;
-              const Tag = go ? 'button' : 'div';
-              return (
-                <Tag
-                  className={`tile${go ? ' clickable' : ''}`}
-                  key={t.label}
-                  {...(go
-                    ? { type: 'button' as const, onClick: () => setView(go) }
-                    : {})}
-                >
-                  <div className="label">
-                    {t.label}
-                    {go && <span className="tile-go">→</span>}
-                  </div>
-                  <div className="value">{t.value}</div>
-                  {/* 설명줄이 없는 타일은 빈 칸을 남기지 않는다(빈 div도 자리를 차지한다).
-                      준법 타일엔 breakdown이 없으므로 in 가드로 좁힌다. */}
-                  {'breakdown' in t && t.breakdown && (
-                    <div className="breakdown">{t.breakdown}</div>
-                  )}
-                </Tag>
-              );
-            })}
+            {/* 지금은 두 타일 다 **읽는 값**이다 — 누르는 타일(`.tile.clickable`,
+                라벨 옆 →)은 없앴다. 처리 대기 노트 타일이 작성·검토 탭으로 가던 자리인데,
+                고객 문의 수로 바뀌면서 갈 곳이 없어졌다(문의는 이 화면 아래에 있다).
+                다시 필요해지면 button + setView로 되살린다 — CSS는 그대로 있다. */}
+            {tiles.map((t) => (
+              <div className="tile" key={t.label}>
+                <div className="label">{t.label}</div>
+                <div className="value">{t.value}</div>
+                {/* 설명줄이 없는 타일은 빈 칸을 남기지 않는다(빈 div도 자리를 차지한다). */}
+                {'breakdown' in t && t.breakdown && (
+                  <div className="breakdown">{t.breakdown}</div>
+                )}
+              </div>
+            ))}
           </div>
         )}
 
@@ -1275,44 +1335,43 @@ export default function DashboardPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {visibleCustomers.map((c, i) => (
-                          <tr
-                            key={c.id}
-                            tabIndex={0}
-                            aria-selected={selected?.id === c.id}
-                            onClick={() => setSelectedId(c.id)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') setSelectedId(c.id);
-                            }}
-                          >
-                            <td className="num rownum">{i + 1}</td>
-                            <td>
-                              <strong>{c.name}</strong>
-                            </td>
-                            <td
-                              className={`num delta ${c.ret >= 0 ? 'up' : 'down'}`}
-                            >
-                              {c.ret >= 0 ? '+' : ''}
-                              {c.ret.toFixed(1)}%
-                            </td>
-                            <td>
-                              {/* `.icon`은 **폭 고정 변종**이다 — 값이 있는 행과 없는 행의
-                                  칸 너비를 맞춘다. 모양 자체는 이름 옆 ⚑와 같다. */}
-                              {c.flag && (
-                                <span
-                                  className="flag icon"
-                                  title={c.flagReasons
-                                    .map((r) => r.text)
-                                    .join(' · ')}
-                                  aria-label={`위험 플래그: ${c.flagReasons
-                                    .map((r) => r.text)
-                                    .join(' · ')}`}
-                                >
-                                  ⚑
-                                </span>
-                              )}
+                        {/* 미처리 문의가 있는 고객을 **맨 위에 한 번 더** 세운다.
+                            거르는 게 아니라 겹쳐 보이는 것이다 — 아래 전체 목록은 1~50
+                            그대로 남고, 위 묶음은 오늘 먼저 볼 사람의 바로가기다.
+                            ⚠️ 순번(#)은 위·아래가 **같은 수**여야 한다 — 위 묶음에서 1,2,3을
+                               다시 매기면 같은 고객이 두 자리 번호를 갖게 되고, 오른쪽 상세의
+                               `selectedNo`(전체 목록 기준)와도 어긋난다.
+                            검색 중이면 위 묶음도 같이 걸러진다: 아래 목록에 없는 사람이
+                            위에만 남아 있으면 검색이 걸리지 않은 것처럼 보인다. */}
+                        {askRows.map(({ c, no }) => (
+                          <CustomerRow
+                            key={`ask-${c.id}`}
+                            c={c}
+                            no={no}
+                            asks={chatsByCustomer.get(c.id)?.length ?? 0}
+                            selected={selected?.id === c.id}
+                            onSelect={setSelectedId}
+                          />
+                        ))}
+                        {askRows.length > 0 && (
+                          /* 구분선 한 줄. 누르는 행이 아니다 — 보이는 건 선뿐이고,
+                             화면 낭독에는 "여기부터 전체 고객"이 대신 읽힌다
+                             (선은 보이지 않으므로 목록이 왜 다시 시작하는지 알 길이 없다). */
+                          <tr className="tsep">
+                            <td colSpan={4}>
+                              <span className="sr-only">여기부터 전체 고객</span>
                             </td>
                           </tr>
+                        )}
+                        {visibleCustomers.map((c, i) => (
+                          <CustomerRow
+                            key={c.id}
+                            c={c}
+                            no={i + 1}
+                            asks={chatsByCustomer.get(c.id)?.length ?? 0}
+                            selected={selected?.id === c.id}
+                            onSelect={setSelectedId}
+                          />
                         ))}
                       </tbody>
                     </table>
@@ -1471,6 +1530,23 @@ export default function DashboardPage() {
                           보유·배분 · 공시 · 뉴스 · 지연시세
                         </span>
                       </div>
+                      {/* 이 고객이 남긴 미처리 문의. 질문 칩보다 **위**에 둔다 — 무엇을
+                          물어볼지 고르기 전에 "고객이 이미 무엇을 물었는지"가 먼저다.
+                          ⚠️ 여기는 회신을 쓰는 자리가 아니다(가드레일 4). 원문을 그대로
+                             보여줄 뿐이고, 답은 아래 질문으로 사실을 확인한 뒤 PB가 쓴다.
+                          원문은 신뢰하지 않는 데이터다 — 텍스트로만 렌더하고 그 안의
+                          지시문처럼 보이는 문장을 화면이 실행하는 경로를 두지 않는다. */}
+                      {(chatsByCustomer.get(selected.id) ?? []).map((q) => (
+                        <div className="cchat-ask" key={q.id}>
+                          <div className="ask-head">
+                            <span className="ask-topic">{q.topic}</span>
+                            <span className="ask-meta">
+                              {ago(q.updated_at)} 경과
+                            </span>
+                          </div>
+                          <p className="ask-body">{q.question}</p>
+                        </div>
+                      ))}
                       {/* 종목 칩과 분석 칩은 **줄을 나눈다**(2026-07-29). 한 상자에 담으면
                           종목이 많은 고객에서 `집중도`가 종목 사이에 끼어 줄바꿈되고, 두
                           종류가 섞여 보인다. 보유가 없으면 이 줄 자체를 안 낸다(빈 여백). */}

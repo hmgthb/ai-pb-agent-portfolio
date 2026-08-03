@@ -588,7 +588,8 @@ async def research_stream(stock_code: str = Query(...), actor: str | None = Quer
                 "note",
                 {
                     "id": note_id,
-                    "status": "draft",
+                    # 만들어지는 순간 검토중이다 — 초안 단계는 없앴다(db.py SCHEMA 주석).
+                    "status": "review",
                     "corp_name": corp_name,
                     "sentences": sentences,
                     "violations": violations,
@@ -906,6 +907,14 @@ class AckBody(BaseModel):
     reason: str | None = None
 
 
+class MarkBody(BaseModel):
+    """PB의 문장 판정. mark=None이면 판정을 지운다."""
+
+    actor: str
+    index: int
+    mark: str | None = None
+
+
 class ReasonBody(BaseModel):
     """반려·폐기. 사유는 고정값이라 서버가 대조한다(아래 REJECT_REASONS/DISCARD_REASONS)."""
 
@@ -921,7 +930,25 @@ class SessionDecisionBody(BaseModel):
 # 미인용 문장을 확인할 때 고를 수 있는 사유. 자유 입력이 아닌 이유는 감사 대상이기
 # 때문이다 — 나중에 "무슨 근거로 통과시켰나"를 세려면 값이 닫혀 있어야 한다.
 # 각주를 붙일 수 없는 문장의 실제 종류에서 왔다(해석·전망 / 워터마크·면책 / 데이터 설명).
-ACK_REASONS = ("해석·전망", "고지·면책", "데이터 설명")
+# `제거`만 뜻이 다르다: 앞의 셋은 "이대로 두고 통과시킨다"이고 이건 "최종본에서 뺀다"다.
+# 게이트 효과는 같다(미인용 집계에서 빠진다) — 뺄 문장이 발행을 막을 이유가 없기 때문이다.
+# ⚠️ PB의 `remove` 판정과 헷갈리지 말 것: 그건 게이트를 열지 않는다(아래 PB_MARKS).
+#    게이트를 여는 건 준법의 확인뿐이라는 규칙이 여기서도 그대로다.
+ACK_REASONS = ("해석·전망", "고지·면책", "데이터 설명", "제거")
+
+# PB가 각주 없는 문장에 남기는 판정. 사유 목록과 마찬가지로 닫힌 값이다.
+#   remove  = 이 문장은 빼야 한다(근거를 못 붙이거나 노트에 있을 문장이 아니다)
+#   approve = 이대로 둔다
+# ⚠️ **게이트를 열지 않는다.** 미인용 문장을 발행 가능하게 만드는 건 준법의 확인(ack)뿐이고,
+#    이건 그 전 단계에서 PB가 훑은 흔적이다. 여기에 게이트 효과를 붙이면 만든 사람이
+#    자기 노트를 스스로 통과시키는 길이 생긴다 — 이 제품이 갈라 놓은 지점이 거기다.
+# ⚠️ `remove`가 문장을 실제로 지우지는 않는다. 본문은 그대로 두고 표시만 남긴다:
+#    AI가 무엇을 썼고 사람이 무엇을 빼기로 했는지가 둘 다 남아야 감사가 된다.
+PB_MARKS = ("remove", "approve")
+# PB가 판정할 수 있는 단계 — 노트가 아직 PB 손에 있을 때뿐이다(심의로 올라간 뒤엔 준법 몫).
+# 초안 단계를 없앤 뒤로 검토중 하나다(db.py SCHEMA 주석) — 노트는 여기서 만들어져 여기서
+# 판정되고, `확인`을 누르면 심의로 넘어간다.
+PB_MARK_STATUSES = ("review",)
 
 # 반려·폐기 사유도 같은 이유로 닫힌 값이다 — "왜 막았나"를 나중에 세려면 자유 입력이면 안 된다.
 # 두 목록을 나눠 둔 건 **뜻이 다른 거절**이기 때문이다:
@@ -933,10 +960,60 @@ REJECT_REASONS = ("출처 불충분", "표현·규정 위반", "사실관계 재
 DISCARD_REASONS = ("사실관계 오류", "내용 부족", "중복·불필요")
 
 
-def _valid_acks(row, sentences: list[dict]) -> set[int]:
-    """게이트에 넘길 확인 인덱스. 판정 자체는 `compliance.live_acks` 한 곳에 있다 —
-    화면에 보내는 목록도 같은 함수에서 나온다(HANDOFF §1-2)."""
-    return {a["index"] for a in compliance.live_acks(json.loads(row["acks_json"]), sentences)}
+def _gate_exempt(row, sentences: list[dict]) -> set[int]:
+    """게이트의 미인용 집계에서 빼는 문장 인덱스. 두 갈래를 합친다.
+
+    ① **준법의 확인(ack)** — 사유를 적어 이대로 통과시킨 문장.
+    ② **PB의 `제거` 판정** — 최종본에서 뺄 문장이라 발행을 막을 이유가 없다(2026-08-03).
+       화면이 이 문장의 확인 셀렉트를 아예 그리지 않으므로(ReviewModal), 세는 채로 두면
+       **준법이 풀 방법이 없는 차단**이 되어 노트가 영원히 발행되지 않았다.
+
+    ⚠️ ②는 "PB 판정은 게이트를 열지 않는다"(PB_MARKS 주석)의 예외가 아니다. 여는 것과
+       **빼는 것**은 다르다: `승인`은 여전히 아무것도 통과시키지 못하고(준법이 확인해야
+       한다), `제거`는 그 문장을 발행물의 판단 대상에서 내리는 것뿐이다. 만드는 사람이
+       자기 문장을 통과시키는 길은 여전히 없다.
+    ⚠️ **본문(content_md)에는 그 문장이 그대로 남는다** — 무엇을 뺐는지도 감사 대상이라
+       지우지 않는다(db.py pb_marks_json 주석). 발행물에서 실제로 덜어내려면 발행 시점의
+       본문 재작성이 필요하고, 그건 아직 없다.
+    두 목록 모두 `compliance.live_acks`로 거른다 — 인덱스+원문 대조는 확인이든 판정이든
+    같은 문제이고, 판정 자체는 그 한 곳에 있다(HANDOFF §1-2).
+    """
+    acked = {a["index"] for a in compliance.live_acks(json.loads(row["acks_json"]), sentences)}
+    return acked | _removed_indices(row, sentences)
+
+
+def _removed_indices(row, sentences: list[dict]) -> set[int]:
+    """**최종본에서 빼기로 한 문장.** 두 사람의 같은 판단을 합친다.
+
+    - PB의 `remove` 판정(검토 단계)
+    - 준법의 확인 사유 `제거`(심의 단계) — 화면 배지로는 `준법 제거`
+
+    둘 다 "이 문장은 나가지 않는다"이므로 게이트는 **이 문장들이 없는 본문**을 본다
+    (`_effective_md`). 미인용 집계뿐 아니라 문구 규칙(지연시세 고지·금지 표현)도 같이
+    적용된다 — 뺄 문장 때문에 발행이 막히면 사람이 풀 방법이 없기 때문이다.
+    """
+    marks = compliance.live_acks(json.loads(row["pb_marks_json"]), sentences)
+    acks = compliance.live_acks(json.loads(row["acks_json"]), sentences)
+    return {m["index"] for m in marks if m.get("mark") == "remove"} | {
+        a["index"] for a in acks if a.get("reason") == "제거"
+    }
+
+
+def _effective_md(content_md: str, sentences: list[dict], removed: set[int]) -> str:
+    """게이트가 볼 본문 = 저장된 본문에서 **뺀 문장의 원문을 지운 것**.
+
+    ⚠️ **저장은 건드리지 않는다**(`notes.content_md`는 AI가 쓴 그대로 남는다). 무엇을
+       썼고 사람이 무엇을 뺐는지가 둘 다 남아야 감사가 되기 때문이고, 화면도 뺀 문장을
+       배지와 함께 계속 보여준다. 여기서 만드는 문자열은 **판정용 사본**이다.
+    ⚠️ 그래서 발행된 노트의 본문에는 뺀 문장이 그대로 들어 있다 — 발행물에서 실제로
+       덜어내는 처리는 아직 없다(발행 시 본문 재작성이 필요하다).
+    """
+    for i in sorted(removed):
+        if 0 <= i < len(sentences):
+            text = (sentences[i].get("text") or "").strip()
+            if text:
+                content_md = content_md.replace(text, "")
+    return content_md
 
 
 def _note_to_dict(row, audit_rows) -> dict:
@@ -953,6 +1030,9 @@ def _note_to_dict(row, audit_rows) -> dict:
         #    문장마다 `확인함` 배지를 그리는데, 게이트가 안 세는 것을 여기서 보내면 **화면은
         #    확인됐다는데 발행은 막힌다.** 저장된 원본은 그대로 남는다(`compliance.live_acks`).
         "acks": compliance.live_acks(json.loads(row["acks_json"]), sentences),
+        # PB 판정도 같은 함수로 거른다 — `live_acks`가 보는 건 확인이라는 뜻이 아니라
+        # **인덱스+원문 앞 60자가 지금 문장과 맞는가**이고, 그 문제는 두 목록이 똑같다.
+        "marks": compliance.live_acks(json.loads(row["pb_marks_json"]), sentences),
         "reviewer": row["reviewer"],
         "deliberator": row["deliberator"],
         "publisher": row["publisher"],
@@ -1008,12 +1088,10 @@ async def _require_status(note_id: int, expected: str):
     return row
 
 
-@app.post("/api/notes/{note_id}/review")
-async def start_review(note_id: int, body: ActorBody):
-    await _require_status(note_id, "draft")
-    await db.advance_status(note_id, "review", body.actor)
-    await db.append_audit("review_started", note_id, body.actor, {})
-    return {"status": "review"}
+# `/api/notes/{id}/review`(초안 → 검토중)는 없앴다(2026-08-03) — 노트가 검토중으로
+# 만들어지므로 옮길 곳이 없다(db.py SCHEMA 주석). 감사 이벤트 `review_started`도 이제
+# 새로 쌓이지 않지만, **이미 쌓인 로그는 그대로 읽어야 하므로** 화면의 이벤트 표는 남긴다
+# (frontend page.tsx의 `review_started`).
 
 
 @app.post("/api/notes/{note_id}/deliberate")
@@ -1065,7 +1143,7 @@ async def discard_note(note_id: int, body: ReasonBody):
 async def ack_sentence(note_id: int, body: AckBody):
     """미인용 문장 하나를 '확인함'으로 표시하거나(reason) 되돌린다(reason=null).
 
-    심의 단계에서만 가능하다 — 초안에서 미리 풀어두면 검토가 형식이 된다.
+    심의 단계에서만 가능하다 — 검토 단계에서 미리 풀어두면 검토가 형식이 된다.
     권한(준법만)은 화면이 막고, 여기서는 **누가 무엇을 왜** 확인했는지를 남기는 게 일이다.
     """
     row = await _require_status(note_id, "deliberation")
@@ -1075,13 +1153,19 @@ async def ack_sentence(note_id: int, body: AckBody):
 
     s = sentences[body.index]
     if body.reason is not None:
-        # 출처가 있는 문장은 확인 대상이 아니다 — 애초에 게이트를 막고 있지 않다.
-        # (해제는 이 검사를 하지 않는다. 푸는 건 언제나 막을 이유가 없고, 재파싱 등으로
-        #  조건이 달라진 뒤 남은 확인을 되돌릴 길이 없으면 안 된다.)
-        if not citations.is_body(s) or s["source"] is not None:
-            raise HTTPException(400, "출처가 이미 있거나 게이트 대상이 아닌 문장입니다.")
         if body.reason not in ACK_REASONS:
             raise HTTPException(400, f"사유는 {' / '.join(ACK_REASONS)} 중 하나여야 합니다.")
+        # 출처가 있는 문장은 **확인** 대상이 아니다 — 애초에 게이트를 막고 있지 않다.
+        # (해제는 이 검사를 하지 않는다. 푸는 건 언제나 막을 이유가 없고, 재파싱 등으로
+        #  조건이 달라진 뒤 남은 확인을 되돌릴 길이 없으면 안 된다.)
+        # ⚠️ `제거`만 예외다(2026-08-03). 그건 "이대로 통과시킨다"가 아니라 "이 문장을
+        #    최종본에서 뺀다"라, 출처가 있든 없든 할 수 있어야 한다 — 지연시세 고지처럼
+        #    **문장을 고쳐야 풀리는 위반**이 출처 있는 문장에서 나면, 뺄 길이 없는 한
+        #    준법에게 남는 선택지가 반려뿐이었다.
+        if body.reason != "제거" and (not citations.is_body(s) or s["source"] is not None):
+            raise HTTPException(400, "출처가 이미 있거나 게이트 대상이 아닌 문장입니다.")
+        if body.reason == "제거" and not citations.is_body(s):
+            raise HTTPException(400, "소제목·고지문구는 뺄 수 있는 문장이 아닙니다.")
 
     acks = await db.set_note_ack(note_id, body.index, body.reason, body.actor, s["text"])
     await db.append_audit(
@@ -1094,18 +1178,63 @@ async def ack_sentence(note_id: int, body: AckBody):
     # ⚠️ 여기도 **발행과 같은 기준**으로 센다(`live_acks`). 저장된 목록을 그대로 쓰면 무효가 된
     #    확인까지 세어, 이 응답은 "0개 남음"인데 발행은 409로 막힌다.
     live = compliance.live_acks(acks, sentences)
+    fresh = await db.get_note(note_id)
     remaining = compliance.check_note(
-        row["content_md"], sentences, "F3", {a["index"] for a in live}
+        _effective_md(fresh["content_md"], sentences, _removed_indices(fresh, sentences)),
+        sentences,
+        "F3",
+        _gate_exempt(fresh, sentences),
     )
     return {"acks": live, "violations": remaining}
+
+
+@app.post("/api/notes/{note_id}/mark")
+async def mark_sentence(note_id: int, body: MarkBody):
+    """각주 없는 문장 하나에 PB 판정을 남기거나(mark) 지운다(mark=None).
+
+    검토 단계에서만 가능하다 — 심의로 올라간 노트는 준법이 보는 물건이고, 그 단계의
+    조작은 확인(ack)이다. 게이트에는 영향이 없다(위 PB_MARKS 주석).
+    """
+    row = await db.get_note(note_id)
+    if row is None:
+        raise HTTPException(404, "노트를 찾을 수 없습니다.")
+    if row["status"] not in PB_MARK_STATUSES:
+        raise HTTPException(409, f"현재 상태({row['status']})에서는 이 작업을 할 수 없습니다.")
+    sentences = json.loads(row["sentences_json"])
+    if not 0 <= body.index < len(sentences):
+        raise HTTPException(400, "문장 인덱스가 범위를 벗어났습니다.")
+
+    s = sentences[body.index]
+    if body.mark is not None:
+        # 각주가 붙은 문장은 판정 대상이 아니다 — 화면에서도 UNSOURCED·해석에만 버튼이 선다.
+        # (지우기는 이 검사를 하지 않는다: 재파싱으로 조건이 달라진 뒤 남은 판정을 되돌릴
+        #  길이 없으면 안 된다. `ack_sentence`와 같은 이유다.)
+        if not citations.is_body(s) or s["source"] is not None:
+            raise HTTPException(400, "출처가 이미 있거나 판정 대상이 아닌 문장입니다.")
+        if body.mark not in PB_MARKS:
+            raise HTTPException(400, f"판정은 {' / '.join(PB_MARKS)} 중 하나여야 합니다.")
+
+    marks = await db.set_note_mark(note_id, body.index, body.mark, body.actor, s["text"])
+    await db.append_audit(
+        "pb_mark_set" if body.mark else "pb_mark_cleared",
+        note_id,
+        body.actor,
+        {"index": body.index, "mark": body.mark, "text": s["text"][:60]},
+    )
+    return {"marks": compliance.live_acks(marks, sentences)}
 
 
 @app.post("/api/notes/{note_id}/publish")
 async def publish_note(note_id: int, body: ActorBody):
     row = await _require_status(note_id, "deliberation")
     sentences = json.loads(row["sentences_json"])
+    # 게이트는 **뺀 문장이 없는 본문**을 본다(_effective_md) — 지연시세 고지·금지 표현처럼
+    # 문장을 고쳐야 풀리는 위반도, 그 문장을 빼기로 했다면 남을 이유가 없다.
     violations = compliance.check_note(
-        row["content_md"], sentences, "F3", _valid_acks(row, sentences)
+        _effective_md(row["content_md"], sentences, _removed_indices(row, sentences)),
+        sentences,
+        "F3",
+        _gate_exempt(row, sentences),
     )
     if violations:
         await db.append_audit("publish_blocked", note_id, body.actor, {"violations": violations})

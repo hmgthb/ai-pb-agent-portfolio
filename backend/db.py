@@ -1,4 +1,4 @@
-"""노트(초안→검토→심의→발행) 상태와 감사로그를 담는 Postgres 접근 계층.
+"""노트(검토→심의→발행) 상태와 감사로그를 담는 Postgres 접근 계층.
 
 # ponytail: 스키마 변경이 잦아지기 전까지는 마이그레이션 도구 없이 멱등(idempotent) DDL
 # 한 덩어리로 충분하다 — Alembic 등은 스키마 churn이 실제로 생기면 그때 도입.
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS notes (
     id SERIAL PRIMARY KEY,
     stock_code TEXT NOT NULL,
     corp_name TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'draft',
+    status TEXT NOT NULL DEFAULT 'review',
     content_md TEXT NOT NULL,
     sentences_json JSONB NOT NULL,
     violations_json JSONB NOT NULL DEFAULT '[]',
@@ -30,6 +30,15 @@ CREATE TABLE IF NOT EXISTS notes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- 초안(draft) 단계를 없앴다(2026-08-03). 노트는 **만들어지는 순간 검토중**이다.
+-- 예전에는 PB가 `사실 확인`을 눌러야 초안→검토중으로 갔는데, 그 버튼이 하는 일이 상태를
+-- 한 칸 옮기는 것뿐이라 화면에 클릭 한 번을 더 세우기만 했다 — 문장 판정(승인·제거)도
+-- 확인·보류도 전부 검토중에서 한다. 사람이 실제로 판단하는 지점은 그대로다.
+-- ⚠️ `CREATE TABLE IF NOT EXISTS`는 이미 있는 테이블의 DEFAULT를 안 바꾼다 — 따로 고친다.
+--    남아 있던 초안도 같이 옮긴다(이 단계가 없어졌으므로 그대로 두면 열어도 버튼이 없다).
+ALTER TABLE notes ALTER COLUMN status SET DEFAULT 'review';
+UPDATE notes SET status = 'review' WHERE status = 'draft';
 
 -- 누가 만든 노트인가. PB도 F3로 노트를 만들 수 있는데(생성은 PB, 발행은 준법) 생성자가
 -- 없으면 **만든 사람이 자기 노트를 처리 대기에서 찾을 수 없다**. 나중에 붙은 컬럼이라
@@ -42,6 +51,14 @@ ALTER TABLE notes ADD COLUMN IF NOT EXISTS created_by TEXT;
 -- text를 같이 두는 이유: 재파싱(scripts/reparse_notes.py)으로 문장 배열이 바뀌면 인덱스가
 -- 다른 문장을 가리킬 수 있다 — 발행 때 원문과 대조해 안 맞으면 그 확인은 무효로 본다.
 ALTER TABLE notes ADD COLUMN IF NOT EXISTS acks_json JSONB NOT NULL DEFAULT '[]';
+
+-- PB의 문장 판정. 각주가 없는 문장(UNSOURCED·해석)을 **심의로 올리기 전에** PB가 훑으면서
+-- 빼야 할 것(remove)과 그대로 둘 것(approve)을 표시한다. acks_json과 모양은 같지만
+-- **다른 사람의 다른 판단**이라 컬럼을 나눈다: 확인(ack)은 준법이 심의 단계에서 게이트를
+-- 여는 조작이고, 이건 PB가 검토 단계에서 남기는 표시라 게이트를 열지 않는다.
+-- [{"index": 3, "mark": "remove", "actor": "PB", "ts": "...", "text": "앞 60자"}]
+-- text를 같이 두는 이유도 acks_json과 같다(재파싱 후 인덱스 어긋남 대조).
+ALTER TABLE notes ADD COLUMN IF NOT EXISTS pb_marks_json JSONB NOT NULL DEFAULT '[]';
 
 -- append-only: 애플리케이션 코드에서 UPDATE/DELETE 하지 않는다
 -- (강제하는 DB 트리거·권한 분리는 MVP 스코프 밖 — 운영 전환 시 추가할 것).
@@ -189,6 +206,35 @@ async def set_note_ack(
         json.dumps(acks, ensure_ascii=False),
     )
     return acks
+
+
+async def set_note_mark(
+    note_id: int, index: int, mark: str | None, actor: str, text: str
+) -> list[dict]:
+    """PB의 문장 판정을 남기거나(mark) 지운다(mark=None). 갱신된 전체 목록을 준다.
+
+    `set_note_ack`과 같은 모양이다 — 한 문장에 하나만 남고, 되돌린 이력은 감사로그에 있다.
+    두 함수를 합치지 않는 건 컬럼이 다르기 때문이고, 컬럼이 다른 이유는 위 스키마 주석에 있다.
+    """
+    row = await pool().fetchrow("SELECT pb_marks_json FROM notes WHERE id = $1", note_id)
+    marks = [m for m in json.loads(row["pb_marks_json"]) if m.get("index") != index]
+    if mark is not None:
+        marks.append(
+            {
+                "index": index,
+                "mark": mark,
+                "actor": actor,
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "text": text[:60],
+            }
+        )
+    marks.sort(key=lambda m: m["index"])
+    await pool().execute(
+        "UPDATE notes SET pb_marks_json = $2::jsonb, updated_at = now() WHERE id = $1",
+        note_id,
+        json.dumps(marks, ensure_ascii=False),
+    )
+    return marks
 
 
 async def advance_status(

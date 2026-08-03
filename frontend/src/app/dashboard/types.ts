@@ -172,7 +172,42 @@ export type NoteAck = {
 };
 
 /** 확인 사유 — 백엔드 main.py의 ACK_REASONS와 1:1. 자유 입력이 아닌 이유는 감사 대상이라서다. */
-export const ACK_REASONS = ['해석·전망', '고지·면책', '데이터 설명'] as const;
+export const ACK_REASONS = [
+  '해석·전망',
+  '고지·면책',
+  '데이터 설명',
+  '제거',
+] as const;
+
+/** 셀렉트·배지에 뜨는 말. 앞의 셋은 "무엇으로 보고 이대로 통과시켰나"라 `~으로 확인`이
+ *  붙지만, `제거`는 통과가 아니라 **최종본에서 뺀다**는 판단이라 그 말이 뜻을 뒤집는다.
+ *  ⚠️ 값은 그대로 `제거`로 저장된다 — 라벨만 여기서 갈린다(감사로그·백엔드 대조 대상). */
+export function ackReasonLabel(reason: string): string {
+  return reason === '제거' ? '제거' : `${reason}으로 확인`;
+}
+/** 문장에 붙는 배지. `제거`만 **`PB 제거`와 짝이 되는 말**로 적는다(`준법 제거`) —
+ *  같은 판단을 누가 했는지가 배지에서 바로 갈려 읽혀야 한다. 나머지는 확인 사유를 단다. */
+export function ackBadgeLabel(reason: string): string {
+  return reason === '제거' ? '준법 제거' : `확인함 · ${reason}`;
+}
+
+/** PB가 각주 없는 문장(UNSOURCED·해석)에 남기는 판정 — 백엔드 main.py의 PB_MARKS와 1:1.
+ *  ⚠️ **게이트를 열지 않는다.** 미인용 문장을 발행 가능하게 만드는 건 준법의 확인(ack)뿐이고,
+ *     이건 그 전 단계에서 PB가 훑은 흔적이다. `remove`도 문장을 실제로 지우지 않는다 —
+ *     본문은 그대로 두고 표시만 남긴다(무엇을 빼기로 했는지도 감사 대상이다). */
+export type PbMark = 'remove' | 'approve';
+export const PB_MARK_LABEL: Record<PbMark, string> = {
+  remove: 'PB 제거',
+  approve: 'PB 승인',
+};
+/** ack와 같은 모양이되 reason 자리에 mark가 온다. index·text의 뜻도 같다(재파싱 대조용). */
+export type NoteMark = {
+  index: number;
+  mark: PbMark;
+  actor: string;
+  ts: string;
+  text: string;
+};
 
 /** 거절 사유 — 백엔드 main.py의 REJECT_REASONS/DISCARD_REASONS와 1:1.
  *  두 목록이 갈린 건 **뜻이 다른 거절**이라서다: 반려는 고쳐서 다시 올릴 수 있고(→ 검토중),
@@ -196,8 +231,11 @@ export type NoteDetail = {
   content_md: string;
   sentences: NoteSentence[];
   violations: string[];
-  /** 사람이 확인해 미인용 집계에서 뺀 문장들 */
+  /** 준법이 확인해 미인용 집계에서 뺀 문장들 */
   acks: NoteAck[];
+  /** PB가 제거·승인으로 판정한 문장들. acks와 달리 집계·게이트에는 영향이 없다.
+   *  (이 필드가 붙기 전에 받은 응답은 없다 — 백엔드가 항상 배열을 준다.) */
+  marks: NoteMark[];
   reviewer: string | null;
   deliberator: string | null;
   publisher: string | null;
@@ -268,6 +306,8 @@ export type Brief = {
 
 /** 노트 상태(백엔드) → 시안 PILL 키 */
 export const PILL: Record<string, [label: string, cls: string]> = {
+  // 초안 단계는 없앴다(2026-08-03) — 노트는 검토중으로 만들어진다(backend db.py SCHEMA).
+  // 표는 남긴다: 새로 생기지는 않지만, 남아 있는 값이 화면에 'draft'로 찍히면 안 된다.
   draft: ['초안', ''],
   review: ['검토중', 'review'],
   deliberation: ['심의중', 'delib'],
