@@ -102,6 +102,7 @@ export default function F1Chat({
   onRunningChange,
   keep,
   keepKey,
+  corner,
 }: {
   /** 입력창을 채우는 유일한 경로(고객 카드의 보유 종목 칩·분석 칩).
    *  ⚠️ 마운트 시점 prop(`initial`)은 걷어냈다 — 전역 F1은 닫아도 언마운트되지 않으므로
@@ -133,6 +134,11 @@ export default function F1Chat({
    *     여기에 보관을 붙이면 앞 고객으로 돌아갈 때 그 대화가 되살아나 결정이 뒤집힌다. */
   keep?: ChatKeep;
   keepKey?: string;
+  /** 대화 로그 **오른쪽 위 모서리**에 겹쳐 놓을 조작(고객 카드의 `크게 보기`).
+   *  버튼을 로그 안에 넣지 않는 이유: 로그는 스크롤 상자라 대화와 같이 밀려 올라간다.
+   *  ⚠️ 여기 넣는 것은 **대화를 보는 방식**을 바꾸는 조작까지다 — 질문을 만들거나 보내는
+   *     조작(칩·입력·보내기)은 제자리가 따로 있고, 로그 위에 겹치면 대화를 가린다. */
+  corner?: React.ReactNode;
 } = {}) {
   // 보관된 대화가 있으면 그것으로 시작한다(`useState` 초기값은 마운트에만 쓰인다 —
   // 다시 열릴 때 새 마운트이므로 여기서 한 번 읽는 것이 맞다).
@@ -331,7 +337,9 @@ export default function F1Chat({
         </div>
       )}
 
-      <div className="chat-log" ref={scrollRef}>
+      <div className="chat-logwrap">
+        {corner && <span className="chat-corner">{corner}</span>}
+        <div className="chat-log" ref={scrollRef}>
         {turns.length === 0 && (
           <div className="chat-empty">질문을 입력하면 대화가 시작됩니다.</div>
         )}
@@ -431,7 +439,8 @@ export default function F1Chat({
               {t.error && <div className="chat-blocked">⛔ {t.error}</div>}
             </div>
           </div>
-        ))}
+          ))}
+        </div>
       </div>
 
       {/* 보내기 전 경고 — 입력창 **바로 위**다(누르기 직전에 지나친다). 버튼은 살려 둔다:

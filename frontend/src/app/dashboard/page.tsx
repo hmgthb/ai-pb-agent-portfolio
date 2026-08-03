@@ -15,6 +15,7 @@
  */
 
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -47,7 +48,9 @@ import {
   useTip,
 } from './charts';
 import F1Chat, { type ChatKeep, type ChatPrefill } from './F1Chat';
-import PrepMemo from './PrepMemo';
+// 고객 카드는 준비 줄만 보유 표 안에서 쓴다 — `PrepMemo`(이름 줄까지 그리는 쪽)는
+// 이제 고객 문의 모달 전용이다(ReviewModal).
+import { PrepLines } from './PrepMemo';
 import ResearchCard from './ResearchCard';
 import { ChatModal, NoteModal } from './ReviewModal';
 import {
@@ -538,6 +541,26 @@ export default function DashboardPage() {
   const [briefArmed, setBriefArmed] = useState(false);
   const [briefDeleting, setBriefDeleting] = useState(false);
 
+  /* 브리핑 종목 카드는 **접힌 채로 시작하고, 셋이 함께 움직인다**(2026-08-03).
+     접는 이유: 세 카드가 공시·뉴스를 다 펴면 브리핑 한 덩어리가 화면 한 판을 채워, 먼저
+     읽어야 할 것(몇 명 보유인가·얼마에 얼마나 움직였나)이 링크 더미에 묻힌다.
+     ⚠️ **종목별로 접지 않는다.** 세 카드가 가로로 나란해서 하나만 펴면 나머지 둘은 위만
+        차고 아래가 빈 칸으로 남는다 — 격자에서 높이는 가장 큰 카드가 정하기 때문이고,
+        그 빈 칸이 "이 종목은 공시·뉴스가 없다"로 읽힌다(실제로는 접혀 있을 뿐이다).
+        그래서 상태는 카드마다가 아니라 **브리핑 하나에 하나**다. 아무 카드나 누르면 셋이
+        같이 열리고 같이 닫힌다. */
+  const [briefOpen, setBriefOpen] = useState(false);
+  const toggleBrief = useCallback(() => setBriefOpen((o) => !o), []);
+
+  /* 고객 카드의 보유 표도 같은 방식으로 접는다 — 펼치면 그 종목의 준비 줄(공시·뉴스·노트)이
+     행 바로 아래로 들어온다. 키가 종목코드라 고객을 바꿔도 펼친 종목은 펼친 채로 남는다:
+     여러 고객이 같은 종목을 들고 있고, 훑는 동안 보려는 것도 대개 그 종목이다. */
+  const [holdOpen, setHoldOpen] = useState<Record<string, boolean>>({});
+  const toggleHold = useCallback(
+    (code: string) => setHoldOpen((o) => ({ ...o, [code]: !o[code] })),
+    [],
+  );
+
   const deleteBrief = useCallback(
     async (id: number) => {
       setBriefError('');
@@ -571,6 +594,24 @@ export default function DashboardPage() {
         관찰자가 그대로 "안 보임"으로 준다 — 탭을 옮길 때 따로 손볼 것이 없다. */
   const inlineChatRef = useRef<HTMLDivElement | null>(null);
   const [inlineChatSeen, setInlineChatSeen] = useState(false);
+
+  /* 채팅 칸 크게 보기(2026-08-03) — 3열 그리드의 한 칸이라 로그가 보이는 높이가 200px
+     남짓이고, 답변 하나가 그 안에서 세 번 스크롤된다.
+     ⚠️ **컴포넌트를 다른 곳으로 옮겨 그리지 않는다.** 모달 안에 `<F1Chat>`을 새로 세우면
+        지금 것이 언마운트되면서 EventSource가 끊긴다 — 답을 받는 중이면 그 답이 통째로
+        사라진다(F1Chat 주석의 같은 함정). 그래서 **같은 자리에 그대로 두고 클래스만
+        바꿔** 화면 위로 띄운다(`.cust-chat.big`). 리마운트가 없으니 스트리밍도, 지금까지
+        주고받은 대화도 그대로다.
+     닫는 길은 셋이다: 같은 버튼 · 배경 클릭 · Esc. */
+  const [chatBig, setChatBig] = useState(false);
+  useEffect(() => {
+    if (!chatBig) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setChatBig(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [chatBig]);
   useEffect(() => {
     const el = inlineChatRef.current;
     if (!el) {
@@ -702,6 +743,26 @@ export default function DashboardPage() {
         .filter(({ c }) => chatsByCustomer.has(c.id)),
     [visibleCustomers, chatsByCustomer],
   );
+  /** 같은 규칙으로 **위험 플래그** 묶음(2026-08-03). 판정은 화면이 하지 않는다 —
+   *  `c.flag`는 서버가 규칙(순수 코드)으로 매긴 값이고 여기서는 그 값으로 고르기만 한다. */
+  const flagRows = useMemo(
+    () =>
+      visibleCustomers.map((c, i) => ({ c, no: i + 1 })).filter(({ c }) => c.flag),
+    [visibleCustomers],
+  );
+
+  /* 무엇을 위로 올릴 것인가 — 검색창 오른쪽의 아이콘 토글 둘이 정한다(2026-08-03).
+     `?`(미처리 문의) · `⚑`(위험 플래그)이고 **서로 배타적**이다. 누른 것을 다시 누르면
+     꺼져서 분류가 없어진다 — 세 번째 상태를 위한 `전체` 칸을 따로 두지 않는 이유는
+     이 칸의 폭(340px)에 검색창과 나란히 설 자리가 그만큼 없어서다.
+     아이콘을 새로 만들지 않는 것이 핵심이다: 두 기호는 이미 목록 안에서 같은 뜻으로
+     쓰이고 있어서(이름 옆 `?`, 줄 끝 `⚑`) 스위치와 결과가 같은 글자로 이어진다.
+     기본값은 `none`이다(2026-08-03) — 첫 화면은 **손대지 않은 전체 목록**이어야 한다.
+     문의 묶음을 켠 채로 시작하면 같은 고객이 위·아래에 두 번 서 있는 상태가 기본이 되고,
+     그게 정렬 규칙인지 중복인지를 화면이 설명하지 않는다. 분류는 PB가 필요할 때 켠다. */
+  const [groupBy, setGroupBy] = useState<'none' | 'ask' | 'flag'>('none');
+  const topRows =
+    groupBy === 'ask' ? askRows : groupBy === 'flag' ? flagRows : [];
 
   /* 종목코드 → 이 종목을 보유한 **내 고객** 수. 브리프가 "왜 이 종목인가"를 화면에서 스스로
      설명하게 만든다 — 종목 선정 기준이 내 고객 포트폴리오이기 때문이다(backend pb_watchlist).
@@ -1037,7 +1098,10 @@ export default function DashboardPage() {
             선정 기준은 내 담당 고객의 보유 수다(backend pb_watchlist) — 배지가 그 근거를 적는다. */}
         <section className="card" aria-labelledby="b-title" hidden={!cfg.brief}>
           <div className="card-head">
-            <h2 id="b-title">브리핑</h2>
+            {/* `브리핑`이 아니라 `종목 브리핑`이다(2026-08-03) — 이 카드가 담는 것은
+                시장 지수 한 줄과 **보유 상위 종목**의 밤사이 변화라, 이름이 무엇에 대한
+                브리핑인지까지 말해야 아래 `고객 문의`·`종목 노트` 카드와 나란히 읽힌다. */}
+            <h2 id="b-title">종목 브리핑</h2>
             {data.brief && (
               <span className="hint" style={{ color: 'var(--muted)' }}>
                 {data.brief.brief_date} 생성
@@ -1170,54 +1234,79 @@ export default function DashboardPage() {
                       meta: fmtDate(n.pub_date),
                     })),
                   ];
+                  const open = briefOpen;
                   return (
                     <div className="bcard" key={it.stock_code}>
-                      <div className="bh">
-                        <span className="bname">{it.corp_name}</span>
-                        <span className="bcode">{it.stock_code}</span>
-                        {/* 선정 근거를 카드가 스스로 말한다 — 이 종목이 위에 있는 이유가
-                            "내 고객 N명이 들고 있어서"이고, 그 N이 이 카드를 건너뛰어도
-                            되는지를 정한다. 0명이면 배지를 감추지 않고 0명이라고 적는다. */}
-                        <span
-                          className="bhold"
-                          title="브리프 종목 선정 기준 = 내 담당 고객의 보유 수"
-                        >
-                          {holders.get(it.stock_code) ?? 0}명 보유
-                        </span>
-                      </div>
-                      {q ? (
-                        <div className="bquote">
-                          <strong>{Number(q.close).toLocaleString()}원</strong>
-                          <span className={`delta ${down ? 'down' : 'up'}`}>
-                            {down ? '▼' : '▲'}
-                            {fmtPct(q.change_pct)}%
+                      {/* 머리말·시세줄 통째가 여는 버튼이다 — 접힌 카드에서 누를 곳을
+                          찾게 하지 않으려면 보이는 것 전부가 누를 곳이어야 한다.
+                          안에 링크가 없는 구역이라(공시·뉴스는 아래) 버튼으로 감싸도
+                          중첩 대화형 요소가 생기지 않는다.
+                          **어느 카드를 눌러도 셋이 같이 움직인다**(위 briefOpen 주석). */}
+                      <button
+                        type="button"
+                        className="bcard-toggle"
+                        aria-expanded={open}
+                        title={
+                          open
+                            ? '접기 — 종목 카드의 공시·뉴스를 모두 숨깁니다'
+                            : '펴기 — 종목 카드의 공시·뉴스를 모두 봅니다'
+                        }
+                        onClick={toggleBrief}
+                      >
+                        <div className="bh">
+                          <span className="bname">{it.corp_name}</span>
+                          <span className="bcode">{it.stock_code}</span>
+                          {/* 선정 근거를 카드가 스스로 말한다 — 이 종목이 위에 있는 이유가
+                              "내 고객 N명이 들고 있어서"이고, 그 N이 이 카드를 건너뛰어도
+                              되는지를 정한다. 0명이면 배지를 감추지 않고 0명이라고 적는다. */}
+                          <span
+                            className="bhold"
+                            title="브리프 종목 선정 기준 = 내 담당 고객의 보유 수"
+                          >
+                            {holders.get(it.stock_code) ?? 0}명 보유
                           </span>
-                          <span className="bcode">
-                            · {fmtDate(q.as_of)} 지연시세
+                          {/* 접힘 표시는 **오른쪽 끝 꺾쇠 하나**다. 접힌 카드가 "이게 다"가
+                              아니라 "더 있다"로 읽혀야 하고, 그 말을 글자로 적으면
+                              (`공시·뉴스 5건 보기`) 줄이는 게 목적인 카드에 줄이 늘어난다. */}
+                          <span className="bcaret" aria-hidden="true">
+                            {open ? '⌄' : '›'}
                           </span>
                         </div>
-                      ) : (
-                        <div className="bempty">시세 조회 결과 없음</div>
-                      )}
-                      {rows.length ? (
-                        rows.map((r, i) => (
-                          <div className="bline" key={i}>
-                            <span className="btag">{r.tag}</span>
-                            <span style={{ minWidth: 0 }}>
-                              <a
-                                href={r.href || '#'}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                {r.text}
-                              </a>
-                              <span className="bcode"> {r.meta}</span>
+                        {q ? (
+                          <div className="bquote">
+                            <strong>{Number(q.close).toLocaleString()}원</strong>
+                            <span className={`delta ${down ? 'down' : 'up'}`}>
+                              {down ? '▼' : '▲'}
+                              {fmtPct(q.change_pct)}%
+                            </span>
+                            <span className="bcode">
+                              · {fmtDate(q.as_of)} 지연시세
                             </span>
                           </div>
-                        ))
-                      ) : (
-                        <div className="bempty">전일 공시·밤사이 뉴스 없음</div>
-                      )}
+                        ) : (
+                          <div className="bempty">시세 조회 결과 없음</div>
+                        )}
+                      </button>
+                      {open &&
+                        (rows.length ? (
+                          rows.map((r, i) => (
+                            <div className="bline" key={i}>
+                              <span className="btag">{r.tag}</span>
+                              <span style={{ minWidth: 0 }}>
+                                <a
+                                  href={r.href || '#'}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {r.text}
+                                </a>
+                                <span className="bcode"> {r.meta}</span>
+                              </span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="bempty">전일 공시·밤사이 뉴스 없음</div>
+                        ))}
                     </div>
                   );
                 })}
@@ -1306,17 +1395,49 @@ export default function DashboardPage() {
               </div>
               <div className="cust-layout">
                 <div className="cust-list">
-                  <input
-                    className="search"
-                    type="search"
-                    placeholder="검색"
-                    aria-label="검색"
-                    /* 셋 중 여기가 제일 중요하다 — PB가 치는 값이 고객 이름이라,
-                       자동완성을 켜 두면 브라우저 입력 이력에 고객명이 쌓인다. */
-                    autoComplete="off"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
+                  {/* 검색과 분류가 한 줄에 선다 — 둘 다 "무엇을 먼저 볼까"를 정하는
+                      조작이라 붙여 두면 눈이 한 번만 멈춘다. */}
+                  <div className="cust-tools">
+                    <input
+                      className="search"
+                      type="search"
+                      placeholder="검색"
+                      aria-label="검색"
+                      /* 셋 중 여기가 제일 중요하다 — PB가 치는 값이 고객 이름이라,
+                         자동완성을 켜 두면 브라우저 입력 이력에 고객명이 쌓인다. */
+                      autoComplete="off"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                    />
+                    {/* 분류 토글 — 아이콘은 목록 안의 것과 **같은 기호**다(이름 옆 `?`,
+                        줄 끝 `⚑`). 개수를 같이 적어 누르기 전에 몇 명이 올라올지 보인다.
+                        낭독에는 `aria-pressed`로 켜짐/꺼짐이 실린다. */}
+                    {(
+                      [
+                        ['ask', '?', askRows.length, '미처리 문의'],
+                        ['flag', '⚑', flagRows.length, '위험 플래그'],
+                      ] as const
+                    ).map(([key, icon, n, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        className={`grpbtn ${key}${groupBy === key ? ' on' : ''}`}
+                        aria-pressed={groupBy === key}
+                        title={
+                          groupBy === key
+                            ? `${label} 고객을 위로 올려 두었습니다 — 다시 누르면 분류가 풀립니다`
+                            : `${label} 고객 ${n}명을 목록 위로 올립니다`
+                        }
+                        onClick={() =>
+                          setGroupBy((g) => (g === key ? 'none' : key))
+                        }
+                      >
+                        <span aria-hidden="true">{icon}</span>
+                        <span className="grpbtn-n">{n}</span>
+                        <span className="sr-only">{label}</span>
+                      </button>
+                    ))}
+                  </div>
                   <div className="tbl-scroll">
                     <table aria-label="고객 목록">
                       <thead>
@@ -1335,17 +1456,17 @@ export default function DashboardPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {/* 미처리 문의가 있는 고객을 **맨 위에 한 번 더** 세운다.
-                            거르는 게 아니라 겹쳐 보이는 것이다 — 아래 전체 목록은 1~50
-                            그대로 남고, 위 묶음은 오늘 먼저 볼 사람의 바로가기다.
+                        {/* 고른 묶음(미처리 문의 또는 위험 플래그)을 **맨 위에 한 번 더**
+                            세운다. 거르는 게 아니라 겹쳐 보이는 것이다 — 아래 전체 목록은
+                            1~50 그대로 남고, 위 묶음은 오늘 먼저 볼 사람의 바로가기다.
                             ⚠️ 순번(#)은 위·아래가 **같은 수**여야 한다 — 위 묶음에서 1,2,3을
                                다시 매기면 같은 고객이 두 자리 번호를 갖게 되고, 오른쪽 상세의
                                `selectedNo`(전체 목록 기준)와도 어긋난다.
                             검색 중이면 위 묶음도 같이 걸러진다: 아래 목록에 없는 사람이
                             위에만 남아 있으면 검색이 걸리지 않은 것처럼 보인다. */}
-                        {askRows.map(({ c, no }) => (
+                        {topRows.map(({ c, no }) => (
                           <CustomerRow
-                            key={`ask-${c.id}`}
+                            key={`top-${c.id}`}
                             c={c}
                             no={no}
                             asks={chatsByCustomer.get(c.id)?.length ?? 0}
@@ -1353,7 +1474,7 @@ export default function DashboardPage() {
                             onSelect={setSelectedId}
                           />
                         ))}
-                        {askRows.length > 0 && (
+                        {topRows.length > 0 && (
                           /* 구분선 한 줄. 누르는 행이 아니다 — 보이는 건 선뿐이고,
                              화면 낭독에는 "여기부터 전체 고객"이 대신 읽힌다
                              (선은 보이지 않으므로 목록이 왜 다시 시작하는지 알 길이 없다). */
@@ -1461,37 +1582,85 @@ export default function DashboardPage() {
                             <th>종목</th>
                             <th className="num">평가금액</th>
                             <th className="num">주식 내</th>
+                            {/* 꺾쇠 칸 — 머리글은 비운다(값이 아니라 조작이라 이름이 없다) */}
+                            <th className="hcaret" />
                           </tr>
                         </thead>
+                        {/* 준비 메모(공시·뉴스·노트)를 **이 표 안으로 넣었다**(2026-08-03).
+                            아래에 따로 두었더니 종목 이름이 표에 한 번, 메모에 또 한 번 나와
+                            같은 목록이 두 벌이었다 — 접는 자리도 둘이었다. 이제 보유 행을
+                            누르면 그 종목의 준비 줄이 바로 아래로 펼쳐진다: 금액·비중을 보던
+                            눈이 그 자리에서 근거로 이어진다. */}
                         <tbody>
-                          {selected.holdings.map((h) => (
-                            <tr key={h.code}>
-                              <td>
-                                {/* 종목명이 이 표의 주어다 — 고객 표의 이름과 같은 무게로.
-                                    종목코드는 부가정보라 그대로 둔다. */}
-                                <strong>{h.name}</strong>{' '}
-                                <span style={{ color: 'var(--muted)' }}>
-                                  {h.code}
-                                </span>
-                              </td>
-                              <td className="num">₩{fmtKRW(h.amt)}</td>
-                              {/* 비중이 없으면 빈칸이 아니라 `—`. 빈칸은 "0%"로도
-                                  "아직 안 셌다"로도 읽힌다. */}
-                              <td className="num pct-eq">
-                                {h.pct_of_equity == null
-                                  ? '—'
-                                  : `${h.pct_of_equity}%`}
-                              </td>
-                            </tr>
-                          ))}
+                          {selected.holdings.map((h) => {
+                            const open = !!holdOpen[h.code];
+                            return (
+                              <Fragment key={h.code}>
+                                <tr className={open ? 'hrow open' : 'hrow'}>
+                                  <td>
+                                    {/* 종목명이 이 표의 주어다 — 고객 표의 이름과 같은
+                                        무게로. 종목코드는 부가정보라 그대로 둔다.
+                                        이름 칸 전체가 여는 버튼이다(금액·비중 칸은 아니다 —
+                                        숫자를 읽다 잘못 누르는 자리를 만들지 않는다). */}
+                                    <button
+                                      type="button"
+                                      className="hrow-toggle"
+                                      aria-expanded={open}
+                                      title={
+                                        open
+                                          ? '접기 — 공시·뉴스·노트를 숨깁니다'
+                                          : '펴기 — 공시·뉴스·노트를 봅니다'
+                                      }
+                                      onClick={() => toggleHold(h.code)}
+                                    >
+                                      <strong>{h.name}</strong>{' '}
+                                      <span style={{ color: 'var(--muted)' }}>
+                                        {h.code}
+                                      </span>
+                                    </button>
+                                  </td>
+                                  <td className="num">₩{fmtKRW(h.amt)}</td>
+                                  {/* 비중이 없으면 빈칸이 아니라 `—`. 빈칸은 "0%"로도
+                                      "아직 안 셌다"로도 읽힌다. */}
+                                  <td className="num pct-eq">
+                                    {h.pct_of_equity == null
+                                      ? '—'
+                                      : `${h.pct_of_equity}%`}
+                                  </td>
+                                  {/* 꺾쇠는 **줄 맨 끝**이다 — 이름 옆에 두면 금액 열
+                                      앞에서 줄이 한 번 끊겨 읽힌다. 여기도 누르면 열리지만
+                                      낭독에 실리는 조작은 위 이름 버튼 하나뿐이다
+                                      (같은 일을 하는 컨트롤이 둘로 읽히지 않게). */}
+                                  <td
+                                    className="hcaret"
+                                    onClick={() => toggleHold(h.code)}
+                                  >
+                                    <span className="bcaret" aria-hidden="true">
+                                      {open ? '⌄' : '›'}
+                                    </span>
+                                  </td>
+                                </tr>
+                                {open && (
+                                  <tr className="hrow-detail">
+                                    <td colSpan={4}>
+                                      <div className="prep prep-inline">
+                                        <PrepLines
+                                          code={h.code}
+                                          brief={data.brief}
+                                          notes={data.notes}
+                                          onOpenNote={(code) =>
+                                            setModal({ kind: 'note', code })
+                                          }
+                                        />
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                              </Fragment>
+                            );
+                          })}
                         </tbody>
                       </table>
-                      <PrepMemo
-                        customer={selected}
-                        brief={data.brief}
-                        notes={data.notes}
-                        onOpenNote={(code) => setModal({ kind: 'note', code })}
-                      />
                       {/* 여기 있던 `요약` 줄(f1.portfolio_summary)을 걷어냈다(2026-07-29).
                           세 조각 중 둘이 이 패널에 이미 있었다: `국내주식 74%`는 도넛 범례와
                           **글자까지 같았고**, `위험 플래그 …`는 이름 옆 ⚑와 사유 줄이 이미
@@ -1518,7 +1687,18 @@ export default function DashboardPage() {
                     ⚠️ 입력 가드(compliance.PII_PATTERNS)는 주민·계좌번호 '숫자 형식'만
                     잡는다 — 한글 이름은 안 걸린다. 이름을 안 쓰게 만드는 건 지금도
                     이 UI의 몫이다(HANDOFF §7). */}
-                <div className="cust-chat" ref={inlineChatRef}>
+                {/* 크게 보기 배경 — 누르면 닫힌다. 채팅 칸보다 한 겹 아래(z-index 5/6)라
+                    같은 흐름 안에서 순서만으로 위아래가 정해진다. */}
+                {chatBig && (
+                  <div
+                    className="overlay chat-overlay"
+                    onClick={() => setChatBig(false)}
+                  />
+                )}
+                <div
+                  className={chatBig ? 'cust-chat big' : 'cust-chat'}
+                  ref={inlineChatRef}
+                >
                   {selected ? (
                     <>
                       {/* 제목의 주어는 **사물(포트폴리오)**이지 사람(고객)이 아니다 —
@@ -1595,6 +1775,26 @@ export default function DashboardPage() {
                            화면이라 "물어보면 뭐가 나가지?"가 질문보다 먼저 오고,
                            고객 문의 모달은 이미 길다(거기서는 물어본 뒤 배지로 본다). */
                         preview={egress}
+                        /* 크게 보기 — **대화창 오른쪽 위 모서리**에 겹친다(2026-08-03).
+                           제목 줄에 두었더니 칩·미리보기를 건너 한참 위였고, 정작 좁아서
+                           답답한 것은 로그 상자다: 조작은 그 상자에 붙어 있어야 한다. */
+                        corner={
+                          <button
+                            type="button"
+                            className="cchat-zoom"
+                            aria-label={
+                              chatBig ? '채팅 창 줄이기' : '채팅 창 크게 보기'
+                            }
+                            title={
+                              chatBig
+                                ? '원래 크기로 (Esc)'
+                                : '크게 보기 — 대시보드 위에 띄웁니다'
+                            }
+                            onClick={() => setChatBig((v) => !v)}
+                          >
+                            <span aria-hidden="true">{chatBig ? '⤡' : '⤢'}</span>
+                          </button>
+                        }
                       />
                     </>
                   ) : (

@@ -982,6 +982,61 @@ tr:focus-visible,
 }
 /* 바이낸스 search-input-on-dark — 입력칸은 투명이 아니라 **한 단 올라온 면**이다.
    투명이면 카드와 같은 색이라 "여기에 쓸 수 있다"는 신호가 테두리 하나뿐이 된다. */
+/* 검색 + 분류 토글 한 줄(2026-08-03). 아래 여백은 이 줄이 들고, 검색창에서 뺐다 —
+   나란한 두 요소가 각자 아래 여백을 가지면 높이가 어긋난다. */
+.cust-tools {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.cust-tools .search {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-bottom: 0;
+}
+/* 분류 토글 — 목록 안의 기호를 그대로 쓴다(`?` 미처리 문의 · `⚑` 위험 플래그).
+   글자 라벨을 안 붙이는 건 폭이 없어서이기도 하지만, **결과가 곧 설명이기 때문**이다:
+   누르면 그 기호를 단 사람들이 위로 올라온다. 설명은 title·sr-only가 나른다.
+   개수를 같이 적어 누르기 전에 몇 줄이 올라올지 보이게 한다. */
+.grpbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--muted);
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  cursor: pointer;
+}
+.grpbtn:hover {
+  color: var(--ink-2);
+}
+.grpbtn .grpbtn-n {
+  font-family: var(--font-num);
+  font-weight: 500;
+  font-size: 11px;
+  opacity: 0.85;
+}
+/* 켜진 토글은 **그 기호의 색으로** 찬다 — 목록에서 올라온 줄에 붙어 있는 색과 같아야
+   "이것 때문에 저 줄들이 위에 있다"가 이어진다. 무채색으로 칠하면 그 연결이 끊긴다. */
+.grpbtn.ask.on {
+  color: var(--chip-chat);
+  background: var(--chip-chat-bg);
+  border-color: transparent;
+}
+.grpbtn.flag.on {
+  color: var(--flag);
+  background: color-mix(in srgb, var(--flag) 13%, transparent);
+  border-color: transparent;
+}
+
 .search {
   font: inherit;
   font-size: 13px;
@@ -1211,6 +1266,50 @@ th.rownum {
   flex-wrap: wrap;
   gap: 8px;
 }
+/* 크게 보기 버튼 — 줄 맨 오른쪽. 글리프 하나뿐이라 설명은 aria-label·title이 나른다
+   (`.flag`와 같은 규칙: 라벨 없는 글리프는 그 둘이 유일한 설명이다). */
+.cust-chat .cchat-zoom {
+  flex: none;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  padding: 3px 6px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+.cust-chat .cchat-zoom:hover {
+  color: var(--ink-2);
+  border-color: var(--baseline);
+}
+/* 크게 본 상태 — **같은 컴포넌트를 그대로 두고 상자만 화면 위로 띄운다**(page.tsx 주석).
+   리마운트가 없어야 스트리밍 중인 답변과 지금까지의 대화가 살아남는다.
+   z-index는 배경(.overlay, 5)보다 하나 위. 노트 모달(.overlay 안의 .modal)과 동시에
+   열리는 경우는 없다 — 모달이 열리면 이 카드는 뒤로 덮인다. */
+.cust-chat.big {
+  position: fixed;
+  z-index: 6;
+  top: 4vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(1040px, 92vw);
+  height: 92vh;
+  background: var(--surface);
+  border: 1px solid var(--grid);
+  border-radius: var(--r-xl);
+  padding: 20px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+  /* 좁은 칸에서 쓰던 왼쪽 구분선의 뜻(옆 칸과 가른다)이 없어지므로 사방 테두리로 돌린다. */
+  padding-left: 20px;
+}
+/* 로그가 남는 높이를 전부 먹는다 — 좁은 화면 규칙(@media)이 flex-grow를 0으로 눕혀
+   두는데, 띄운 상자는 높이가 92vh로 정해져 있으므로 여기서 되살린다. */
+.cust-chat.big .chat-logwrap {
+  flex-grow: 1;
+  height: 0;
+}
 .cust-chat .cchat-head strong {
   font-size: 15px;
   font-weight: 700;
@@ -1320,10 +1419,13 @@ th.rownum {
 }
 /* 로그가 남는 높이를 먹는다. 모달용 min/max(300px·52vh)는 카드 안에서 의미가 없다 —
    높이는 옆 상세 칸이 정한다. */
-.cust-chat .chat-log {
+.cust-chat .chat-logwrap {
   flex-grow: 1;
   height: 0;
   min-height: 180px;
+}
+.cust-chat .chat-log {
+  min-height: 0;
   max-height: none;
 }
 .cust-chat .chat-empty {
@@ -1412,6 +1514,46 @@ th.rownum {
   width: 62px;
   font-family: var(--font-num);
   color: var(--ink-2);
+}
+/* 보유 행 = 접기 버튼(2026-08-03). 누르는 자리는 **종목 이름 칸뿐**이다 — 금액·비중은
+   읽는 값이라 그 위에서 커서가 바뀌면 누를 것처럼 보인다. */
+.holdings .hrow-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+/* 꺾쇠 열 — 줄 맨 끝의 얇은 칸. 폭을 고정해 두 행의 꺾쇠가 세로로 맞는다. */
+.holdings .hcaret {
+  width: 16px;
+  padding-left: 0;
+  text-align: right;
+  cursor: pointer;
+}
+.holdings .hrow-toggle:hover strong {
+  color: var(--accent-text);
+}
+/* 펼친 행의 아래에 붙는 칸 — 표의 셀 여백(4px 8px)을 그대로 두면 준비 줄이 숫자 열과
+   같은 격자에 걸린 것처럼 보인다. 왼쪽만 이름 칸에 맞춰 들여쓰고 아래 선은 유지한다. */
+.holdings .hrow-detail td {
+  padding: 0 8px 8px;
+}
+.holdings .hrow.open td {
+  border-bottom: 0;
+}
+.prep.prep-inline {
+  margin-top: 0;
+  padding-top: 0;
+}
+.prep.prep-inline .prep-line {
+  padding-left: 2px;
 }
 /* `.diag`(고객 상세 맨 아래 `요약` 한 줄)는 2026-07-29에 걷어냈다 — 세 조각 중 둘이
    같은 패널의 도넛 범례·⚑ 줄과 겹쳤고, 남은 하나(주식 내 비중)는 요약이 아니라
@@ -2331,7 +2473,7 @@ a.fn-title:hover {
     padding-top: 14px;
   }
   /* 제 줄로 내려오면 높이를 정해줄 옆 칸이 없다 — 늘어나는 대신 제 내용만큼 잡는다. */
-  .cust-chat .chat-log {
+  .cust-chat .chat-logwrap {
     flex-grow: 0;
     height: auto;
     min-height: 260px;
@@ -2475,6 +2617,25 @@ a.fn-title:hover {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+/* 대화 로그를 감싸는 상자 — **로그 오른쪽 위에 조작을 겹쳐 놓기 위한 자리**다(2026-08-03).
+   버튼을 로그 안에 두면 스크롤 상자 안이라 대화와 같이 밀려 올라간다. 크기·스크롤은
+   여전히 `.chat-log`가 갖고, 이 상자는 좌표계만 만든다. */
+.chat-logwrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.chat-logwrap > .chat-log {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.chat-corner {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 1;
 }
 .chat-empty {
   color: var(--muted);
@@ -2860,6 +3021,44 @@ a.fn-title:hover {
   opacity: 0.75;
 }
 
+/* 접기/펴기 — 브리핑 카드의 머리말+시세줄 통째가 버튼이다(2026-08-03).
+   버튼 기본 생김새를 전부 지운다: 이건 "누를 수 있는 카드 윗부분"이지 버튼이 아니다.
+   누를 수 있다는 신호는 커서·hover 배경·오른쪽 꺾쇠가 낸다. */
+.bcard-toggle {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+/* 접혀 있으면 시세줄이 카드의 마지막 줄이다 — 펴진 상태의 아래 여백(8px)이 그대로 남으면
+   빈 칸이 하나 매달린 것처럼 보인다. */
+.bcard-toggle[aria-expanded='false'] .bquote,
+.bcard-toggle[aria-expanded='false'] .bempty {
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+.bcard-toggle:hover .bname,
+.prep .prep-name:hover {
+  color: var(--accent-text);
+}
+.bcaret {
+  font-size: 13px;
+  line-height: 1;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+/* 브리핑 카드에서는 `.bhold` 배지가 이미 오른쪽으로 밀려 있어(margin-left:auto) 꺾쇠는
+   그 뒤에 붙기만 하면 된다. 상담 준비 메모에는 그 배지가 없어 여기서 직접 민다 —
+   `.bcaret`에 통째로 주면 브리핑 쪽에 auto 여백이 둘이 되어 배지가 가운데로 끌려온다. */
+.prep .prep-name .bcaret {
+  margin-left: auto;
+}
+
 /* 상담 준비 메모 — 고객 상세 안 */
 /* 위 보유 종목 표와의 경계선을 두지 않는다 — 표의 마지막 행이 이미 border-bottom을 그어서
    12px 사이에 선이 두 개 겹쳐 보였다. 간격(22px)만으로 두 블록이 갈린다. */
@@ -2874,12 +3073,22 @@ a.fn-title:hover {
 .prep .prep-row:first-of-type {
   border-top: 0;
 }
+/* 종목 이름 줄이 곧 접기 버튼이다 — `.bcard-toggle`과 같은 이유로 버튼 생김새를 지운다.
+   ⚠️ `font: inherit`을 쓰지 않는다(아래 크기·굵기를 도로 지운다) — 필요한 것만 끈다. */
 .prep .prep-name {
   display: flex;
   align-items: baseline;
   gap: 6px;
   font-size: 12.5px;
   font-weight: 600;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font-family: inherit;
+  cursor: pointer;
 }
 .prep .prep-line {
   display: flex;
