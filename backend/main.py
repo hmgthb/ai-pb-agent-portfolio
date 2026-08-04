@@ -82,6 +82,26 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+# SSE 응답에 **반드시** 함께 나가는 헤더. 없으면 이벤트가 실시간으로 안 흐르고 실행이
+# 끝난 뒤 한꺼번에 도착한다 — 화면은 그대로인데 진행 단계가 안 보이고 결과만 뜬다.
+#
+# ⚠️ 로컬 개발에서는 재현되지 않는다(2026-08-04 실측). dev에서는 브라우저가
+#    `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`으로 백엔드를 직접 부르므로 Next가
+#    경로에 없다. 데모 배포(`docker-compose.demo.yml`)에서만 `/api/*`가 rewrites 프록시를
+#    타고, 그때 **Next 프로덕션 서버가 모든 응답을 gzip 미들웨어로 감싼다**
+#    (`next/dist/server/lib/router-server.js` — 라우팅 **전**이라 프록시 응답도 걸린다).
+#    SSE는 한 이벤트가 압축 임계치(1KB)보다 작아 미들웨어 버퍼에 그대로 쌓인다.
+#
+# - `no-transform`: 그 압축 미들웨어가 이 응답만 건너뛴다(Cache-Control을 검사한다).
+#   `compress: false`로 앱 전체 압축을 끄는 것보다 좁다 — 정적 자산은 그대로 압축된다.
+# - `X-Accel-Buffering: no`: nginx류가 앞에 서면 같은 증상이 난다. 지금 구성엔 없지만
+#   운영 전환에서 붙는 자리라 미리 둔다(모르는 프록시는 무시하므로 손해가 없다).
+SSE_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "X-Accel-Buffering": "no",
+}
+
+
 def _parse_tool_result(payload):
     """MCP 도구 반환값을 파싱한다.
 
@@ -609,7 +629,9 @@ async def research_stream(stock_code: str = Query(...), actor: str | None = Quer
             },
         )
 
-    return StreamingResponse(event_gen(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_gen(), media_type="text/event-stream", headers=SSE_HEADERS
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -708,6 +730,160 @@ async def _collect_chat_data(routing: dict, data: dict):
                     }
 
 
+# 제안형에서 뉴스를 조회할 종목 수 상한. 후보에 걸린 종목이 더 많아도 여기서 자른다 —
+# 위임 한 건이 15~20초라 상한이 없으면 답이 나오기까지 몇 분이 된다. 자른 사실은
+# 진행 SSE에 남는다(조용히 줄이면 "뉴스가 없는 종목"과 구분되지 않는다).
+ADVICE_NEWS_LIMIT = 3
+
+
+async def _collect_advice_data(portfolio: dict, data: dict):
+    """제안형(portfolio_advice) 데이터 수집 — 후보 계산 → 시세 배치 → 후보 종목 뉴스.
+
+    ⚠️ 후보·등락은 **비식별화된 portfolio만 보고** 계산한다(`f1._equity_pct` 주석).
+       원본 facts를 쓰면 허용 목록 밖의 값이 후보 문장을 타고 프롬프트로 샌다 —
+       `egress_guard`는 payload만 검사하지 후보 블록은 안 본다.
+    ⚠️ 시세·뉴스가 실패해도 **후보 자체는 낸다.** 외부 조회가 안 됐다고 답이 통째로
+       사라지면, PB는 "제안할 게 없다"와 "조회가 실패했다"를 구분할 수 없다.
+    """
+    data["portfolio"] = portfolio
+
+    # ① 시세 배치 — 50종목이 API 2회, 실측 2.5초라 위임 없이 여기서 직접 부른다.
+    #    requests는 동기라 이벤트 루프를 막는다 → to_thread(main의 market 호출과 같은 방식).
+    yield _sse("progress", {"agent": "portfolio", "step": "krx_batch", "status": "running"})
+    changes, quote_note = await asyncio.to_thread(
+        market.fetch_change_batch, list(f1.CORP_NAMES)
+    )
+    yield _sse(
+        "progress",
+        {
+            "agent": "portfolio",
+            "step": "krx_batch",
+            "status": "completed" if changes else "failed",
+            "note": quote_note,
+        },
+    )
+
+    view = f1.momentum_view(portfolio, changes) if changes else {"held": [], "not_held": []}
+    options = f1.rebalance_options(portfolio, momentum=view["held"])
+    data["options"] = options
+    data["momentum"] = view
+    yield _sse(
+        "progress",
+        {"agent": "portfolio", "step": "options", "status": "completed", "count": len(options)},
+    )
+
+    # ② 후보 종목 뉴스. 후보에 걸린 순서대로 중복 없이 상한까지.
+    #    후보가 없으면 보유 상위 한 종목이라도 본다 — "규칙에 걸린 게 없다"는 답에도
+    #    최근 무슨 일이 있었는지는 붙여 주는 게 상담 준비에 쓸모 있다.
+    picked: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for o in options:
+        for t in o["targets"]:
+            if t["code"] not in seen:
+                seen.add(t["code"])
+                picked.append((t["code"], t["name"]))
+    if not picked and view["held"]:
+        picked = [(view["held"][0]["code"], view["held"][0]["name"])]
+    dropped = max(0, len(picked) - ADVICE_NEWS_LIMIT)
+    picked = picked[:ADVICE_NEWS_LIMIT]
+    if dropped:
+        yield _sse(
+            "progress",
+            {"agent": "a4", "step": "news_limit", "status": "completed", "dropped": dropped},
+        )
+    if picked:
+        async for chunk in _collect_advice_news(picked, data):
+            yield chunk
+
+
+async def _collect_advice_news(picked: list[tuple[str, str]], data: dict):
+    """후보 종목들의 뉴스를 **한 번의 query로** 조회한다(a4에 종목마다 위임).
+
+    종목마다 query()를 새로 열지 않는 이유는 시간이다 — 한 루프 안에서 위임하면 서브에이전트가
+    나란히 돈다. 대신 **어느 종목의 뉴스인지 귀속**이 필요해서, Agent 도구 호출의 입력에서
+    6자리 코드를 뽑아 그 위임의 결과에 붙인다(`parent_tool_use_id` → 코드).
+    """
+    listing = " / ".join(f"{name}({code})" for code, name in picked)
+    instruction = (
+        f"아래 종목 각각에 대해 a4에게 **따로** 위임해서 최근 관련 뉴스를 조회해줘: {listing}. "
+        "위임 메시지마다 그 종목의 법인명과 6자리 종목코드를 반드시 함께 적어라. "
+        "조회 결과를 요약하거나 판단하지 마라."
+    )
+    options = ClaudeAgentOptions(
+        cwd=str(REPO_ROOT),
+        can_use_tool=can_use_tool,
+        hooks={
+            "PreToolUse": [HookMatcher(hooks=[_pre_tool_use_hook])],
+            "PostToolUse": [HookMatcher(hooks=[_post_tool_use_hook])],
+        },
+        system_prompt=(
+            "너는 메인 오케스트레이터(O)다. 아래 지시대로 데이터를 조회하기만 해라. "
+            "종목코드는 준 그대로 유지하고, 조회 외의 판단·해석·산문은 만들지 마라.\n\n"
+            + instruction
+        ),
+    )
+    name_of = dict(picked)
+    tool_names: dict[str, str] = {}
+    code_of: dict[str, str] = {}  # Agent 도구 호출 id → 그 위임이 맡은 종목코드
+
+    async for message in query(prompt=_prompt_stream(instruction), options=options):
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if not isinstance(block, ToolUseBlock):
+                    continue
+                tool_names[block.id] = block.name
+                if block.name == "Agent":
+                    # 위임 프롬프트에 적힌 6자리 코드로 귀속한다. 못 찾으면 붙이지 않는다 —
+                    # 틀린 종목에 뉴스를 붙이느니 라벨이 없는 게 낫다.
+                    m = re.search(r"\b(\d{6})\b", json.dumps(block.input, ensure_ascii=False))
+                    if m and m.group(1) in name_of:
+                        code_of[block.id] = m.group(1)
+                    yield _sse(
+                        "progress",
+                        {
+                            "agent": "a4",
+                            "step": "delegated",
+                            "status": "started",
+                            "corp": name_of.get(m.group(1)) if m else None,
+                        },
+                    )
+                else:
+                    yield _sse("progress", {"agent": "a4", "step": block.name, "status": "running"})
+        elif isinstance(message, UserMessage):
+            content = message.content if isinstance(message.content, list) else []
+            corp = name_of.get(code_of.get(message.parent_tool_use_id, ""))
+            for block in content:
+                if not isinstance(block, ToolResultBlock):
+                    continue
+                nm = tool_names.get(block.tool_use_id)
+                if nm is None or nm == "Agent":
+                    continue
+                if _tool_failed(block):
+                    data.setdefault("failed", []).append(nm)
+                    yield _sse("progress", {"agent": "a4", "step": nm, "status": "failed"})
+                    continue
+                yield _sse(
+                    "progress",
+                    {"agent": "a4", "step": nm, "status": "completed", "corp": corp},
+                )
+                try:
+                    parsed = _parse_tool_result(block.content)
+                except (KeyError, json.JSONDecodeError):
+                    continue
+                if parsed is None or nm != "mcp__news__news_search":
+                    continue
+                data.setdefault("news", [])
+                data.setdefault("news_sources", {})
+                # 종목당 상위 3건까지 — 상한이 없으면 한 종목이 프롬프트를 다 먹는다.
+                for item in parsed[:3]:
+                    data["news"].append({**item, "corp": corp})
+                    data["news_sources"][item["link"]] = {
+                        "title": item["title"],
+                        "pub_date": item["pub_date"],
+                    }
+                yield _sse("card", {"type": "news", "agent": "a4", "items": parsed, "corp": corp})
+
+
 @app.get("/api/chat/stream")
 async def chat_stream(
     q: str = Query(..., min_length=1, max_length=500),
@@ -803,12 +979,15 @@ async def chat_stream(
             "entity_code": routing["entity_code"], "entity_name": routing["entity_name"],
         })
 
-        # 3. 데이터 확보. 포트폴리오 라우트는 **에이전트를 돌리지 않는다** — 근거가 이미
-        #    계산된 내부 데이터라 조회할 도구가 없다(덤으로 크레딧도 안 쓴다).
+        # 3. 데이터 확보. 조회형 포트폴리오 라우트는 **에이전트를 돌리지 않는다** — 근거가
+        #    이미 계산된 내부 데이터라 조회할 도구가 없다(덤으로 크레딧도 안 쓴다).
         data: dict = {}
         if routing["agent"] == "portfolio":
             data["portfolio"] = portfolio
             yield _sse("progress", {"agent": "portfolio", "step": "compute", "status": "completed"})
+        elif routing["agent"] == "portfolio_advice":
+            async for chunk in _collect_advice_data(portfolio, data):
+                yield chunk
         else:
             async for chunk in _collect_chat_data(routing, data):
                 yield chunk
@@ -866,6 +1045,21 @@ async def chat_stream(
         if data.get("quote"):
             qd = data["quote"]
             quote_source = {"as_of": qd.get("as_of"), "close": qd.get("close"), "label": qd.get("source")}
+        elif data.get("momentum"):
+            # 제안형에는 단건 시세(`data["quote"]`)가 없고 배치 등락만 있다. 여기서 출처 메타를
+            # 안 만들면 답변의 `[^krx]`가 해석되지 않아 **근거 있는 문장이 UNSOURCED로 뜬다.**
+            # close는 담지 않는다 — 여러 종목의 등락이라 대표 종가라는 게 없다.
+            mv = data["momentum"]
+            span = next(iter((mv.get("held") or []) + (mv.get("not_held") or [])), None)
+            if span:
+                quote_source = {
+                    "as_of": span["as_of"],
+                    "close": None,
+                    "label": (
+                        f"공공데이터포털 금융위원회 주식시세정보 "
+                        f"({span['from']}→{span['as_of']} 일별 종가 비교, 실시간 아님)"
+                    ),
+                }
         sentences = citations.parse_sentences(
             raw,
             data.get("dart_sources") or {},
@@ -892,7 +1086,9 @@ async def chat_stream(
         })
         yield _sse("done", {})
 
-    return StreamingResponse(event_gen(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_gen(), media_type="text/event-stream", headers=SSE_HEADERS
+    )
 
 
 class ActorBody(BaseModel):

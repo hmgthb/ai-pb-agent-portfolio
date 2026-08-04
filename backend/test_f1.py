@@ -345,6 +345,155 @@ def test_portfolio_summary_says_no_flag_explicitly():
     assert "최대 단일 종목 카카오 70.3%(주식 내)" in s
 
 
+# ── 제안 후보 (2026-08-04) ──────────────────────────────────
+# 보유 5종목·업종이 갈리는 고객. _CUST(2종목)로는 업종 쏠림·상위3 규칙을 못 밟는다.
+_CUST5 = {
+    "id": 9, "name": "예시고객", "acct": "110-***-000000", "age": 52,
+    "risk": 1, "balance": 1_000_000_000, "ret": 3.1,
+    "holdings": [
+        {"amt": 420, "code": "005930", "name": "삼성전자"},      # 반도체
+        {"amt": 150, "code": "000660", "name": "SK하이닉스"},    # 반도체
+        {"amt": 200, "code": "012450", "name": "한화에어로스페이스"},
+        {"amt": 130, "code": "105560", "name": "KB금융"},
+        {"amt": 100, "code": "035420", "name": "NAVER"},
+    ],
+    "alloc": {"현금성": 5, "채권": 20, "펀드": 20, "국내주식": 55},
+    "diag": "예시", "flag": True,
+    "flagReasons": [{"key": "mismatch", "text": "안정추구형 성향 대비 주식 비중 55%"}],
+}
+
+
+def test_sector_exposure_sums_and_keeps_unknown():
+    """업종 합산은 보유주식 내 비중을 더한 값이다. 사전에 없는 종목은 버리지 않는다 —
+    조용히 빠지면 합이 100%가 아닌데 화면에 이유가 없다."""
+    facts = f1.portfolio_facts(_CUST5)
+    ex = f1.sector_exposure(facts)
+    top = ex[0]
+    assert top["sector"] == "반도체"
+    # 삼성전자 42.0 + SK하이닉스 15.0
+    assert top["pct_of_equity"] == 57.0
+    assert round(sum(s["pct_of_equity"] for s in ex)) == 100
+
+    unknown = {**_CUST5, "holdings": _CUST5["holdings"] + [
+        {"amt": 100, "code": "999999", "name": "사전에없는종목"}]}
+    ex2 = f1.sector_exposure(f1.portfolio_facts(unknown))
+    assert any(s["sector"] == "분류 없음" for s in ex2)
+    assert round(sum(s["pct_of_equity"] for s in ex2)) == 100
+
+
+def test_rebalance_options_basis_is_sourced():
+    """후보의 근거는 전부 출처가 붙어야 한다. `none`은 이 파일의 업종 분류뿐이다 —
+    계좌 수치를 근거로 들면서 각주를 안 다는 후보가 있으면 안 된다."""
+    facts = f1.portfolio_facts(_CUST5)
+    opts = f1.rebalance_options(facts)
+    kinds = {o["kind"] for o in opts}
+    assert "concentration" in kinds   # 삼성전자 42% (2위의 2.8배)
+    assert "sector" in kinds          # 반도체 57%
+    assert "allocation" in kinds      # 저장된 mismatch 플래그
+    for o in opts:
+        assert o["basis"], f"근거 없는 후보: {o['kind']}"
+        for b in o["basis"]:
+            assert b["src"] in ("hold", "krx", "none")
+        if o["kind"] != "sector":
+            assert all(b["src"] != "none" for b in o["basis"]), o["kind"]
+
+
+def test_rebalance_options_empty_when_nothing_crosses():
+    """문턱을 넘는 게 없으면 후보는 **빈 리스트**다 — 채우려고 만들지 않는다."""
+    flat = {**_CUST5, "flag": False, "flagReasons": [], "holdings": [
+        {"amt": 100, "code": "005930", "name": "삼성전자"},
+        {"amt": 100, "code": "012450", "name": "한화에어로스페이스"},
+        {"amt": 100, "code": "105560", "name": "KB금융"},
+        {"amt": 100, "code": "035420", "name": "NAVER"},
+        {"amt": 100, "code": "090430", "name": "아모레퍼시픽"},
+    ]}
+    assert f1.rebalance_options(f1.portfolio_facts(flat)) == []
+
+
+def test_rebalance_options_never_invent_risk_judgement():
+    """저장된 mismatch 플래그가 없으면 자산군 후보를 만들지 않는다 — 성향 판정을
+    새로 내리지 않는다는 규칙(CLAUDE.md 가드레일 1)이 후보 생성에도 적용된다."""
+    no_flag = {**_CUST5, "flag": False, "flagReasons": []}
+    opts = f1.rebalance_options(f1.portfolio_facts(no_flag))
+    assert all(o["kind"] != "allocation" for o in opts)
+
+
+def test_momentum_ranking_and_split():
+    """순위는 주어진 모집단 안에서만 매긴다(`of`가 그 크기). 보유/미보유를 갈라 두는 건
+    섞이면 답변이 미보유 종목을 보유인 것처럼 말하기 때문이다."""
+    changes = {
+        "005930": {"pct": -4.1, "days": 10, "from": "20260717", "to": "20260731"},
+        "000660": {"pct": 6.2, "days": 10, "from": "20260717", "to": "20260731"},
+        "042700": {"pct": 11.0, "days": 10, "from": "20260717", "to": "20260731"},
+    }
+    rank = f1.momentum_ranking(changes, ["005930", "000660", "042700", "999999"])
+    assert [r["code"] for r in rank] == ["042700", "000660", "005930"]
+    assert rank[0]["rank"] == 1 and rank[0]["of"] == 3
+    assert rank[0]["name"] == "한미반도체"
+
+    view = f1.momentum_view(f1.portfolio_facts(_CUST5), changes)
+    # 보유 순위는 **보유 종목 안에서만** 매긴다 — 전체 순위를 그대로 쓰면
+    # "보유 2종목 중 3위" 같은 거짓 문장이 나간다.
+    assert [r["code"] for r in view["held"]] == ["000660", "005930"]
+    assert [(r["rank"], r["of"]) for r in view["held"]] == [(1, 2), (2, 2)]
+    assert [r["code"] for r in view["not_held"]] == ["042700"]
+
+
+def test_momentum_view_caps_not_held():
+    """미보유는 상한까지만 — 다 실으면 답변이 종목 목록 낭독이 된다."""
+    changes = {c: {"pct": i * 1.0, "days": 14, "from": "20260716", "to": "20260731"}
+               for i, c in enumerate(f1.CORP_NAMES)}
+    view = f1.momentum_view(f1.portfolio_facts(_CUST5), changes, not_held_limit=3)
+    assert len(view["not_held"]) == 3
+    held = {h["code"] for h in _CUST5["holdings"]}
+    assert not [r for r in view["not_held"] if r["code"] in held]
+
+
+def test_josa_picks_by_batchim():
+    """근거 줄의 조사 — "삼성전자이"로 나가면 문장이 바로 어색해진다."""
+    assert f1._josa("삼성전자", "이", "가") == "가"
+    assert f1._josa("KB금융", "이", "가") == "이"
+    assert f1._josa("NAVER", "이", "가") == "가"   # 한글이 아니면 받침 없는 쪽
+
+
+def test_advice_block_marks_unsourced_sector():
+    """업종 분류에는 각주를 붙이지 말라고 프롬프트가 명시해야 한다 — 붙으면
+    계좌데이터가 그렇게 말한 것처럼 읽힌다."""
+    facts = f1.portfolio_facts(_CUST5)
+    block = f1._advice_block(f1.rebalance_options(facts), {})
+    assert "[^hold]" in block
+    assert "붙이지 마라" in block
+
+
+def test_advice_block_says_when_no_candidate():
+    """후보가 없으면 없다고 말하게 한다 — 채우면 그게 제일 나쁘다."""
+    block = f1._advice_block([], {})
+    assert "하나도 없다" in block
+
+
+def test_momentum_basis_appears_in_concentration_option():
+    """시세가 있으면 집중 후보의 근거로 붙는다. 없어도 후보 자체는 나와야 한다 —
+    시세 조회가 실패했다고 답이 통째로 사라지면 안 된다."""
+    facts = f1.portfolio_facts(_CUST5)
+    rank = f1.momentum_ranking(
+        {"005930": {"pct": -4.1, "days": 10, "from": "20260717", "to": "20260731"}},
+        ["005930"],
+    )
+    with_mom = f1.rebalance_options(facts, momentum=rank)
+    conc = next(o for o in with_mom if o["kind"] == "concentration")
+    assert any(b["src"] == "krx" for b in conc["basis"])
+    without = f1.rebalance_options(facts)
+    assert any(o["kind"] == "concentration" for o in without)
+
+
+def test_corp_names_and_sectors_cover_each_other():
+    """둘 중 하나에만 있는 종목이 생기면 후보가 조용히 '분류 없음'으로 샌다."""
+    assert set(f1.CORP_NAMES) == set(f1.SECTORS)
+    universe = ["005930", "000660", "012450", "207940", "373220", "105560",
+                "005380", "329180", "034020", "000270", "035420", "267260"]
+    assert not [c for c in universe if c not in f1.CORP_NAMES]
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

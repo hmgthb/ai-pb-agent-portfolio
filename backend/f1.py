@@ -13,36 +13,121 @@
 
 import re
 
-# 데모·주요 종목 별칭. 라우터는 6자리 코드가 없을 때 이 표로 법인명→코드를 해결한다.
-# ponytail: 전 종목 사전이 아니다 — 슬라이스는 이 목록 + 6자리 코드 직접입력을 받는다.
-# 확장하려면 DART corpCode 전체 맵을 붙이면 되지만, 그건 이 슬라이스의 범위가 아니다.
+# 종목 사전 — 코드 → 표시명. 라우팅(별칭 해결)과 제안 후보(섹터·추세)가 **같은 표**를 본다.
 #
+# **50종목으로 정한 이유**(2026-08-04): 제안 기능이 보유 밖 종목까지 후보로 내려면 유니버스가
+# 있어야 하는데, 전 종목(2,872)은 섹터를 손으로 검수할 수 없고 시세 배치 조회의 잡음도 크다.
+# 50은 사람이 한 번에 훑어 틀린 줄을 찾을 수 있는 규모다.
+#
+# ⚠️ **표시명은 KRX 실데이터와 대조해 맞췄다**(2026-08-04, basDt=20260731 전종목 2,872건).
+#    사명이 바뀐 둘은 공식명을 따랐다 — 엔씨소프트→`NC`, LIG넥스원→`LIG디펜스앤에어로스페이스`.
+#    옛 이름은 아래 별칭에 남겨 두어 PB가 예전 이름으로 물어도 찾힌다.
+#    코드를 추가·수정하면 **반드시 KRX로 다시 대조할 것** — 코드가 틀리면 남의 회사 시세를
+#    이 종목의 근거로 인용하게 된다(각주가 붙어 있어 더 믿음직해 보인다).
 # ⚠️ **고객 보유 유니버스 12종목은 여기 전부 있어야 한다**(`scripts/reseed_holdings.py`의
-#    `UNIVERSE`). 없으면 고객 카드에서 종목명을 타이핑했을 때 되묻기로 빠진다 — 보유 종목
-#    칩은 코드로 가서 멀쩡한데 손으로 친 것만 안 되므로 원인을 찾기 어렵다.
+#    `UNIVERSE`). 없으면 고객 카드에서 종목명을 타이핑했을 때 되묻기로 빠진다.
+CORP_NAMES: dict[str, str] = {
+    # ── 반도체 ──
+    "005930": "삼성전자", "000660": "SK하이닉스", "042700": "한미반도체", "000990": "DB하이텍",
+    # ── 자동차 ──
+    "005380": "현대차", "000270": "기아", "012330": "현대모비스",
+    # ── 2차전지 ──
+    "373220": "LG에너지솔루션", "006400": "삼성SDI", "003670": "포스코퓨처엠",
+    # ── 화학 ──
+    "051910": "LG화학", "011170": "롯데케미칼",
+    # ── 바이오·제약 ──
+    "207940": "삼성바이오로직스", "068270": "셀트리온", "326030": "SK바이오팜",
+    "000100": "유한양행", "128940": "한미약품",
+    # ── 인터넷·게임 ──
+    "035420": "NAVER", "035720": "카카오", "259960": "크래프톤",
+    "036570": "NC", "251270": "넷마블",
+    # ── 은행·금융 ──
+    "105560": "KB금융", "055550": "신한지주", "086790": "하나금융지주",
+    "316140": "우리금융지주", "138040": "메리츠금융지주",
+    # ── 보험 ──
+    "032830": "삼성생명",
+    # ── 철강·비철 ──
+    "005490": "POSCO홀딩스", "010130": "고려아연",
+    # ── 정유 ──
+    "096770": "SK이노베이션", "010950": "S-Oil",
+    # ── 조선 ──
+    "329180": "HD현대중공업", "042660": "한화오션", "010140": "삼성중공업",
+    "009540": "HD한국조선해양",
+    # ── 방산 ──
+    "012450": "한화에어로스페이스", "079550": "LIG디펜스앤에어로스페이스",
+    "064350": "현대로템", "047810": "한국항공우주",
+    # ── 전력·발전설비 ──
+    "034020": "두산에너빌리티", "267260": "HD현대일렉트릭", "298040": "효성중공업",
+    # ── 통신 ──
+    "017670": "SK텔레콤", "030200": "KT", "032640": "LG유플러스",
+    # ── 지주·건설 ──
+    "028260": "삼성물산",
+    # ── 소비재 ──
+    "051900": "LG생활건강", "090430": "아모레퍼시픽", "097950": "CJ제일제당",
+}
+
+# 코드 → 업종. **제안 후보의 '섹터 중복' 판정이 이 표에만 근거한다.**
+#
+# ⚠️ 이 분류에는 **출처가 없다** — DART·KRX가 준 값이 아니라 이 파일이 정한 것이다.
+#    그래서 섹터를 근거로 든 문장에는 `[^hold]`를 붙이지 않는다(붙이면 계좌데이터가
+#    말한 것처럼 읽힌다). 화면에서는 각주 없는 문장이라 `해석`으로 표시된다 — 검증된
+#    사실이 아니라 분류상의 관찰임이 그 배지로 전달된다.
+# ⚠️ 라벨을 잘게 쪼개지 마라. 중복을 세는 게 목적이라 종목마다 다른 라벨이 되면 어떤
+#    쏠림도 안 잡힌다(반대로 너무 뭉치면 전부 겹쳤다고 나온다).
+SECTORS: dict[str, str] = {
+    "005930": "반도체", "000660": "반도체", "042700": "반도체", "000990": "반도체",
+    "005380": "자동차", "000270": "자동차", "012330": "자동차",
+    "373220": "2차전지", "006400": "2차전지", "003670": "2차전지",
+    "051910": "화학", "011170": "화학",
+    "207940": "바이오·제약", "068270": "바이오·제약", "326030": "바이오·제약",
+    "000100": "바이오·제약", "128940": "바이오·제약",
+    "035420": "인터넷·게임", "035720": "인터넷·게임", "259960": "인터넷·게임",
+    "036570": "인터넷·게임", "251270": "인터넷·게임",
+    "105560": "은행·금융", "055550": "은행·금융", "086790": "은행·금융",
+    "316140": "은행·금융", "138040": "은행·금융",
+    "032830": "보험",
+    "005490": "철강·비철", "010130": "철강·비철",
+    "096770": "정유", "010950": "정유",
+    "329180": "조선", "042660": "조선", "010140": "조선", "009540": "조선",
+    "012450": "방산", "079550": "방산", "064350": "방산", "047810": "방산",
+    "034020": "전력·발전설비", "267260": "전력·발전설비", "298040": "전력·발전설비",
+    "017670": "통신", "030200": "통신", "032640": "통신",
+    "028260": "지주·건설",
+    "051900": "소비재", "090430": "소비재", "097950": "소비재",
+}
+
+# 손으로 더하는 별칭. 표시명(위)은 아래에서 자동으로 별칭이 되므로 **여기엔 그 밖의 이름만**
+# 적는다 — 옛 사명, 흔한 줄임말, 한글/영문 표기 차이.
 # ⚠️ 짧은 별칭은 넣지 않는다(부분매칭 사고). "삼바"·"두산" 같은 2~3자는 뺐다.
+# ⚠️ 두 글자 영문(`kt`)은 다른 말 안에 들어갈 수 있어 특히 위험하다. `skt`를 함께 등록해
+#    두었고 매칭이 **긴 별칭부터** 돌므로 "SKT"가 KT로 잘못 가지 않는다(`_extract_entity`).
+_EXTRA_ALIASES: dict[str, str] = {
+    "하이닉스": "000660",
+    "한화에어로": "012450",
+    "삼성바이오": "207940",
+    "엘지에너지솔루션": "373220", "lg엔솔": "373220", "엘지엔솔": "373220",
+    "케이비금융": "105560",
+    "현대자동차": "005380",
+    "현대중공업": "329180",
+    "네이버": "035420",
+    "현대일렉트릭": "267260",
+    "엘지화학": "051910",
+    "포스코홀딩스": "005490", "포스코": "005490",
+    "엘지유플러스": "032640",
+    "에스케이텔레콤": "017670", "skt": "017670",
+    "에스케이하이닉스": "000660",
+    "에스오일": "010950", "에쓰오일": "010950", "s오일": "010950",
+    "엔씨소프트": "036570", "엔씨": "036570",  # 사명 변경 전 이름
+    "lig넥스원": "079550", "넥스원": "079550",  # 사명 변경 전 이름
+    "한국항공": "047810",
+    "포스코케미칼": "003670",  # 사명 변경 전 이름
+}
+
+# 라우터가 6자리 코드가 없을 때 보는 표(별칭 → 코드). 표시명에서 자동 생성 + 위 손별칭.
+# 자동 생성이라 CORP_NAMES에 종목을 더하면 그 이름으로 바로 물어볼 수 있다.
 ALIASES: dict[str, str] = {
-    # ── 고객 보유 유니버스 12종목 ──
-    "삼성전자": "005930",
-    "sk하이닉스": "000660", "하이닉스": "000660",
-    "한화에어로스페이스": "012450", "한화에어로": "012450",
-    "삼성바이오로직스": "207940", "삼성바이오": "207940",
-    "lg에너지솔루션": "373220", "엘지에너지솔루션": "373220",
-    "lg엔솔": "373220", "엘지엔솔": "373220",
-    "kb금융": "105560", "케이비금융": "105560",
-    "현대차": "005380", "현대자동차": "005380",
-    "hd현대중공업": "329180", "현대중공업": "329180",
-    "두산에너빌리티": "034020",
-    "기아": "000270",
-    "네이버": "035420", "naver": "035420",
-    "hd현대일렉트릭": "267260", "현대일렉트릭": "267260",
-    # ── 유니버스 밖 ──
-    # 고객이 안 들고 있어도 남긴다: 전역 F1(우하단 버튼)은 **아무 종목**이나 받는 입구라
-    # 여기서 지우면 PB가 물어볼 수 있는 종목이 줄어든다(HANDOFF §0-1 "F1 입구는 둘").
-    "카카오": "035720",
-    "lg화학": "051910", "엘지화학": "051910",
-    "posco홀딩스": "005490", "포스코홀딩스": "005490", "포스코": "005490",
-    "셀트리온": "068270",
+    **{name.lower(): code for code, name in CORP_NAMES.items()},
+    **_EXTRA_ALIASES,
 }
 
 _CODE_RE = re.compile(r"\b(\d{6})\b")
@@ -68,10 +153,33 @@ _INTENTS: list[tuple[str, str, list[str]]] = [
 #    반대로 너무 넓히면 종목 질문을 뺏는다: 맨 `수익`은 넣지 않는다 — "카카오 수익성 어때?"는
 #    회사 재무 질문(a2)이지 포트폴리오 질문이 아니다. 부분매칭이라 짧은 말일수록 위험하다.
 _PORTFOLIO_KEYWORDS = [
-    "포트폴리오", "분산", "집중", "쏠림", "비중", "배분", "자산배분", "리밸런싱", "리밸런스",
+    "포트폴리오", "분산", "집중", "쏠림", "비중", "배분", "자산배분",
     "성향", "적합", "구성", "편중", "수익률", "잔고", "평가금액", "보유금액",
 ]
 _PORTFOLIO_INTENT = ("portfolio", "portfolio")
+
+# 제안형 포트폴리오 질문 (2026-08-04). 조회형(`portfolio`)과 **라우트를 나누는 이유는 비용이다.**
+# 조회형은 이미 계산된 내부 데이터만 쓰므로 에이전트를 안 돌리고 즉시 답한다(크레딧 0).
+# 제안형은 후보 종목의 뉴스를 조회하고 50종목 시세를 배치로 받아야 해서 수십 초가 걸린다 —
+# "삼성전자 비중 얼마야" 같은 단순 질문까지 그 경로를 태우면 화면이 통째로 느려진다.
+#
+# ⚠️ **조회형보다 먼저 검사한다.** "리밸런싱"·"비중 줄일까"에는 조회형 키워드도 같이 들어
+#    있어서, 뒤에 두면 제안형이 영영 안 걸린다.
+# ⚠️ 여기 없는 말은 제안을 못 받는다. 반대로 너무 넓히면 조회형 질문이 비싼 경로로 샌다 —
+#    맨 "어때"는 넣지 않았다("삼성전자 비중 어때?"는 조회로 답하는 게 맞다).
+# ⚠️ `_INTENTS`(시세·실적·공시·뉴스)보다도 먼저 걸린다 — "편승할 만한 종목"에는 종목이
+#    없어서 종목 라우트로 가면 되묻기로 떨어진다(실측한 세 번째 예시 질문).
+_ADVICE_KEYWORDS = [
+    # 조정 자체를 묻는 말
+    "리밸런싱", "리밸런스", "재배분", "조정",
+    "줄여", "줄일", "줄이", "덜어", "늘려", "늘릴", "빼야", "정리해", "손봐",
+    # 의견을 구하는 말
+    "제안", "추천", "어떻게 해야", "어떡해",
+    "너무 높", "너무 많", "너무 크", "높지 않", "많지 않", "과하지 않", "괜찮을까", "괜찮나",
+    # 종목 발굴을 묻는 말 (보유 밖까지 후보로 낸다 — 답변에서 미보유임을 반드시 밝힌다)
+    "편승", "유망", "살 만한", "담을 만한", "후보", "눈여겨",
+]
+_ADVICE_INTENT = ("portfolio_advice", "portfolio_advice")
 
 # 엔티티는 있으나 의도가 불명확할 때의 기본값 — 재무가 가장 흔한 질문이다.
 _DEFAULT_INTENT = ("financials", "a2")
@@ -96,6 +204,13 @@ def route(question: str, prev_entity: dict | None = None, has_portfolio: bool = 
     #    종목이 같이 있으면 들고 간다: "KB금융 비중"이면 그 종목 비중을 콕 집어 답할 수 있다.
     #    없으면 없는 대로 전체 구성에 답한다. 어느 쪽이든 되묻지 않는다.
     if has_portfolio:
+        # 제안형을 **먼저** 본다(위 주석) — 조회형 키워드가 같이 들어 있는 질문이 많다.
+        hit = next((k for k in _ADVICE_KEYWORDS if k in lowered), None)
+        if hit:
+            intent, agent = _ADVICE_INTENT
+            scope = f"'{entity_name or entity_code}' 중심" if entity_code else "전체 구성"
+            return _decision(entity_code, entity_name, agent, intent, False,
+                             f"'{hit}' 키워드 → 조정 선택지({scope})")
         hit = next((k for k in _PORTFOLIO_KEYWORDS if k in lowered), None)
         if hit:
             intent, agent = _PORTFOLIO_INTENT
@@ -173,8 +288,9 @@ def clarify_text(routing: dict, has_portfolio: bool = False) -> str:
     if has_portfolio:
         return (
             "이 패널은 종목(시세·실적·공시·뉴스)과 이 포트폴리오의 구성"
-            "(집중도·자산배분·성향 대비·수익률)에 답합니다. "
-            "종목명(예: 삼성전자)이나 6자리 코드(예: 005930)를 적어주시거나, 구성에 대해 물어보세요."
+            "(집중도·자산배분·성향 대비·수익률)에 답하고, 조정 선택지와 그 근거를 정리합니다. "
+            "종목명(예: 삼성전자)이나 6자리 코드(예: 005930)를 적어주시거나, "
+            "구성에 대해 물어보세요(예: 리밸런싱, 비중이 높지 않은지)."
         )
     return (
         "어느 종목인지 알려주세요 — 종목명(예: 삼성전자)이나 6자리 코드(예: 005930)를 "
@@ -190,18 +306,22 @@ def _decision(code, name, agent, intent, inherited, reason) -> dict:
 
 
 def _extract_entity(question: str) -> tuple[str | None, str | None]:
-    """6자리 코드가 있으면 그걸 쓰고(코드 우선), 없으면 별칭 표에서 종목명을 찾는다."""
+    """6자리 코드가 있으면 그걸 쓰고(코드 우선), 없으면 별칭 표에서 종목명을 찾는다.
+
+    ⚠️ 이름은 **별칭이 아니라 표시명(CORP_NAMES)을 돌려준다.** 별칭을 그대로 쓰면 PB가
+       "하이닉스"라고 물었을 때 답변·배지도 "하이닉스"가 되고, 자동 생성 별칭은 소문자라
+       "sk하이닉스"처럼 나간다. 화면에 나가는 이름은 한 곳에서만 정한다."""
     m = _CODE_RE.search(question)
     if m:
         code = m.group(1)
-        # 코드가 별칭 표에 있으면 이름도 같이 준다(없어도 코드만으로 진행 가능)
-        name = next((n for n, c in ALIASES.items() if c == code), None)
-        return code, name
+        # 사전 밖 코드도 조회는 된다 — 이름만 없이 코드로 진행한다.
+        return code, CORP_NAMES.get(code)
     lowered = question.lower()
     # 긴 별칭부터 매칭해 "포스코" < "posco홀딩스" 같은 부분매칭 오류를 줄인다
     for alias in sorted(ALIASES, key=len, reverse=True):
         if alias in lowered:
-            return ALIASES[alias], alias
+            code = ALIASES[alias]
+            return code, CORP_NAMES.get(code, alias)
     return None, None
 
 
@@ -308,6 +428,252 @@ def portfolio_summary(customer: dict) -> str:
     return " · ".join(parts)
 
 
+# --- 제안 후보 (F1 ② 선택지+근거, 2026-08-04) --------------------------------
+#
+# **왜 코드가 후보를 만드는가.** LLM에게 "선택지를 생각해봐"라고 하면 데이터에 없는 근거가
+# 섞인다(그리고 그 문장에도 각주를 붙이려 든다). 그래서 후보는 여기서 규칙으로 뽑고, 각
+# 후보에 **어느 데이터에서 나왔는지**를 같이 달아 보낸다. LLM이 하는 일은 이 후보를 문장으로
+# 옮기는 것뿐이라, `portfolio_facts`가 "수치는 코드가 계산한다"고 정한 원칙이 그대로 유지된다.
+#
+# ⚠️ **아래 문턱값은 위험 플래그가 아니다.** 위험 플래그(`flag_reasons`)는 시드가 계산해
+#    저장한 값이고 규칙도 다르다(단일종목 65% 이상 등). 여기 값은 **무엇을 이야깃거리로
+#    올릴지** 고르는 기준이라 훨씬 낮다 — 42%는 플래그에 안 걸리지만 상담에서는 짚을 만하다.
+#    두 가지를 같은 말로 부르면 PB가 "규칙에 걸렸다"고 오해한다. 그래서 후보에는 `label`을
+#    따로 두고, 프롬프트가 "위험 플래그"라는 말을 쓰지 못하게 막는다(ANSWER_SYSTEM_PROMPT).
+# ⚠️ 문턱을 넘는 게 없으면 **후보는 빈 리스트다.** 채우려고 만들지 않는다 — 후보가 없다는
+#    것 자체가 "지금 구성에서 규칙이 짚을 게 없다"는 답이다.
+_OPT_CONC_PCT = 30.0  # 단일 종목이 보유주식 내 이 % 이상
+_OPT_CONC_RATIO = 2.0  # 또는 2위 종목의 이 배수 이상
+_OPT_SECTOR_PCT = 40.0  # 한 업종 합계가 보유주식 내 이 % 이상
+_OPT_TOP3_PCT = 70.0  # 상위 3종목 합계가 보유주식 내 이 % 이상
+_UNCLASSIFIED = "분류 없음"
+
+
+def sector_exposure(facts: dict) -> list[dict]:
+    """보유 종목을 업종으로 묶어 합산(순수·결정론적). 비중 큰 순.
+
+    ⚠️ 사전(SECTORS)에 없는 종목은 **버리지 않고** `분류 없음`으로 남긴다. 조용히 빼면
+       업종 비중의 합이 100%가 아니게 되는데 화면에는 그 이유가 없다(alloc의 미지 자산군을
+       뒤에 붙이는 것과 같은 규칙이다).
+    ⚠️ 여기서 나온 수치의 출처는 **계좌 보유데이터 + 이 파일의 분류**다. 비중 자체는
+       `[^hold]`가 맞지만 '어느 업종인가'는 근거가 없다 — 후보의 basis에서 src를 갈라 둔다.
+    """
+    totals: dict[str, dict] = {}
+    for h in facts.get("holdings") or []:
+        pct = h.get("pct_of_equity")
+        if pct is None:
+            continue
+        sec = SECTORS.get(h.get("code"), _UNCLASSIFIED)
+        slot = totals.setdefault(sec, {"sector": sec, "pct_of_equity": 0.0, "holdings": []})
+        slot["pct_of_equity"] += pct
+        slot["holdings"].append({"code": h.get("code"), "name": h.get("name"), "pct_of_equity": pct})
+    for slot in totals.values():
+        # 합산 뒤 한 번만 반올림한다 — 항목마다 반올림하면 오차가 쌓인다.
+        slot["pct_of_equity"] = round(slot["pct_of_equity"], 1)
+    return sorted(totals.values(), key=lambda s: s["pct_of_equity"], reverse=True)
+
+
+def _equity_pct(facts: dict) -> float | None:
+    """주식 자산군 비중. `portfolio_facts`는 `equity_pct`로 들고 있지만 **비식별화된
+    payload에는 그 키가 없다**(`redact.SANITIZED_KEYS`) — 그래서 alloc에서 되찾는다.
+
+    후보 계산을 비식별화된 데이터만으로 돌리기 위한 것이다. 원본 facts를 쓰면 허용 목록
+    밖의 값이 후보 문장을 타고 프롬프트로 새는 경로가 생긴다(`egress_guard`는 payload만
+    검사하지 후보 블록은 안 본다).
+    """
+    if facts.get("equity_pct") is not None:
+        return facts["equity_pct"]
+    for a in facts.get("alloc") or []:
+        if a.get("class") == _EQUITY_CLASS:
+            return a.get("pct")
+    return None
+
+
+def _josa(word: str, with_batchim: str, without: str) -> str:
+    """받침에 따라 조사를 고른다 — "삼성전자이"처럼 적히면 근거 줄이 바로 어색해진다.
+
+    한글이 아닌 끝글자(NAVER·S-Oil·KT)는 발음으로 갈려서 글자만으로 판정할 수 없다.
+    받침 없는 쪽을 쓴다 — "NAVER가"는 자연스럽고 "NAVER이"는 확실히 틀리다.
+    """
+    ch = word[-1] if word else ""
+    if not ("가" <= ch <= "힣"):
+        return without
+    return with_batchim if (ord(ch) - 0xAC00) % 28 else without
+
+
+def _basis(text: str, src: str) -> dict:
+    """후보의 근거 한 줄. src가 각주 태그를 정한다 — `hold`는 `[^hold]`, `krx`는 `[^krx]`,
+    `none`은 **각주 없음**(이 파일의 업종 분류처럼 출처가 없는 것)."""
+    return {"text": text, "src": src}
+
+
+def rebalance_options(facts: dict, momentum: list[dict] | None = None) -> list[dict]:
+    """조정 선택지 후보(순수·결정론적). 각 후보는 근거를 데이터에서 끌고 온다.
+
+    반환: [{kind, label, targets:[{code,name}], basis:[{text,src}], keeps}]
+      keeps — 이 선택지가 **건드리지 않는 것**. 트레이드오프의 사실 부분이라 코드가 적는다
+              (판단이 아니라 관찰이다: "국내주식 55%는 그대로 남는다").
+
+    momentum: `momentum_ranking()` 결과. 있으면 보유 종목의 최근 등락을 근거로 덧붙인다 —
+              없어도 후보 자체는 만들어진다(시세 조회가 실패해도 답이 나와야 한다).
+    """
+    holdings = [h for h in (facts.get("holdings") or []) if h.get("pct_of_equity") is not None]
+    if not holdings:
+        return []
+
+    mom_by_code = {m["code"]: m for m in (momentum or [])}
+    equity_pct = _equity_pct(facts)
+    options: list[dict] = []
+
+    # ① 단일 종목 집중 — 절대 비중이 높거나, 2위와 벌어져 있으면.
+    top = holdings[0]
+    second = holdings[1] if len(holdings) > 1 else None
+    ratio = (
+        round(top["pct_of_equity"] / second["pct_of_equity"], 1)
+        if second and second.get("pct_of_equity")
+        else None
+    )
+    if top["pct_of_equity"] >= _OPT_CONC_PCT or (ratio and ratio >= _OPT_CONC_RATIO):
+        josa = _josa(top["name"], "이", "가")
+        basis = [_basis(f"{top['name']}{josa} 보유주식 내 {top['pct_of_equity']}%", "hold")]
+        if second and ratio:
+            basis.append(
+                _basis(
+                    f"2위 {second['name']}({second['pct_of_equity']}%)의 {ratio}배",
+                    "hold",
+                )
+            )
+        mom = mom_by_code.get(top["code"])
+        if mom:
+            # ⚠️ "영업일"이라 적지 않는다 — 구간은 달력일이고 그 사이 영업일 수는 연휴에
+            #    따라 다르다. 비교한 **두 기준일을 그대로** 적어야 PB가 대조할 수 있다.
+            basis.append(
+                _basis(
+                    f"{mom['from']}→{mom['as_of']} 종가 등락 {mom['pct']:+.1f}%"
+                    f" (보유 {mom['of']}종목 중 {mom['rank']}위)",
+                    "krx",
+                )
+            )
+        options.append({
+            "kind": "concentration",
+            "label": "단일 종목 집중",
+            "targets": [{"code": top["code"], "name": top["name"]}],
+            "basis": basis,
+            "keeps": (
+                f"국내주식 자산군 비중 {equity_pct}% 자체는 그대로 남는다"
+                if equity_pct is not None
+                else "자산군 비중 자체는 그대로 남는다"
+            ),
+        })
+
+    # ② 업종 쏠림 — 두 종목 이상이 같은 업종에 몰려 있을 때만 낸다(한 종목이면 ①과 같은 말).
+    for sec in sector_exposure(facts):
+        if sec["sector"] == _UNCLASSIFIED or len(sec["holdings"]) < 2:
+            continue
+        if sec["pct_of_equity"] < _OPT_SECTOR_PCT:
+            continue
+        names = " · ".join(h["name"] for h in sec["holdings"])
+        options.append({
+            "kind": "sector",
+            "label": f"{sec['sector']} 업종 쏠림",
+            "targets": [{"code": h["code"], "name": h["name"]} for h in sec["holdings"]],
+            "basis": [
+                _basis(f"{names} 합계가 보유주식 내 {sec['pct_of_equity']}%", "hold"),
+                # 업종 분류에는 출처가 없다 — 각주를 붙이지 않는다(위 SECTORS 주석).
+                _basis(f"이 종목들을 {sec['sector']}로 분류했을 때의 합계다", "none"),
+            ],
+            "keeps": "개별 종목 하나만 줄이는 것보다 넓게 움직이지만, 자산군 배분은 그대로다",
+        })
+        break  # 가장 큰 업종 하나만 — 여러 개면 선택지가 아니라 목록이 된다
+
+    # ③ 성향 대비 자산배분 — 저장된 mismatch 플래그가 있을 때만. 성향 판정을 새로 하지 않는다.
+    if any(f.get("key") == "mismatch" for f in (facts.get("flags") or [])):
+        alloc = " / ".join(f"{a['class']} {a['pct']}%" for a in (facts.get("alloc") or []))
+        options.append({
+            "kind": "allocation",
+            "label": "자산군 배분",
+            "targets": [],
+            "basis": [
+                _basis(
+                    next(f["text"] for f in facts["flags"] if f.get("key") == "mismatch"),
+                    "hold",
+                ),
+                _basis(f"현재 자산배분: {alloc}", "hold"),
+            ],
+            "keeps": "개별 종목 쏠림은 이 선택지만으로는 바뀌지 않는다",
+        })
+
+    # ④ 상위 편중 — ①이 안 걸렸는데 상위 3종목이 대부분일 때(집중이 한 종목이 아니라 넓게).
+    if not any(o["kind"] == "concentration" for o in options) and len(holdings) >= 3:
+        top3 = holdings[:3]
+        s = round(sum(h["pct_of_equity"] for h in top3), 1)
+        if s >= _OPT_TOP3_PCT:
+            options.append({
+                "kind": "diversify",
+                "label": "상위 종목 편중",
+                "targets": [{"code": h["code"], "name": h["name"]} for h in top3],
+                "basis": [
+                    _basis(
+                        "상위 3종목("
+                        + " · ".join(h["name"] for h in top3)
+                        + f") 합계가 보유주식 내 {s}%",
+                        "hold",
+                    )
+                ],
+                "keeps": "종목 수를 늘리는 방향이라 한 종목만 줄이는 것과 효과가 다르다",
+            })
+
+    return options
+
+
+def momentum_ranking(changes: dict[str, dict], codes: list[str]) -> list[dict]:
+    """최근 등락 순위(순수). `changes`는 `market.fetch_change_batch()`가 만든
+    코드 → {pct, days, from, to, close}. `codes` 안에서만 순위를 매긴다.
+
+    ⚠️ 등락률은 KRX 일별 종가에서 코드가 계산한 값이다 — 근거는 `[^krx]`이고 **지연시세**다.
+    ⚠️ 순위는 `codes` 집합 안에서의 상대 순위일 뿐 시장 전체 순위가 아니다. 그래서 `of`(모집단
+       크기)를 함께 돌려준다 — "3위"만 적으면 무엇 중 3위인지가 문장에서 사라진다.
+    """
+    rows = [
+        {
+            "code": c,
+            "name": CORP_NAMES.get(c, c),
+            "sector": SECTORS.get(c),
+            "pct": changes[c]["pct"],
+            "days": changes[c]["days"],
+            "as_of": changes[c]["to"],
+            "from": changes[c]["from"],
+        }
+        for c in codes
+        if c in changes
+    ]
+    rows.sort(key=lambda r: r["pct"], reverse=True)
+    for i, r in enumerate(rows, 1):
+        r["rank"] = i
+        r["of"] = len(rows)
+    return rows
+
+
+def momentum_view(facts: dict, changes: dict[str, dict], not_held_limit: int = 3) -> dict:
+    """제안에 쓸 등락 묶음(순수) — {"held": [...], "not_held": [...]}.
+
+    ⚠️ **보유 종목의 순위는 보유 종목 안에서만 매긴다.** 전체 50종목으로 순위를 뽑아 놓고
+       "보유 N종목 중 몇 위"라고 적으면 그 문장이 거짓이 된다(실측: 5종목 보유인데 "보유
+       50종목 중 14위"로 나갔다). 모집단이 다르면 순위도 다른 값이라 `momentum_ranking`을
+       **두 번** 부른다.
+    ⚠️ 미보유 종목을 따로 내는 건 "사라"는 뜻이 아니다 — 섞어 두면 답변이 미보유 종목을
+       보유인 것처럼 말한다. 보유 여부는 계좌데이터에서 오는 사실이라 코드가 붙여 보낸다.
+    ⚠️ 미보유는 상한을 둔다(기본 3). 47종목을 다 실으면 답변이 목록 낭독이 되고, 그 자체가
+       종목 추천처럼 읽힌다.
+    """
+    held_codes = [h["code"] for h in (facts.get("holdings") or []) if h.get("code")]
+    held = momentum_ranking(changes, held_codes)
+    universe = momentum_ranking(changes, list(CORP_NAMES))
+    held_set = set(held_codes)
+    not_held = [r for r in universe if r["code"] not in held_set][:not_held_limit]
+    return {"held": held, "not_held": not_held}
+
+
 def portfolio_source() -> dict:
     """포트폴리오 문장의 출처 메타. `[^hold]` 태그가 이걸로 해석된다.
 
@@ -332,6 +698,11 @@ def answer_input(question: str, routing: dict, data: dict) -> str:
     portfolio = data.get("portfolio")
     if portfolio:
         parts.append(_portfolio_block(portfolio))
+
+    # 제안형(portfolio_advice)에서만 채워진다. 조회형은 이 블록이 없으므로 모델이 선택지를
+    # 쓸 재료 자체가 없다 — 프롬프트 규칙만이 아니라 **입력으로도** 갈라 둔다.
+    if data.get("options") is not None or data.get("momentum"):
+        parts.append(_advice_block(data.get("options") or [], data.get("momentum") or {}))
 
     quote = data.get("quote")
     if quote:
@@ -363,8 +734,20 @@ def answer_input(question: str, routing: dict, data: dict) -> str:
     news = data.get("news") or []
     if news:
         lines = ["# 관련 뉴스 (각주 태그는 링크 전체를 그대로)"]
-        for item in news[:5]:
-            lines.append(f"- {item['title']}\n  링크: {item['link']}\n  발행: {item.get('pub_date', '')}")
+        # 제안형은 여러 종목의 뉴스를 함께 싣는다(`corp`가 붙어 온다). 한 종목만 묻는
+        # 조회형의 상한(5)을 그대로 쓰면 뒤쪽 종목 뉴스가 통째로 잘린다.
+        tagged = any(i.get("corp") for i in news)
+        for item in news[: (9 if tagged else 5)]:
+            corp = f"[{item['corp']}] " if item.get("corp") else ""
+            lines.append(
+                f"- {corp}{item['title']}\n  링크: {item['link']}\n  발행: {item.get('pub_date', '')}"
+            )
+        if tagged:
+            lines.append(
+                "⚠️ 대괄호는 그 기사가 **어느 종목을 조회해 나온 것인지**일 뿐이다. "
+                "기사 내용이 그 종목에 관한 것인지는 제목·본문으로 직접 확인하고, "
+                "관계없어 보이면 근거로 쓰지 마라."
+            )
         parts.append("\n".join(lines))
 
     if not (quote or fin or news or portfolio):
@@ -433,6 +816,66 @@ def _portfolio_block(p: dict) -> str:
     return "\n".join(lines)
 
 
+# 후보 근거의 출처 종류 → 각주 태그. `none`은 각주를 붙이지 않는다(출처가 없는 분류).
+_SRC_TAG = {"hold": "[^hold]", "krx": "[^krx]", "none": None}
+
+
+def _advice_block(options: list[dict], momentum: dict) -> str:
+    """조정 선택지 후보 + 최근 등락을 프롬프트 블록으로(순수).
+
+    **각 근거 줄에 붙일 각주 태그를 여기서 적어 준다.** 모델이 "이건 어디서 왔더라"를
+    다시 판단하면 계좌 수치에 `[^krx]`가 붙는 식으로 어긋난다 — `_a5_input`이 도구 결과를
+    구조화된 그대로 넘기는 것과 같은 이유다.
+
+    ⚠️ 업종 분류(src="none")에는 **각주를 붙이지 말라고 명시한다.** 이 파일이 정한 분류라
+       출처가 없다. 붙이면 계좌데이터가 그렇게 말한 것처럼 읽힌다.
+    ⚠️ 미보유 종목은 **따로 묶어서** 넘긴다. 한 줄에 섞으면 답변이 보유 종목처럼 말한다.
+    """
+    lines = ["# 조정 선택지 후보 (코드가 규칙으로 뽑은 것)"]
+    if options:
+        lines.append(
+            "아래는 이 포트폴리오에서 규칙이 짚어낸 것이다. **여기 있는 것만 선택지로 쓰고, "
+            "없는 선택지를 지어내지 마라.** 괄호 안이 그 문장에 붙일 각주 태그다."
+        )
+        for i, o in enumerate(options, 1):
+            targets = " · ".join(t["name"] for t in o["targets"]) or "(자산군 전체)"
+            lines.append(f"## 선택지 {i} — {o['label']} (대상: {targets})")
+            for b in o["basis"]:
+                tag = _SRC_TAG.get(b["src"])
+                suffix = f" (각주: {tag})" if tag else " (각주: **붙이지 마라** — 출처가 없는 분류다)"
+                lines.append(f"- {b['text']}{suffix}")
+            lines.append(f"- 이 선택지가 바꾸지 않는 것: {o['keeps']}")
+    else:
+        # 후보가 없다는 것도 답이다 — 없는데 지어내면 그게 제일 나쁘다.
+        lines.append(
+            "규칙이 짚어낸 후보가 **하나도 없다.** 선택지를 지어내지 말고, 지금 구성에서 "
+            "규칙에 걸린 항목이 없다는 사실을 그대로 말하라."
+        )
+
+    held = momentum.get("held") or []
+    not_held = momentum.get("not_held") or []
+    if held or not_held:
+        span = (held or not_held)[0]
+        lines.append(
+            f"# 최근 등락 (KRX 일별 종가 · **지연시세** · {span['from']} → {span['as_of']} 종가 비교)"
+        )
+        lines.append("각주 태그는 `[^krx]`. 등락률은 코드가 계산한 값이니 그대로 인용하라.")
+        if held:
+            lines.append("## 보유 종목")
+            for r in held:
+                lines.append(f"    · {r['name']} {r['pct']:+.1f}% ({r['rank']}/{r['of']}위)")
+        if not_held:
+            lines.append(
+                "## 이 포트폴리오가 **보유하지 않은** 종목 (사전 50종목 중)\n"
+                "    ⚠️ 언급하려면 **보유하지 않은 종목임을 그 문장에서 반드시 밝혀라.**\n"
+                "    ⚠️ 등락이 높다는 것은 사실일 뿐 매수 근거가 아니다 — 사라고 말하지 마라."
+            )
+            for r in not_held:
+                sec = f" · {r['sector']}" if r.get("sector") else ""
+                lines.append(f"    · {r['name']} {r['pct']:+.1f}%{sec}")
+    return "\n".join(lines)
+
+
 # 답변 작성기(2차 query)의 system_prompt. a5와 같은 각주 규칙을 쓰되 노트가 아니라
 # 질문에 대한 짧은 대화형 답변이다.
 ANSWER_SYSTEM_PROMPT = """너는 AI PB 어시스턴트의 '포트폴리오 질문' 답변자다. 묻는 사람은
@@ -441,6 +884,15 @@ PB이고, 고객 상담 중이거나 상담 직전이다 — 답은 PB가 읽고
 (시세·재무·공시·뉴스, 그리고 있을 때는 포트폴리오 보유·배분)만 근거로 질문에 답한다.
 
 **형식:** 2~4문장의 짧은 산문. 표·불릿·인사말 없이 질문에 곧장 답한다.
+
+**네 입력이나 네 작업을 설명하지 마라.** "…후보는 이 입력에 함께 오지 않았으므로", "여기서는
+…까지만 정리한다", "주어진 데이터 범위에서는" 같은 문장은 **PB에게 정보가 아니고 근거도
+없어** 화면에 출처 없는 문장으로 뜬다. 읽는 사람은 네가 무엇을 받았는지가 아니라 그의
+고객이 어떤 상태인지를 알고 싶다.
+- 답에 필요한 값이 없으면 **그 값이 없다는 사실만** 한 문장으로 말하라(예: "종목별 수익률은
+  이 데이터에 없다"). 그건 PB가 알아야 할 한계이므로 쓴다.
+- 반대로 네가 무엇을 하고 안 하는지, 무엇이 입력에 왔고 안 왔는지는 쓰지 마라. 그냥 답할 수
+  있는 데까지 답하고 멈춰라 — 멈췄다는 사실을 따로 선언할 필요가 없다.
 
 **출처 각주 규칙(반드시):** 사실을 서술하는 문장은 마침표 뒤에 `[^태그]`를 붙여라.
 - 시세 근거: `[^krx]`
@@ -451,14 +903,39 @@ PB이고, 고객 상담 중이거나 상담 직전이다 — 답은 PB가 읽고
 (추론·일반론)에는 각주를 붙이지 마라.
 
 **포트폴리오 질문에 답할 때:**
-- 비중·집중도·수익률은 입력에 **이미 계산돼 있다.** 그대로 인용하고 새 비율을 만들지 마라 —
-  두 수를 나눠 새 퍼센트를 쓰거나, 자산군을 임의로 합치지 마라.
+- 비중·집중도·수익률·등락률은 입력에 **이미 계산돼 있다.** 그대로 인용하고 새 비율을 만들지
+  마라 — 두 수를 나눠 새 퍼센트를 쓰거나, 자산군을 임의로 합치지 마라.
 - 위험 플래그가 입력에 있으면 그것을 근거로 삼아라. 없으면 "규칙에 걸린 항목은 없다"까지만
   말하고, 네가 새로 위험을 판정하지 마라 — 판정 규칙은 코드에 있다.
-- "이렇게 바꾸세요" 같은 **구체적 조정 지시를 쓰지 마라.** 무엇이 쏠려 있는지, 등록 성향과
-  무엇이 어긋나는지 같은 **사실과 관찰**에서 멈춘다. 조정은 PB가 고객과 정한다.
 - 보유·배분 수치는 공개데이터가 아니라 **내부 계좌데이터**다. 스냅샷 시점이 입력에 없으므로
   "현재 기준"이라고 단정하지 마라.
+
+**조정 선택지를 물었을 때 (입력에 "조정 선택지 후보" 블록이 있을 때만):**
+읽는 사람은 PB이고 최종 판단은 PB가 한다. 그래서 관찰에서 멈추지 말고 **선택지와 그
+근거까지** 쓴다. 다만 특정 안을 권하지는 않는다.
+- 입력의 후보 블록에 **있는 것만** 선택지로 써라. 없는 선택지를 지어내지 마라. 후보가
+  하나도 없으면 없다고 말하라 — 채우지 마라.
+- **머리말을 쓰지 마라.** "…까지만 정리한다", "…두 갈래를 적는다" 같은 네 행동 설명은 근거가
+  없어 출처를 붙일 수 없고 그대로 게이트에 걸린다. 첫 문장부터 관찰이나 선택지로 시작한다.
+- 각 선택지마다 **근거를 함께 적어라.** 근거 줄에 적힌 각주 태그를 그 문장에 그대로 붙인다.
+  "각주를 붙이지 마라"고 표시된 줄(업종 분류 등)에는 붙이지 않는다.
+- **계좌 수치만으로 끝내지 마라.** 입력에 그 종목의 뉴스가 있으면 최소 한 건은 근거로 함께
+  인용하고 링크 각주를 붙여라 — 왜 지금 이 종목이 이야깃거리인지는 비중만으로는 안 나온다.
+  단 기사 내용이 그 종목·그 선택지와 관계없으면 억지로 끌어오지 말고 없다고 하라.
+- 선택지가 **바꾸지 않는 것**도 함께 말하라(입력의 "이 선택지가 바꾸지 않는 것"). 한쪽 면만
+  적으면 권유가 된다. ⚠️ 이 문장에도 **각주를 붙여라** — "자산군 70%는 그대로 남는다"의 70%는
+  계좌데이터에서 온 수치다(실측: 여기서 각주가 빠져 게이트에 걸렸다).
+- **선택지를 세는 문장을 따로 쓰지 마라.** "갈래는 둘이다", "선택지는 두 가지다" 같은 문장은
+  근거가 없어 출처를 붙일 수 없다. 세지 말고 선택지 자체를 바로 적어라.
+- **"이것을 택하라"고 쓰지 마라.** 어느 선택지가 나은지 순위를 매기거나 "권장한다"고 쓰지
+  않는다. 무엇이 갈림길인지까지 쓰고, 고르는 일은 PB에게 넘긴다.
+- **목표 비중·조정 금액 같은 새 수치를 만들지 마라.** "42%를 25%로" 같은 문장은 그 25%가
+  입력에 없으므로 쓸 수 없다. 방향("줄이는 쪽")까지만 말한다.
+- 후보 선정 기준을 **"위험 플래그"라고 부르지 마라.** 위험 플래그는 입력에 따로 표시된
+  저장된 판정이고, 후보는 이야깃거리를 고르는 별개의 기준이다.
+- 보유하지 않은 종목을 언급할 때는 **보유하지 않았다는 사실을 그 문장에서 밝혀라.** 등락이
+  높다는 건 사실일 뿐 매수 근거가 아니다 — "사라"·"담을 만하다"고 쓰지 마라.
+- 판단 근거가 데이터에 없으면(자금 시점·목적·세금 등) **없다고 밝히고 거기서 멈춰라.**
 
 **금지:** "매수/매도 추천", "목표주가", "강력 매수", "지금 사세요" 같은 투자권유·광고성 표현.
 고객에게 말을 거는 문장("고객님께 …")이나 고객 회신문 형식도 쓰지 마라 — 고객에게 하는 말은

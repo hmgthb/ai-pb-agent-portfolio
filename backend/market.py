@@ -15,7 +15,7 @@
 """
 
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import requests
 from dotenv import load_dotenv
@@ -123,3 +123,114 @@ def fetch_market_snapshot() -> tuple[list[dict], str | None]:
     if indices:
         return indices, note
     return [], note or "지수를 가져오지 못했습니다."
+
+
+# ── 종목 시세 배치 조회 (제안 기능용, 2026-08-04) ────────────────────────────
+#
+# **왜 배치인가.** 제안 후보의 근거로 "최근 등락"을 붙이려면 50종목의 시세가 필요한데,
+# `mcp_servers/krx_server.py`의 `krx_quote`는 **종목 하나씩** 부른다(likeSrtnCd). 50번
+# 부르면 응답이 분 단위로 늘어난다.
+#
+# 같은 엔드포인트가 `basDt`(기준일자)만 주면 **그 날짜의 전 종목**을 돌려준다 — 실측
+# 2,872건(2026-08-04, basDt=20260731). 그래서 두 날짜를 각각 한 번씩(페이지 포함 몇 번)
+# 부르는 것으로 50종목 등락이 다 나온다.
+#
+# ⚠️ 이 모듈의 위쪽(지수)과 **서비스가 다르다** — 종목시세정보는 krx_server와 같은 서비스다.
+#    활용신청도 따로이므로 엔드포인트 상수를 공유하지 않는다.
+# ⚠️ 지연시세(일별 종가)다. 인용할 때 반드시 그 사실을 함께 밝힌다(compliance 게이트가 검사).
+STOCK_ENDPOINT = (
+    "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getStockPriceInfo"
+)
+
+# 등락 계산 구간. 영업일이 아니라 달력일이라 연휴가 끼면 실제 영업일 수는 줄어든다 —
+# 그래서 결과에 `days`(실제 영업일 간격이 아니라 **비교한 두 기준일**)를 함께 담는다.
+CHANGE_WINDOW_DAYS = 14
+# 기준일 후보를 며칠까지 뒤로 밀며 찾을지. 주말·연휴에 basDt가 비어 오는 걸 넘기기 위한 것.
+_BASDT_PROBE_DAYS = 10
+
+
+def _fetch_by_basdt(api_key: str, bas_dt: str) -> dict[str, dict]:
+    """기준일자 하루치 전 종목 → {종목코드: {close, name}}. 없으면 빈 dict."""
+    out: dict[str, dict] = {}
+    page = 1
+    while True:
+        resp = requests.get(
+            STOCK_ENDPOINT,
+            params={
+                "serviceKey": api_key,
+                "resultType": "json",
+                "numOfRows": 1000,
+                "pageNo": page,
+                "basDt": bas_dt,
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        body = resp.json()["response"]["body"]
+        rows = (body.get("items") or {}).get("item") or []
+        if isinstance(rows, dict):
+            rows = [rows]
+        for r in rows:
+            out[r["srtnCd"]] = {"close": float(r["clpr"]), "name": r["itmsNm"]}
+        if not rows or len(out) >= int(body.get("totalCount") or 0):
+            break
+        page += 1
+    return out
+
+
+def _latest_basdt(api_key: str, start) -> tuple[str, dict[str, dict]]:
+    """start에서 하루씩 뒤로 밀며 **데이터가 있는 기준일**을 찾는다.
+
+    주말·연휴에는 basDt가 비어서 오는데, 그걸 "시세 없음"으로 처리하면 월요일 아침마다
+    제안 근거가 통째로 사라진다. 며칠까지 뒤로 볼지는 `_BASDT_PROBE_DAYS`가 정한다.
+    """
+    for back in range(_BASDT_PROBE_DAYS):
+        d = (start - timedelta(days=back)).strftime("%Y%m%d")
+        rows = _fetch_by_basdt(api_key, d)
+        if rows:
+            return d, rows
+    raise MarketDataUnavailable(
+        f"최근 {_BASDT_PROBE_DAYS}일 안에 시세가 있는 기준일을 찾지 못했습니다."
+    )
+
+
+def fetch_change_batch(codes: list[str]) -> tuple[dict[str, dict], str | None]:
+    """(코드 → {pct, days, from, to, close}, 실패 사유). 두 기준일의 종가로 등락을 계산한다.
+
+    **등락률을 코드가 계산한다** — 모델에게 두 종가를 주고 나눗셈을 시키지 않는다
+    (`f1.portfolio_facts`와 같은 원칙). 반환값의 `pct`는 소수 첫째 자리에서 반올림된
+    완성된 수치이고, 모델은 그대로 인용만 한다.
+
+    실패해도 예외를 올리지 않고 (빈 dict, 사유)를 준다 — 시세가 없다고 제안 자체가
+    사라지면 안 되고, 없는 건 없다고 화면이 말해야 한다(`fetch_market_snapshot`과 같은 규약).
+    """
+    api_key = os.environ.get("KRX_API_KEY")
+    if not api_key:
+        return {}, "KRX_API_KEY가 설정되지 않았습니다."
+    try:
+        to_dt, to_rows = _latest_basdt(api_key, biz_today())
+        from_start = datetime.strptime(to_dt, "%Y%m%d").date() - timedelta(
+            days=CHANGE_WINDOW_DAYS
+        )
+        from_dt, from_rows = _latest_basdt(api_key, from_start)
+    except MarketDataUnavailable as e:
+        return {}, str(e)
+    except requests.RequestException as e:
+        return {}, f"KRX 종목시세 조회 실패: {type(e).__name__}"
+
+    out: dict[str, dict] = {}
+    for code in codes:
+        now, before = to_rows.get(code), from_rows.get(code)
+        # 한쪽만 있으면 등락을 만들 수 없다 — 지어내지 않고 그 종목만 뺀다.
+        if not now or not before or not before["close"]:
+            continue
+        out[code] = {
+            "pct": round((now["close"] - before["close"]) / before["close"] * 100, 1),
+            "close": now["close"],
+            "days": CHANGE_WINDOW_DAYS,
+            "from": from_dt,
+            "to": to_dt,
+        }
+    missing = [c for c in codes if c not in out]
+    note = f"{len(missing)}종목은 두 기준일 시세가 모두 있지 않아 제외했습니다." if missing else None
+    return out, note
