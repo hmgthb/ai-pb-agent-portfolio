@@ -34,15 +34,20 @@ export const metadata: Metadata = {
     "PB가 고객 상담 전에 공개 공시·뉴스·지연시세에서 출처 있는 사실을 확인하는 도구",
 };
 
-/* 테마 부트스트랩 — 처음 열면 **라이트**다. 저장된 값이 없을 때 무엇으로 그릴지는
-   CSS가 아니라 여기서 정한다: <html>에 data-theme="light"를 **서버가 이미 박아** 두고
-   (아래 참조), 다크를 고른 사용자만 첫 페인트 전에 이 스크립트가 되돌린다.
-   ⚠️ dashboard.css의 :root는 여전히 다크 토큰이다 — 토큰을 뒤집지 않고 "아무 값도 없을
-      때 무엇이 되나"만 바꾼 것이다. 그래서 속성은 두 값 모두에서 **항상 붙어 있다.**
+/* 테마 부트스트랩 — 처음 열면 **다크**다(2026-08-04, 기기와 무관하게 같은 기본값).
+   저장된 값이 없을 때 무엇으로 그릴지는 CSS가 아니라 여기서 정한다: <html>에
+   data-theme="dark"를 **서버가 이미 박아** 두고(아래 참조), 라이트를 고른 사용자만
+   첫 페인트 전에 이 스크립트가 되돌린다.
+   ⚠️ 기본값이 세 곳에 흩어져 있다 — 여기(속성) · `page.tsx`의 `serverTheme`/`readTheme` ·
+      `dashboard.css` 주석. 하나만 고치면 토글 라벨이 실제 화면과 어긋난다.
+   ⚠️ OS 설정(prefers-color-scheme)은 보지 않는다. 폰이 라이트든 노트북이 다크든 처음 화면은
+      같아야 해서다 — 데모에서 기기마다 다른 색이 나오면 그 자체가 설명거리가 된다.
+   ⚠️ 이미 라이트로 **토글해 둔 기기**는 그 선택이 남는다(`localStorage['pb-theme']`).
+      기본값은 "고른 적 없을 때"의 값이지 사용자의 선택을 덮는 값이 아니다.
    React 상태로 하면 마운트 뒤에야 바뀌어 화면이 한 번 번쩍인다 — 그래서 body 첫 자식의
    동기 스크립트다(HTML 파싱 중 그 자리에서 실행된다).
    localStorage가 막힌 환경(사생활 보호 모드)에서도 죽지 않게 try로 감싼다. */
-const THEME_BOOTSTRAP = `try{if(localStorage.getItem('pb-theme')==='dark'){document.documentElement.dataset.theme='dark'}}catch(e){}`;
+const THEME_BOOTSTRAP = `try{if(localStorage.getItem('pb-theme')==='light'){document.documentElement.dataset.theme='light'}}catch(e){}`;
 
 export default function RootLayout({
   children,
@@ -57,9 +62,10 @@ export default function RootLayout({
           하이드레이션 오류는 그대로 보고된다. 아래로 내리지 말 것. */
     <html
       lang="ko"
-      /* 기본값이 여기 있다 — CSS :root(다크)를 덮어 첫 화면을 라이트로 만든다.
+      /* 기본값이 여기 있다 — CSS :root도 다크 토큰이라 값이 서로 같지만, 속성을 **항상**
+         붙여 두는 건 그대로다(라이트 사용자를 스크립트가 되돌릴 자리가 필요하다).
          page.tsx의 serverTheme()과 반드시 같은 값이어야 토글 라벨이 안 어긋난다. */
-      data-theme="light"
+      data-theme="dark"
       className={`${nova.variable} ${plex.variable}`}
       suppressHydrationWarning
     >

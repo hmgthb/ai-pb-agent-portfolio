@@ -124,11 +124,12 @@ const ROLES: Record<
    PB가 매일 보는 화면이 할 일이 아니다. F1 입구는 우하단 고정 버튼으로 옮겼다. */
 
 /* ── 라이트/다크 전환 — 바이낸스 top-nav 오른쪽 묶음에 있는 그 토글 ──────────────
-   처음 열면 **라이트**다(layout.tsx가 <html data-theme="light">를 서버에서 박는다).
-   ⚠️ CSS 쪽 기본은 여전히 다크다 — dashboard.css의 :root가 다크 토큰이고 라이트는
-      [data-theme='light'] 블록이다. 바꾼 건 토큰이 아니라 **속성이 없을 때가 아니라
-      항상 붙어 있게 한 것**이라, 두 파일을 같이 봐야 기본값이 읽힌다.
-   OS 설정(prefers-color-scheme)은 따라가지 않는다 — 고른 값만 반영한다.
+   처음 열면 **다크**다(2026-08-04, layout.tsx가 <html data-theme="dark">를 서버에서 박는다).
+   ⚠️ CSS 쪽 기본도 다크다 — dashboard.css의 :root가 다크 토큰이고 라이트는
+      [data-theme='light'] 블록이다. 속성은 두 값 모두에서 **항상 붙어 있다**(라이트를 고른
+      사용자를 부트스트랩이 되돌릴 자리).
+   OS 설정(prefers-color-scheme)은 따라가지 않는다 — 폰이든 노트북이든 처음 화면이 같아야
+   하고, 그 뒤로는 고른 값만 반영한다.
 
    테마의 **정본은 React 상태가 아니라 DOM 속성**이다: 첫 페인트 전에 layout.tsx의
    부트스트랩 스크립트가 이미 값을 써 놓기 때문이다(그래야 라이트 사용자가 검은 화면을
@@ -139,10 +140,12 @@ const ROLES: Record<
 type Theme = 'dark' | 'light';
 const themeListeners = new Set<() => void>();
 
+/** 라이트는 **명시적으로 골랐을 때만**이다 — 속성이 없거나 알 수 없는 값이면 다크로 읽는다
+ *  (기본값이 다크라 "값을 모르겠으면 기본값"이 곧 다크다). */
 const readTheme = (): Theme =>
-  document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
 /** 서버 렌더·하이드레이션 시점의 값. layout.tsx가 <html>에 박는 값과 같아야 화면이 안 튄다. */
-const serverTheme = (): Theme => 'light';
+const serverTheme = (): Theme => 'dark';
 
 function subscribeTheme(cb: () => void) {
   themeListeners.add(cb);
