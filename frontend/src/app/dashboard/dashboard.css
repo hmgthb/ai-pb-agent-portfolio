@@ -1327,48 +1327,43 @@ th.rownum {
   border-left: 2px solid var(--chip-chat);
   border-radius: 0 var(--r-md) var(--r-md) 0;
   background: var(--elevated);
+  /* 경과 시간이 흘러 나오지 않게 담아 둔다 — 원문이 비면(빈 문자열) 아래 칩 줄로
+     흘러내린다. `overflow: hidden`이 아니라 `flow-root`인 이유는 자르지 않고
+     담기만 하기 위해서다. */
+  display: flow-root;
 }
+/* 경과 시간은 **카드 오른쪽 위 모서리**로 띄운다(2026-08-04) — 원문 위에 한 줄을
+   따로 쓰던 것을 흘림(float)으로 바꿨다. 읽어야 할 것은 원문이지 시간이 아니므로
+   원문이 카드 첫 줄부터 시작하고, 시간은 그 줄 오른쪽 빈자리에 얹힌다.
+   ⚠️ `position: absolute`로 바꾸지 말 것 — 그러면 원문 첫 줄이 시간 밑으로 파고들어
+      겹친다. 흘림이라야 첫 줄만 알아서 짧아지고 둘째 줄부터 폭을 되찾는다.
+   `line-height`는 원문 줄 높이(12.5px × 1.5)에 맞춰 첫 줄 가운데에 서게 한다 —
+   11px 글자를 그대로 두면 첫 줄보다 살짝 위로 뜬다. */
 .cust-chat .ask-head {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 8px;
+  float: right;
+  margin-left: 10px;
+  line-height: 18.75px;
 }
-.cust-chat .ask-topic {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--ink-2);
-}
+/* `.ask-topic`(문의 주제)은 뺐다 — 원문 위에 요약 제목이 서면 그쪽을 먼저 읽는다. */
 .cust-chat .ask-meta {
   font-size: 11px;
   color: var(--muted);
 }
-/* 원문 그대로다 — 줄바꿈을 살리되 긴 낱말이 칸을 밀지 않게 끊는다. */
+/* 원문 그대로다 — 줄바꿈을 살리되 긴 낱말이 칸을 밀지 않게 끊는다.
+   위 여백은 0이다 — 경과 시간이 흘림으로 빠지면서 원문이 카드 첫 줄이 됐고, 여백을
+   남기면 원문만 내려가 오른쪽 위 시간과 첫 줄이 어긋난다. */
 .cust-chat .ask-body {
-  margin: 3px 0 0;
+  margin: 0;
   font-size: 12.5px;
   line-height: 1.5;
   color: var(--ink-2);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-/* 근거 줄 — 고객 카드의 머리말과 고객 문의 모달의 `.blabel` 둘 다 쓴다(같은 채팅이
-   두 자리에 있는 것이라 같은 말을 같은 모양으로 적는다). 그래서 스코프를 벗겨 뒀다. */
-.cchat-src {
-  font-size: 11.5px;
-  color: var(--muted);
-}
-/* 모달에서는 굵은 라벨(.blabel) 안에 들어간다. 고객 카드처럼 같은 줄에 붙여 봤더니
-   글자 크기가 같아(11px) 굵기 차이만으로는 안 갈렸다 — `포트폴리오 질문 보유·배분 ·
-   공시 …`가 한 문장으로 읽혔다. 카드에서는 제목이 15px이라 크기가 먼저 둘을 가른다.
-   그래서 여기서는 줄을 나눈다: 제목 한 줄, 근거 한 줄. */
-.blabel .cchat-src {
-  display: block;
-  margin-top: 3px;
-  font-size: 11px;
-  font-weight: 400;
-  letter-spacing: 0;
-}
+/* `.cchat-src`(근거 줄)는 뺐다 — 고객 카드와 문의 모달 양쪽에서 같이 지웠다.
+   되살린다면 두 자리를 함께 되돌릴 것(같은 채팅이 두 화면에 있는 것이라 글자와 모양이
+   같아야 한다). 모달 쪽은 굵은 라벨 안에 들어가 크기가 같아(11px) 한 문장으로 읽혔던
+   전례가 있으니, 그때는 줄을 나누는 규칙(`display:block`)도 같이 되살릴 것. */
 /* 칩 줄. **종목 칩과 분석 칩을 한 상자에 담지 않는다**(2026-07-29) — 한 상자면 종목이
    많은 고객에서 `집중도`가 종목 사이에 끼어 줄바꿈되고, 두 종류가 섞여 보인다.
    `<div>` 둘로 나눠 각자 줄을 쓰게 하고, 인접한 두 줄만 여백을 한 번으로 합친다. */
