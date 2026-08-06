@@ -78,68 +78,92 @@ function EgressTwin({ p }: { p: EgressPortfolio }) {
           </div>
         </div>
       </div>
-      <div className="donut-wrap">
-        <Donut alloc={alloc} bind={NO_TIP} size={96} />
-        <div className="legend">
-          {allocEntries(alloc).map(([k, v], i) => (
-            <div className="li" key={k}>
-              <span
-                className="sw"
-                style={{ background: ALLOC_COLORS[i % ALLOC_COLORS.length] }}
-              />
-              {k}
-              <span className="pct">{v}%</span>
-            </div>
-          ))}
+      {/* 도넛과 보유 표는 **자리가 있으면 나란히** 선다(2026-08-06). 위아래로만 쌓던 때는
+          상자를 펼치는 순간 대화가 화면 밖으로 밀렸고, 배분(도넛)과 종목(표)은 같이 읽는
+          값이라 눈이 위아래로 왕복했다. 좁으면 그대로 다시 쌓인다 — 판정은 `@container`가
+          이 상자의 실폭으로 한다(고객 카드 안이냐 크게 보기냐를 CSS가 알 필요가 없다).
+          ⚠️ 왼쪽 상세(`.detail`)에는 없는 껍데기다. 형식을 맞추는 규칙에서 **의도적으로
+             벗어난 곳은 여기 하나**이고, 이유는 폭이다: 왼쪽 상세는 3열 중 한 칸이라
+             나란히 세울 폭이 아예 없다. 칸 내용·클래스는 그대로 두 화면이 같다. */}
+      <div className="egress-cols">
+        <div className="donut-wrap">
+          <Donut alloc={alloc} bind={NO_TIP} size={96} />
+          <div className="legend">
+            {allocEntries(alloc).map(([k, v], i) => (
+              <div className="li" key={k}>
+                <span
+                  className="sw"
+                  style={{ background: ALLOC_COLORS[i % ALLOC_COLORS.length] }}
+                />
+                {k}
+                <span className="pct">{v}%</span>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
-      <table className="holdings" aria-label="외부 모델로 나가는 보유 종목">
-        <thead>
-          <tr>
-            <th>종목</th>
-            <th className="num">평가금액</th>
-            <th className="num">주식 내</th>
-            {/* 왼쪽 상세에 없는 열이다 — 잔고 대비 비중은 실금액 대신 나가는 값이라
-                여기서만 보인다(모델이 "계좌 전체에서 얼마나"를 답할 근거). */}
-            <th className="num">잔고 대비</th>
-          </tr>
-        </thead>
-        <tbody>
-          {p.holdings.map((h) => (
-            <tr key={h.code}>
-              <td>
-                <strong>{h.name}</strong>{' '}
-                <span style={{ color: 'var(--muted)' }}>{h.code}</span>
-              </td>
-              {/* 열을 지우지 않고 **가려진 채로 남긴다.** 열이 통째로 없으면 왼쪽 상세와
-                  줄이 어긋나 대조가 안 되고, 무엇이 빠졌는지도 "없는 것"으로만 남는다. */}
-              <td className="num egress-mask" title="외부 모델로 나가지 않습니다">
-                가림
-              </td>
-              <td className="num pct-eq">
-                {h.pct_of_equity == null ? '—' : `${h.pct_of_equity}%`}
-              </td>
-              <td className="num pct-eq">
-                {h.pct_of_balance == null ? '—' : `${h.pct_of_balance}%`}
-              </td>
-            </tr>
-          ))}
-          {!p.holdings.length && (
+        <table className="holdings" aria-label="외부 모델로 나가는 보유 종목">
+          <thead>
             <tr>
-              <td colSpan={4} className="egress-gone">
-                보유 종목 없음
-              </td>
+              <th>종목</th>
+              <th className="num">평가금액</th>
+              <th className="num">주식 내</th>
+              {/* 왼쪽 상세에 없는 열이다 — 잔고 대비 비중은 실금액 대신 나가는 값이라
+                여기서만 보인다(모델이 "계좌 전체에서 얼마나"를 답할 근거). */}
+              <th className="num">잔고 대비</th>
             </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {p.holdings.map((h) => (
+              <tr key={h.code}>
+                <td>
+                  <strong>{h.name}</strong>{' '}
+                  <span style={{ color: 'var(--muted)' }}>{h.code}</span>
+                </td>
+                {/* 열을 지우지 않고 **가려진 채로 남긴다.** 열이 통째로 없으면 왼쪽 상세와
+                  줄이 어긋나 대조가 안 되고, 무엇이 빠졌는지도 "없는 것"으로만 남는다. */}
+                <td
+                  className="num egress-mask"
+                  title="외부 모델로 나가지 않습니다"
+                >
+                  가림
+                </td>
+                <td className="num pct-eq">
+                  {h.pct_of_equity == null ? '—' : `${h.pct_of_equity}%`}
+                </td>
+                <td className="num pct-eq">
+                  {h.pct_of_balance == null ? '—' : `${h.pct_of_balance}%`}
+                </td>
+              </tr>
+            ))}
+            {!p.holdings.length && (
+              <tr>
+                <td colSpan={4} className="egress-gone">
+                  보유 종목 없음
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
 
-export function RedactionDetails({ r }: { r: ChatRedaction }) {
+export function RedactionDetails({
+  r,
+  collapseOn,
+}: {
+  r: ChatRedaction;
+  /** 값이 바뀌면 상자를 **접힌 상태로 되돌린다**(2026-08-06). `<details>`는 열림 여부를
+   *  DOM이 들고 있어서, 열어 둔 채로 보는 방식을 바꾸면(고객 카드의 `⤢ 크게 보기`) 큰
+   *  화면이 이 표부터 펼친 채로 열린다 — 크게 보려던 것은 대화지 이 상자가 아니다.
+   *  ⚠️ 초기화는 `key`로 한다(상자를 새로 세운다). 열림을 React state로 들어 effect에서
+   *     되돌리는 쪽은 렌더가 두 번 도는 길이라 lint가 막는다(`react-hooks/set-state-in-effect`).
+   *     안 넘기면 종전대로 열고 닫은 상태가 유지된다. */
+  collapseOn?: string;
+}) {
   return (
-    <details className="redact">
+    <details key={collapseOn ?? ''} className="redact">
       <summary>AI가 보는 정보</summary>
       {/* **상자 안은 표 하나뿐이다**(2026-07-29). 설명문도 원문 JSON도 차례로 뺐다 —
           읽는 사람은 PB이지 개발자가 아니고, 표가 이미 같은 값을 같은 자리에서 말한다.

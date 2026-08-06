@@ -48,7 +48,7 @@ import {
   Tip,
   useTip,
 } from './charts';
-import F1Chat, { type ChatKeep, type ChatPrefill } from './F1Chat';
+import F1Chat, { prepKey, type ChatKeep, type ChatPrefill } from './F1Chat';
 // 고객 카드는 준비 줄만 보유 표 안에서 쓴다 — `PrepMemo`(이름 줄까지 그리는 쪽)는
 // 이제 고객 문의 모달 전용이다(ReviewModal).
 import ResearchCard from './ResearchCard';
@@ -223,7 +223,8 @@ type Data = {
 function pickNotes(live: NoteDetail[]) {
   const notes: Record<string, NoteDetail> = {};
   for (const d of live) {
-    if (d.status === 'published' && !notes[d.stock_code]) notes[d.stock_code] = d;
+    if (d.status === 'published' && !notes[d.stock_code])
+      notes[d.stock_code] = d;
   }
   return notes;
 }
@@ -492,7 +493,9 @@ export default function DashboardPage() {
           api<NoteDetail>(`/api/notes/${n.id}`).catch(() => null),
         ),
       );
-      const live = details.filter((d): d is NoteDetail => !!d && d.status !== 'rejected');
+      const live = details.filter(
+        (d): d is NoteDetail => !!d && d.status !== 'rejected',
+      );
       const notesById: Record<number, NoteDetail> = {};
       details.forEach((d) => {
         if (d) notesById[d.id] = d;
@@ -674,43 +677,79 @@ export default function DashboardPage() {
         훑는 동안 담아 둔 것이 사라지면 담는 일 자체가 손해가 된다. */
   const [prep, setPrep] = useState<Record<number, PrepItem[]>>({});
   const [prepMemo, setPrepMemo] = useState('');
+  /** 메모 입력창을 폈나. **기본은 접힘**이다 — 이 상자에서 주로 하는 일은 담은 것을 훑고
+   *  빼는 것이고 손으로 쓰는 건 가끔이라, 늘 펴 두면 목록이 볼 수 있는 높이만 깎인다. */
+  const [memoOpen, setMemoOpen] = useState(false);
+  /** 담은 목록을 폈나. **기본은 접힘**이다 — 이 상자는 채팅 아래에 붙어 있어서, 펼쳐 두면
+   *  담을수록 대화가 위로 밀린다. 담겼다는 사실은 제목 옆 개수와 문장 왼쪽 옐로 바가
+   *  이미 말하므로, 목록은 확인하고 싶을 때 여는 것으로 둔다. */
+  const [listOpen, setListOpen] = useState(false);
   const [prepBusy, setPrepBusy] = useState(false);
   const [prepError, setPrepError] = useState('');
+  /* 담기는 **토글**이다(2026-08-06). 버튼이 담긴 뒤 `✓ 담김`으로 서서 상태를 말하므로,
+     다시 누르면 빠지는 것이 그 표시의 짝이다(안 그러면 같은 문장이 두 번 담긴다).
+     ⚠️ PB가 손으로 쓴 줄(memo)은 예외로 그냥 쌓는다 — 버튼이 아니라 입력창에서 오고,
+        같은 문장을 두 번 적은 것을 실수라고 단정할 근거가 없다. */
   const pick = useCallback((cid: number, item: PrepItem) => {
     setPrepError('');
-    setPrep((m) => ({ ...m, [cid]: [...(m[cid] ?? []), item] }));
+    setPrep((m) => {
+      const cur = m[cid] ?? [];
+      const k = prepKey(item);
+      const at =
+        item.kind === 'memo' ? -1 : cur.findIndex((x) => prepKey(x) === k);
+      return {
+        ...m,
+        [cid]: at >= 0 ? cur.filter((_, j) => j !== at) : [...cur, item],
+      };
+    });
   }, []);
   const unpick = useCallback((cid: number, i: number) => {
     setPrep((m) => ({ ...m, [cid]: (m[cid] ?? []).filter((_, j) => j !== i) }));
   }, []);
+  /* 담은 줄 고치기(2026-08-06) — **고친 줄은 PB 메모가 된다.**
+     AI 문장을 고쳐 놓고 `sentence`로 남기면 문서의 `AI 분석` 구역에 사람이 쓴 말이 앉고,
+     그 문장에 붙어 있던 각주가 **AI가 쓰지 않은 문장을 뒷받침하는 것처럼** 인쇄된다
+     (가드레일 3·4). 손을 댄 순간 저자가 바뀐 것이므로 종류도 같이 바꾼다 — 화면 배지가
+     `AI`에서 `PB`로 뒤집혀 그 사실을 그 자리에서 말한다.
+     ⚠️ 선택지(`option`)에는 고치기를 내지 않는다 — 이름만 바꿔도 근거·`바꾸지 않는 것`
+        줄들이 그대로 남아 문서가 앞뒤로 다른 말을 한다. 마음에 안 들면 빼는 것이 맞다. */
+  const editPick = useCallback((cid: number, i: number, text: string) => {
+    setPrep((m) => ({
+      ...m,
+      [cid]: (m[cid] ?? []).map((it, j) =>
+        j === i ? { kind: 'memo' as const, text } : it,
+      ),
+    }));
+  }, []);
+  /** 지금 고치는 중인 줄. 고객이 바뀌면 index가 다른 사람의 줄을 가리키므로 **고객 id까지**
+   *  들고 다닌다(`cid`가 다르면 편집 상자가 안 열린다). */
+  const [editAt, setEditAt] = useState<{ cid: number; i: number } | null>(null);
+  const [editText, setEditText] = useState('');
   /** 담은 것을 PDF로. **POST라 링크로 못 연다** — 받은 바이트를 blob으로 열어 새 탭에
    *  띄운다(서버가 `inline`으로 준다). 게이트에 걸리면 그 사유를 그대로 보여준다. */
-  const prepPdf = useCallback(
-    async (cid: number, items: PrepItem[]) => {
-      setPrepBusy(true);
-      setPrepError('');
-      try {
-        const r = await fetch(prepNotePdfUrl(cid, MY_PB), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items }),
-        });
-        if (!r.ok) {
-          setPrepError(errorMessage(await r.json().catch(() => null)));
-          return;
-        }
-        const url = URL.createObjectURL(await r.blob());
-        window.open(url, '_blank', 'noopener');
-        // 새 탭이 읽어 간 뒤에 놓는다 — 바로 revoke하면 빈 탭이 열린다.
-        setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      } catch (e) {
-        setPrepError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setPrepBusy(false);
+  const prepPdf = useCallback(async (cid: number, items: PrepItem[]) => {
+    setPrepBusy(true);
+    setPrepError('');
+    try {
+      const r = await fetch(prepNotePdfUrl(cid, MY_PB), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items }),
+      });
+      if (!r.ok) {
+        setPrepError(errorMessage(await r.json().catch(() => null)));
+        return;
       }
-    },
-    [],
-  );
+      const url = URL.createObjectURL(await r.blob());
+      window.open(url, '_blank', 'noopener');
+      // 새 탭이 읽어 간 뒤에 놓는다 — 바로 revoke하면 빈 탭이 열린다.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      setPrepError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPrepBusy(false);
+    }
+  }, []);
   useEffect(() => {
     if (!chatBig) return;
     const onKey = (e: KeyboardEvent) => {
@@ -854,7 +893,9 @@ export default function DashboardPage() {
    *  `c.flag`는 서버가 규칙(순수 코드)으로 매긴 값이고 여기서는 그 값으로 고르기만 한다. */
   const flagRows = useMemo(
     () =>
-      visibleCustomers.map((c, i) => ({ c, no: i + 1 })).filter(({ c }) => c.flag),
+      visibleCustomers
+        .map((c, i) => ({ c, no: i + 1 }))
+        .filter(({ c }) => c.flag),
     [visibleCustomers],
   );
 
@@ -888,6 +929,14 @@ export default function DashboardPage() {
       visibleCustomers[0] ??
       null,
     [visibleCustomers, selectedId],
+  );
+
+  /* 이 고객에 대해 **이미 담은 것**. 답변 문장·선택지의 `담기` 버튼이 이걸 보고 `✓ 담김`으로
+     선다. 메모 상자가 원본이고 이건 파생값이라, ×로 뺀 것이 버튼에도 그 프레임에 반영된다 —
+     F1Chat이 따로 들고 있으면 둘이 갈려 버튼만 담긴 척 남는다. */
+  const pickedKeys = useMemo(
+    () => new Set((selected ? (prep[selected.id] ?? []) : []).map(prepKey)),
+    [prep, selected],
   );
 
   /* 고른 고객에 대해 물으면 **무엇이 외부 모델로 나가는가** — 질문 전에 미리 받아 둔다.
@@ -1134,7 +1183,8 @@ export default function DashboardPage() {
         })}
         {!publishedNotes.length && (
           <div className="hint" style={{ padding: '10px 4px' }}>
-            아직 발행된 노트가 없습니다. 검토·심의를 거쳐 발행되면 여기 쌓입니다.
+            아직 발행된 노트가 없습니다. 검토·심의를 거쳐 발행되면 여기
+            쌓입니다.
           </div>
         )}
       </div>
@@ -1502,7 +1552,9 @@ export default function DashboardPage() {
                         </div>
                         {q ? (
                           <div className="bquote">
-                            <strong>{Number(q.close).toLocaleString()}원</strong>
+                            <strong>
+                              {Number(q.close).toLocaleString()}원
+                            </strong>
                             <span className={`delta ${down ? 'down' : 'up'}`}>
                               {down ? '▼' : '▲'}
                               {fmtPct(q.change_pct)}%
@@ -1577,7 +1629,10 @@ export default function DashboardPage() {
                               </button>
                               {insiderOpen[it.stock_code] &&
                                 insiderRows.map((d) => (
-                                  <div className="bline insider" key={d.viewer_url}>
+                                  <div
+                                    className="bline insider"
+                                    key={d.viewer_url}
+                                  >
                                     <span style={{ minWidth: 0 }}>
                                       <a
                                         href={d.viewer_url || '#'}
@@ -1775,7 +1830,9 @@ export default function DashboardPage() {
                              (선은 보이지 않으므로 목록이 왜 다시 시작하는지 알 길이 없다). */
                           <tr className="tsep">
                             <td colSpan={4}>
-                              <span className="sr-only">여기부터 전체 고객</span>
+                              <span className="sr-only">
+                                여기부터 전체 고객
+                              </span>
                             </td>
                           </tr>
                         )}
@@ -1900,7 +1957,10 @@ export default function DashboardPage() {
                                       className="hrow-toggle"
                                       title={`${h.name} 종목 노트 PDF 열기 (발행분)`}
                                       onClick={() =>
-                                        setModal({ kind: 'notepdf', id: note.id })
+                                        setModal({
+                                          kind: 'notepdf',
+                                          id: note.id,
+                                        })
                                       }
                                     >
                                       <strong>{h.name}</strong>{' '}
@@ -1980,8 +2040,28 @@ export default function DashboardPage() {
                           `F1Chat`이 그린다. 규정 항목은 그쪽이지 이 줄이 아니었다.
                           ⚠️ 되살린다면 `ReviewModal`의 같은 줄도 함께 — 두 화면은 글자까지
                              같아야 한다(아래 문의 모달 주석). */}
+                      {/* 크게 보기 — **제목 줄 맨 오른쪽**(2026-08-06). 한동안 대화 로그
+                          오른쪽 위 모서리에 겹쳐 뒀는데(2026-08-03), 로그 상자 안에 조작이
+                          떠 있으면 대화의 일부처럼 보이고 첫 답변이 오면 그 위에 겹친다.
+                          이건 **이 칸 전체를 보는 방식**을 바꾸는 조작이라 칸의 제목 줄이
+                          제자리다 — `↻ 새 대화`·`×`가 모달 머리말에 서는 것과 같은 규칙. */}
                       <div className="cchat-head">
                         <strong>포트폴리오 질문</strong>
+                        <button
+                          type="button"
+                          className="cchat-zoom"
+                          aria-label={
+                            chatBig ? '채팅 창 줄이기' : '채팅 창 크게 보기'
+                          }
+                          title={
+                            chatBig
+                              ? '원래 크기로 (Esc)'
+                              : '크게 보기 — 대시보드 위에 띄웁니다'
+                          }
+                          onClick={() => setChatBig((v) => !v)}
+                        >
+                          <span aria-hidden="true">{chatBig ? '⤢' : '⤢'}</span>
+                        </button>
                       </div>
                       {/* 이 고객이 남긴 미처리 문의. 질문 칩보다 **위**에 둔다 — 무엇을
                           물어볼지 고르기 전에 "고객이 이미 무엇을 물었는지"가 먼저다.
@@ -2051,29 +2131,14 @@ export default function DashboardPage() {
                            화면이라 "물어보면 뭐가 나가지?"가 질문보다 먼저 오고,
                            고객 문의 모달은 이미 길다(거기서는 물어본 뒤 배지로 본다). */
                         preview={egress}
+                        /* 보통/크게 — 바뀌면 미리보기 상자가 **접힌 채로** 다시 선다.
+                           같은 DOM에 클래스만 바꾸는 구조라(위 주석) 열어 둔 `<details>`가
+                           그대로 따라 올라오는데, 크게 보려던 것은 대화지 이 표가 아니다. */
+                        viewMode={chatBig ? 'big' : 'inline'}
                         /* 담기 — AI가 낸 것 중 무엇을 상담에 가져갈지 PB가 고른다.
                            전역 F1(FAB)에는 안 넘긴다: 거기엔 고객이 없어 담을 메모도 없다. */
                         onPick={(item) => pick(selected.id, item)}
-                        /* 크게 보기 — **대화창 오른쪽 위 모서리**에 겹친다(2026-08-03).
-                           제목 줄에 두었더니 칩·미리보기를 건너 한참 위였고, 정작 좁아서
-                           답답한 것은 로그 상자다: 조작은 그 상자에 붙어 있어야 한다. */
-                        corner={
-                          <button
-                            type="button"
-                            className="cchat-zoom"
-                            aria-label={
-                              chatBig ? '채팅 창 줄이기' : '채팅 창 크게 보기'
-                            }
-                            title={
-                              chatBig
-                                ? '원래 크기로 (Esc)'
-                                : '크게 보기 — 대시보드 위에 띄웁니다'
-                            }
-                            onClick={() => setChatBig((v) => !v)}
-                          >
-                            <span aria-hidden="true">{chatBig ? '⤡' : '⤢'}</span>
-                          </button>
-                        }
+                        picked={pickedKeys}
                       />
                       {/* 상담 준비 메모 — **담은 것이 있을 때만 선다.** 빈 상자를 미리 세우면
                           "여기 뭔가 채워야 한다"가 되고, 이 기능의 요점은 채우기가 아니라
@@ -2082,70 +2147,182 @@ export default function DashboardPage() {
                       {(prep[selected.id] ?? []).length > 0 && (
                         <div className="prepbox">
                           <div className="prepbox-head">
-                            <strong>상담 준비 메모</strong>
-                            <span className="hint">
-                              {prep[selected.id].length}개 담김 · 저장되지 않습니다
-                            </span>
+                            {/* 제목이 곧 접기 버튼이다 — 이 화면의 접이식 어휘를 그대로
+                                쓴다(`AI가 보는 정보`·`AI가 오늘 한 일`: 테두리·면 없이
+                                **꺾쇠 + 굵은 한 줄**). 개수를 버튼 안에 두는 이유: 접었을 때
+                                남는 유일한 단서가 그 숫자다.
+                                ⚠️ `<details>`가 아닌 건 머리 줄에 `＋ 메모`가 같이 서기
+                                   때문이다(summary 안의 버튼은 누를 때마다 상자가 여닫힌다). */}
+                            <button
+                              className="prep-toggle"
+                              aria-expanded={listOpen}
+                              title={listOpen ? '목록 접기' : '목록 펼치기'}
+                              onClick={() => setListOpen((v) => !v)}
+                            >
+                              <strong>상담 준비 메모</strong>
+                              <span className="hint">
+                                {prep[selected.id].length}개
+                              </span>
+                            </button>
+                            {/* 메모 입력창은 **부를 때만 선다**(2026-08-06). 이 상자에서
+                                PB가 주로 하는 일은 담은 것을 훑고 빼는 것이고, 손으로 쓰는
+                                건 가끔이다 — 늘 펼쳐 두면 목록이 볼 수 있는 높이를 입력창이
+                                상시로 깎는다(목록은 140px에서 이미 안쪽 스크롤이다).
+                                자리는 제목 줄이다: 상자에 무엇을 더하는 조작이라 상자 머리에
+                                붙는 것이 맞고, 아래에 두면 닫혔을 때 빈 줄만 남는다. */}
+                            <button
+                              className="btn-quiet prep-addbtn"
+                              aria-expanded={memoOpen}
+                              title={
+                                memoOpen
+                                  ? '메모 입력 닫기'
+                                  : '내가 쓴 줄을 메모에 더합니다'
+                              }
+                              onClick={() => {
+                                setMemoOpen((v) => !v);
+                                if (memoOpen) setPrepMemo('');
+                              }}
+                            >
+                              {memoOpen ? '− 메모' : '＋ 메모'}
+                            </button>
                           </div>
-                          <div className="prep-items">
-                            {prep[selected.id].map((it, i) => (
-                              <div className="prep-item" key={i}>
-                                <span className="btag">
-                                  {it.kind === 'option'
-                                    ? '선택지'
-                                    : it.kind === 'memo'
-                                      ? 'PB'
-                                      : 'AI'}
-                                </span>
-                                <span className="prep-item-text">
-                                  {it.kind === 'option' ? it.label : it.text}
-                                </span>
-                                <button
-                                  className="btn-quiet"
-                                  aria-label="메모에서 빼기"
-                                  title="빼기"
-                                  onClick={() => unpick(selected.id, i)}
-                                >
-                                  ×
-                                </button>
-                              </div>
-                            ))}
+                          <div className="prep-items" hidden={!listOpen}>
+                            {prep[selected.id].map((it, i) => {
+                              const editing =
+                                editAt?.cid === selected.id && editAt.i === i;
+                              const save = () => {
+                                const v = editText.trim();
+                                if (v) editPick(selected.id, i, v);
+                                setEditAt(null);
+                              };
+                              return (
+                                <div className="prep-item" key={i}>
+                                  <span className="btag">
+                                    {it.kind === 'option'
+                                      ? '선택지'
+                                      : it.kind === 'memo'
+                                        ? 'PB'
+                                        : 'AI'}
+                                  </span>
+                                  {editing ? (
+                                    <input
+                                      className="waive-in"
+                                      autoComplete="off"
+                                      autoFocus
+                                      maxLength={400}
+                                      title="Enter로 저장, Esc로 취소합니다."
+                                      value={editText}
+                                      onChange={(e) =>
+                                        setEditText(e.target.value)
+                                      }
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') save();
+                                        if (e.key === 'Escape') setEditAt(null);
+                                      }}
+                                    />
+                                  ) : (
+                                    <span className="prep-item-text">
+                                      {it.kind === 'option'
+                                        ? it.label
+                                        : it.text}
+                                    </span>
+                                  )}
+                                  {/* 고치기 — 선택지에는 안 낸다(위 `editPick` 주석).
+                                    고치는 중에는 같은 자리가 `저장`이 된다: 조작 칸이
+                                    늘었다 줄었다 하면 옆의 `×` 자리가 흔들린다. */}
+                                  {it.kind !== 'option' &&
+                                    (editing ? (
+                                      <button
+                                        className="btn-quiet"
+                                        aria-label="고친 내용 저장"
+                                        title="저장 (Esc로 취소)"
+                                        onClick={save}
+                                      >
+                                        ✓
+                                      </button>
+                                    ) : (
+                                      <button
+                                        className="btn-quiet"
+                                        aria-label="이 줄 고치기"
+                                        title={
+                                          it.kind === 'memo'
+                                            ? '고치기'
+                                            : '고치기 — 고친 줄은 PB 메모가 됩니다(AI 문장에 붙은 출처 각주가 빠집니다).'
+                                        }
+                                        onClick={() => {
+                                          setEditAt({ cid: selected.id, i });
+                                          setEditText(it.text);
+                                        }}
+                                      >
+                                        ✎
+                                      </button>
+                                    ))}
+                                  <button
+                                    className="btn-quiet"
+                                    aria-label="메모에서 빼기"
+                                    title="빼기"
+                                    /* 편집 중이던 줄이 있으면 닫는다 — 빼면 뒤 항목의
+                                     index가 하나씩 당겨져, 열려 있던 편집 상자가
+                                     **다른 줄을 고치게 된다.** */
+                                    onClick={() => {
+                                      setEditAt(null);
+                                      unpick(selected.id, i);
+                                    }}
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              );
+                            })}
                           </div>
-                          {/* PB가 손으로 쓰는 줄 — 문서에서 `[PB 메모]`로 갈려 뜬다.
+                          {/* PB가 손으로 쓰는 줄 — 문서에서 `PB 메모` 구역으로 갈려 뜬다.
                               ⚠️ 이 줄도 게이트를 받는다(사람이 썼다고 규정을 비켜 가지 않는다). */}
-                          <div className="prep-add">
-                            <input
-                              className="waive-in"
-                              autoComplete="off"
-                              placeholder="내 메모 한 줄 (상담에서 확인할 것)"
-                              maxLength={400}
-                              value={prepMemo}
-                              onChange={(e) => setPrepMemo(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' && prepMemo.trim()) {
+                          {memoOpen && (
+                            <div className="prep-add">
+                              <input
+                                className="waive-in"
+                                autoComplete="off"
+                                /* 부른 자리에 바로 쓴다 — 버튼을 누른 다음 입력창을 또 눌러야
+                                 하면 조작이 둘로 나뉜다. 상자가 열릴 때만 마운트되므로
+                                 `autoFocus`가 열 때마다 동작한다. */
+                                autoFocus
+                                placeholder="메모를 입력하세요."
+                                maxLength={400}
+                                value={prepMemo}
+                                onChange={(e) => setPrepMemo(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && prepMemo.trim()) {
+                                    pick(selected.id, {
+                                      kind: 'memo',
+                                      text: prepMemo.trim(),
+                                    });
+                                    setPrepMemo('');
+                                  }
+                                  // 닫는 길을 키보드에도 둔다(＋ 버튼까지 가지 않아도 된다).
+                                  if (e.key === 'Escape') {
+                                    setPrepMemo('');
+                                    setMemoOpen(false);
+                                  }
+                                }}
+                              />
+                              <button
+                                className="btn"
+                                disabled={!prepMemo.trim()}
+                                onClick={() => {
                                   pick(selected.id, {
                                     kind: 'memo',
                                     text: prepMemo.trim(),
                                   });
                                   setPrepMemo('');
-                                }
-                              }}
-                            />
-                            <button
-                              className="btn"
-                              disabled={!prepMemo.trim()}
-                              onClick={() => {
-                                pick(selected.id, {
-                                  kind: 'memo',
-                                  text: prepMemo.trim(),
-                                });
-                                setPrepMemo('');
-                              }}
-                            >
-                              메모 담기
-                            </button>
-                          </div>
-                          {prepError && <div className="vbox">⛔ {prepError}</div>}
+                                }}
+                              >
+                                담기
+                              </button>
+                            </div>
+                          )}
+                          {prepError && (
+                            <div className="vbox">⛔ {prepError}</div>
+                          )}
                           <div className="prep-acts">
                             <button
                               className="btn primary"
@@ -2154,9 +2331,8 @@ export default function DashboardPage() {
                                 void prepPdf(selected.id, prep[selected.id])
                               }
                             >
-                              {prepBusy ? 'PDF 만드는 중…' : 'PDF로 받기'}
+                              {prepBusy ? 'PDF 만드는 중…' : 'PDF'}
                             </button>
-                            <span className="hint">고객 제공용이 아닙니다.</span>
                           </div>
                         </div>
                       )}

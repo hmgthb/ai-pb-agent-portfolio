@@ -146,7 +146,7 @@ export type ChatOption = {
  *
  *  셋으로 나뉘는 이유는 **누가 만든 문장인가**가 문서에서 갈려 읽혀야 해서다:
  *    sentence = AI가 쓴 답변 문장(출처 배지째 간다) · option = 코드가 뽑은 선택지 ·
- *    memo = PB가 손으로 쓴 줄(문서에서 `[PB 메모]`로 뜬다). */
+ *    memo = PB가 손으로 쓴 줄(문서에서 `PB 메모` 구역으로 갈려 뜬다). */
 export type PrepItem =
   | { kind: 'sentence'; text: string; sentence_kind?: SentenceKind; sources: NoteSource[] }
   | {

@@ -24,13 +24,7 @@ import { useEffect, useRef, useState } from 'react';
 import { chatStreamUrl } from './api';
 import { RedactionDetails } from './redaction';
 import { mergeSources, SourceBadge } from './sources';
-import type {
-  ChatAnswer,
-  ChatOption,
-  ChatRedaction,
-  ChatRouting,
-  PrepItem,
-} from './types';
+import type { ChatAnswer, ChatRedaction, ChatRouting, PrepItem } from './types';
 
 /** 라우팅 배지에 적는 이름. **에이전트 식별자(a1·a2·a4)를 적지 않는다** — 이 배지가 답할
  *  것은 "왜 이 답이 나왔나"(어떤 데이터를 봤나)이지 "어느 서브에이전트가 돌았나"가 아니다.
@@ -44,6 +38,12 @@ const AGENT_LABEL: Record<string, string> = {
   // 배지에 그대로 적는 이유: "왜 이 답이 나왔나"를 화면이 말해야 하는데(감사 가능한 라우팅),
   // 여기서만 도구 호출이 0건이라 진행 타임라인에 아무것도 안 뜬다.
   portfolio: '보유·배분',
+  // 제안형(`조정 선택지`·`최근 흐름` 칩). 조회형과 **다른 라우트**라 배지도 달라야 한다 —
+  // 보유·배분에 더해 50종목 시세를 배치로 받고 후보 종목 뉴스까지 본다.
+  // ⚠️ 이 줄이 없어서 배지가 **빈칸으로 떴다**(2026-08-06). `AGENT_LABEL[agent]`가 undefined면
+  //    아무것도 안 그려지는데, 포트폴리오 라우트는 종목이 없어 옆의 `entity_name`도 비어
+  //    배지 전체가 빈 상자가 된다. **라우트를 늘리면 여기도 같이 늘릴 것.**
+  portfolio_advice: '보유·배분·시세·뉴스',
 };
 
 type Turn = {
@@ -52,9 +52,6 @@ type Turn = {
   redaction?: ChatRedaction;
   streaming: string;
   answer?: ChatAnswer;
-  /** 코드가 뽑은 조정 선택지 후보(제안형 답변에만 온다). 답변 산문과 **같은 후보**이고,
-   *  여기 있는 것만 PB가 상담 메모에 담을 수 있다. */
-  options?: ChatOption[];
   blocked?: string[];
   /** 어느 문지기에 걸렸나: `input`=들어오는 질문, `egress`=나가는 프롬프트.
    *  둘은 사용자가 할 일이 다르다 — 앞은 질문을 고쳐 쓰고, 뒤는 데이터가 새는 것이라
@@ -90,6 +87,15 @@ function outboundWarning(text: string, names: string[]): string | null {
  *  문자열이 아니라 **눌린 횟수(n)를 같이** 들고 다닌다 — 값이 같으면 effect가 안 돈다. */
 export type ChatPrefill = { q: string; n: number };
 
+/** `담기` 버튼이 자기가 담은 것을 알아보는 값. 상담 메모(부모가 들고 있다)와 답변 문장은
+ *  서로 다른 자료구조라, **무엇이 이미 담겼는지**는 이 키로만 이어진다.
+ *  종류를 앞에 붙이는 이유: 선택지 이름과 같은 문장이 답변에 나와도 둘은 다른 항목이다.
+ *  ⚠️ 본문으로 맞추는 것은 의도다 — 담은 뒤 메모 상자에서 ×로 뺀 것도 여기서 풀려야
+ *     버튼이 `✓ 담김`으로 남아 거짓말을 하지 않는다. */
+export function prepKey(it: PrepItem): string {
+  return it.kind === 'option' ? `option:${it.label}` : `${it.kind}:${it.text}`;
+}
+
 /** 언마운트를 넘겨 대화를 들고 있는 자리. **부모가 소유한다**(여기서 만들면 같이 사라진다).
  *
  *  전역 F1은 모달을 `hidden`으로만 감춰서 이것이 필요 없다. 이건 **감출 수 없는 자리**를 위한
@@ -111,8 +117,9 @@ export default function F1Chat({
   onRunningChange,
   keep,
   keepKey,
-  corner,
+  viewMode,
   onPick,
+  picked,
 }: {
   /** 입력창을 채우는 유일한 경로(고객 카드의 보유 종목 칩·분석 칩).
    *  ⚠️ 마운트 시점 prop(`initial`)은 걷어냈다 — 전역 F1은 닫아도 언마운트되지 않으므로
@@ -143,16 +150,24 @@ export default function F1Chat({
    *  아예 안 그려진다 — 메모를 들고 있을 자리가 없는 화면(전역 F1)에서는 담을 수도 없다.
    *  ⚠️ 담는 것은 화면 상태일 뿐이다(서버에 저장하지 않는다). */
   onPick?: (item: PrepItem) => void;
+  /** 이미 담긴 항목의 `prepKey` 모음 — 버튼이 `✓ 담김`으로 서고 문장에 옐로 바가 붙는다.
+   *  **여기서 들고 있지 않는 건 의도다**: 담긴 것의 주인은 상담 메모(부모)이고, 메모에서
+   *  ×로 뺀 것이 버튼에 바로 반영되어야 한다. 안 넘기면 상태 표시 없이 담기만 된다. */
+  picked?: ReadonlySet<string>;
   /** 언마운트를 넘겨 대화를 보관한다(`ChatKeep`). 둘 다 줘야 동작한다.
    *  ⚠️ 고객 카드에는 붙이지 않는다 — 그쪽은 `key={고객id}`로 **새로 시작하는 것이 결정**이다.
    *     여기에 보관을 붙이면 앞 고객으로 돌아갈 때 그 대화가 되살아나 결정이 뒤집힌다. */
   keep?: ChatKeep;
   keepKey?: string;
-  /** 대화 로그 **오른쪽 위 모서리**에 겹쳐 놓을 조작(고객 카드의 `크게 보기`).
-   *  버튼을 로그 안에 넣지 않는 이유: 로그는 스크롤 상자라 대화와 같이 밀려 올라간다.
-   *  ⚠️ 여기 넣는 것은 **대화를 보는 방식**을 바꾸는 조작까지다 — 질문을 만들거나 보내는
-   *     조작(칩·입력·보내기)은 제자리가 따로 있고, 로그 위에 겹치면 대화를 가린다. */
-  corner?: React.ReactNode;
+  /* 대화 로그 오른쪽 위에 조작을 겹치는 `corner` 슬롯이 있었다(2026-08-03~08-06).
+     고객 카드의 `크게 보기`가 유일한 사용처였고 지금은 카드 제목 줄로 옮겼다 —
+     로그 상자 안에 떠 있는 조작은 대화의 일부처럼 보이고, 첫 답변이 오면 그 위에 겹친다.
+     ⚠️ 되살린다면 겹치는 것이 **대화를 가리지 않는지** 먼저 볼 것. */
+  /** 지금 이 대화를 **어떻게 보고 있나**(고객 카드의 보통/크게 보기). 값이 바뀌면 미리보기
+   *  접이식 상자가 접힌 상태로 돌아간다 — 크게 열었을 때 기본값이 접힘이어야 대화가 먼저
+   *  보인다. ⚠️ 여기서 **컴포넌트를 옮겨 그리지 않는다**(page.tsx: 클래스만 바꾼다) —
+   *     그래서 `<details>`의 열림이 그대로 살아남고, 이 신호가 필요하다. */
+  viewMode?: string;
 } = {}) {
   // 보관된 대화가 있으면 그것으로 시작한다(`useState` 초기값은 마운트에만 쓰인다 —
   // 다시 열릴 때 새 마운트이므로 여기서 한 번 읽는 것이 맞다).
@@ -281,11 +296,9 @@ export default function F1Chat({
     es.addEventListener('answer', (e) =>
       patchLast({ answer: JSON.parse((e as MessageEvent).data) }),
     );
-    // 답변보다 **먼저** 온다(후보를 뽑은 뒤 문장을 쓰므로). 답변이 오기 전에도 카드가 서서
-    // "무엇을 두고 고르는 중인지"가 먼저 보인다.
-    es.addEventListener('options', (e) =>
-      patchLast({ options: JSON.parse((e as MessageEvent).data).options }),
-    );
+    // `options` 이벤트는 **듣지 않는다**(2026-08-06) — 카드를 지우면서 같이 뺐다.
+    // 백엔드는 계속 보내고 있으니(진행 타임라인의 `options` 단계와 짝이다) 되살릴 때는
+    // 여기 리스너와 `Turn.options`를 함께 되돌리면 된다.
     es.addEventListener('run_error', (e) =>
       patchLast({ error: JSON.parse((e as MessageEvent).data).message }),
     );
@@ -352,12 +365,11 @@ export default function F1Chat({
           것이 다른 모양이면 미리보기가 약속 구실을 못 한다. */}
       {preview && (
         <div className="redact-preview">
-          <RedactionDetails r={preview} />
+          <RedactionDetails r={preview} collapseOn={viewMode} />
         </div>
       )}
 
       <div className="chat-logwrap">
-        {corner && <span className="chat-corner">{corner}</span>}
         <div className="chat-log" ref={scrollRef}>
         {turns.length === 0 && (
           <div className="chat-empty">질문을 입력하면 대화가 시작됩니다.</div>
@@ -369,7 +381,10 @@ export default function F1Chat({
             <div className="bubble ai">
               {t.routing && !t.routing.need_clarify && (
                 <div className="route-badge" title={t.routing.reason}>
-                  <b>{t.routing.agent ? AGENT_LABEL[t.routing.agent] : '—'}</b>
+                  {/* 모르는 라우트도 **빈칸으로 두지 않는다** — 표를 못 찾으면 `undefined`가
+                      아무것도 안 그려서 배지가 빈 상자로 뜬다(2026-08-06에 실제로 그랬다).
+                      식별자를 그대로 적지는 않는다: 읽는 사람은 PB다(위 `AGENT_LABEL` 주석). */}
+                  <b>{(t.routing.agent && AGENT_LABEL[t.routing.agent]) || '—'}</b>
                   <span className="route-entity">
                     {t.routing.entity_name ?? t.routing.entity_code}
                   </span>
@@ -386,8 +401,13 @@ export default function F1Chat({
 
               {/* `AI가 보는 정보` — 이 답을 만들 때 모델이 실제로 받은 것.
                   라우팅 배지 바로 아래인 건 둘이 같은 종류의 정보여서다: "왜 이 답이
-                  나왔나"(어떤 데이터를 봤나) 옆에 "그 데이터가 어떤 꼴이었나"가 선다. */}
-              {t.redaction && <RedactionDetails r={t.redaction} />}
+                  나왔나"(어떤 데이터를 봤나) 옆에 "그 데이터가 어떤 꼴이었나"가 선다.
+                  ⚠️ **미리보기가 있는 화면에서는 내지 않는다**(2026-08-06). 고객 카드는
+                     입력창 위에 같은 상자를 이미 세워 두는데, 답변마다 하나가 더 붙으면
+                     같은 라벨이 한 화면에 둘이 되어 어느 쪽을 읽어야 하는지가 흐려진다.
+                     여기 남는 건 미리보기가 없는 자리뿐이다(고객 문의 모달 — 거기서는
+                     물어본 뒤 이 상자로 본다). */}
+              {!preview && t.redaction && <RedactionDetails r={t.redaction} />}
 
               {t.blocked && (
                 <div className="chat-blocked">
@@ -405,17 +425,38 @@ export default function F1Chat({
               {/* 최종 답변: 문장별 출처 배지 */}
               {t.answer && !t.answer.clarify && (
                 <div className="chat-answer">
-                  {t.answer.sentences.map((s, j) => (
-                    <div className="chat-sent" key={j}>
+                  {t.answer.sentences.map((s, j) => {
+                    const on = picked?.has(`sentence:${s.text}`) ?? false;
+                    return (
+                    <div
+                      className={`chat-sent${on ? ' is-picked' : ''}${onPick ? ' has-pick' : ''}`}
+                      key={j}
+                    >
                       {/* 담기 — **AI가 낸 것 중 무엇을 상담에 가져갈지 고르는 자리**다.
-                          문장 앞에 두는 이유: 뒤에 두면 출처 배지 뒤로 밀려 문장마다
-                          위치가 달라진다(배지 개수가 문장마다 다르다).
+                          문장 **왼쪽 거터**에 선다(2026-08-06). 본문과 같은 줄의 형제였을
+                          때는 문장 길이가 배치를 정해, 긴 문장에서는 첫 줄만 버튼 옆에서
+                          시작하고 둘째 줄부터 왼쪽 끝으로 돌아왔다 — 조작이 글줄 밖으로
+                          나가야 본문 시작점이 문장마다 같다.
                           ⚠️ 담을 때 **출처를 같이 들고 간다** — 문서에서도 각주가 붙어야
-                             한다(가드레일 3). 화면 배지와 같은 값을 그대로 넘긴다. */}
+                             한다(가드레일 3). 화면 배지와 같은 값을 그대로 넘긴다.
+                          ⚠️ **출처 배지와 같은 모양으로 만들지 말 것**(2026-08-06). 배지는
+                             문장이 무엇에 근거하는지 말하는 라벨(읽는 것·상태 없음)이고
+                             이건 PB가 누르는 조작이다. 갈라 주는 건 넷이다: **자리**(글줄
+                             밖 거터) · **모난 사각**(배지는 알약) · **아이콘**(＋/✓) ·
+                             **눌리면 변한다**(배지는 절대 안 변한다).
+                          ⚠️ 거터에 글자를 넣지 말 것 — 폭은 본문에서 나온다. `담기`라는 말은
+                             `aria-label`과 tooltip이 나른다(아이콘만으로는 스크린리더에
+                             아무것도 안 읽힌다). */}
                       {onPick && (
                         <button
-                          className="pickbtn"
-                          title="상담 준비 메모에 담습니다"
+                          className={`pickbtn${on ? ' is-picked' : ''}`}
+                          aria-pressed={on}
+                          aria-label={on ? '상담 준비 메모에서 빼기' : '상담 준비 메모에 담기'}
+                          title={
+                            on
+                              ? '상담 준비 메모에서 뺍니다'
+                              : '상담 준비 메모에 담습니다'
+                          }
                           onClick={() =>
                             onPick({
                               kind: 'sentence',
@@ -429,79 +470,58 @@ export default function F1Chat({
                             })
                           }
                         >
-                          담기
+                          <span className="pick-ico" aria-hidden="true">
+                            {on ? '✓' : '＋'}
+                          </span>
                         </button>
                       )}
-                      <span>{s.text}</span>
-                      {/* 같은 출처를 두 번 인용하면 배지도 두 개였다 — 하나로 묶고
-                          `×2`로 센다. **다른 출처끼리는 합치지 않는다**(합치면 한쪽
-                          링크가 사라져 가드레일 3 위반). */}
-                      {mergeSources(
-                        s.sources?.length
-                          ? s.sources
-                          : s.source
-                            ? [s.source]
-                            : [],
-                      ).map(({ src, count }, k) => (
-                        <SourceBadge key={k} src={src} count={count} />
-                      ))}
-                      {!s.source &&
-                        !s.sources?.length &&
-                        (s.kind === 'interpretation' ? (
-                          <span
-                            className="sbadge itp"
-                            title="해석·전망 문장은 각주 대상이 아닙니다"
-                          >
-                            해석
-                          </span>
-                        ) : (
-                          <SourceBadge src={null} />
+                      {/* 문장과 배지가 **한 덩어리**다 — 배지를 본문 밖 형제로 두면 남는
+                          자리에 따라 자기 줄로 떨어져 어느 문장 것인지 흐려진다. */}
+                      <span className="sent-text">
+                        {s.text}
+                        {/* 같은 출처를 두 번 인용하면 배지도 두 개였다 — 하나로 묶고
+                            `×2`로 센다. **다른 출처끼리는 합치지 않는다**(합치면 한쪽
+                            링크가 사라져 가드레일 3 위반). */}
+                        {mergeSources(
+                          s.sources?.length
+                            ? s.sources
+                            : s.source
+                              ? [s.source]
+                              : [],
+                        ).map(({ src, count }, k) => (
+                          <SourceBadge key={k} src={src} count={count} />
                         ))}
+                        {!s.source &&
+                          !s.sources?.length &&
+                          (s.kind === 'interpretation' ? (
+                            <span
+                              className="sbadge itp"
+                              title="해석·전망 문장은 각주 대상이 아닙니다"
+                            >
+                              해석
+                            </span>
+                          ) : (
+                            <SourceBadge src={null} />
+                          ))}
+                      </span>
                     </div>
-                  ))}
+                    );
+                  })}
                   {t.answer.notice && (
                     <div className="chat-notice">{t.answer.notice}</div>
                   )}
                 </div>
               )}
 
-              {/* 조정 선택지 — **고르는 자리**. 근거는 위 답변이 이미 산문으로 말하므로
-                  카드는 이름과 대상까지만 짧게 둔다(채팅 칸이 좁다). 담으면 근거·"바꾸지
-                  않는 것"까지 함께 메모로 간다.
-                  ⚠️ 여기서 순위를 매기거나 권하지 않는다 — 카드는 순서대로 나열될 뿐이고,
-                     고르는 일이 PB의 몫이라는 게 이 화면의 요점이다. */}
-              {onPick && t.options && t.options.length > 0 && (
-                <div className="chat-opts">
-                  {t.options.map((o, j) => (
-                    <div className="chat-opt" key={j}>
-                      <span className="chat-opt-label">
-                        {o.label}
-                        {o.targets.length > 0 && (
-                          <span className="bcode">
-                            {' '}
-                            {o.targets.map((x) => x.name).join(' · ')}
-                          </span>
-                        )}
-                      </span>
-                      <button
-                        className="pickbtn"
-                        title="근거·바꾸지 않는 것까지 함께 담습니다"
-                        onClick={() =>
-                          onPick({
-                            kind: 'option',
-                            label: o.label,
-                            targets: o.targets.map((x) => x.name),
-                            basis: o.basis,
-                            keeps: o.keeps,
-                          })
-                        }
-                      >
-                        담기
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {/* 조정 선택지 카드가 여기 있었다(2026-08-06 추가 → 같은 날 제거).
+                  `options` SSE로 받은 후보를 `＋ 담기`가 달린 카드로 그렸는데, **답변을 닫는
+                  고지문 아래**에 머리말 없이 서서 답변의 일부인지 별개인지가 화면에서
+                  갈리지 않았다. 말풍선은 고지문으로 닫히는 것이 맞다.
+                  ⚠️ 후보 자체가 사라진 것은 아니다 — `f1.rebalance_options`가 계산해
+                     프롬프트로 가고, 답변 산문이 선택지와 근거를 그대로 말한다(CLAUDE.md의
+                     "선택지도 코드가 뽑는다"는 그대로다). 없어진 건 **카드로 담는 경로**뿐.
+                  ⚠️ 되살린다면 고지문 **위**, 머리말과 함께 둘 것. `PrepItem`의 `option`
+                     종류와 PDF의 `선택지:` 항목은 백엔드에 그대로 있다(테스트도 있다). */}
 
               {/* clarify: 종목 되묻기 */}
               {t.answer?.clarify && (

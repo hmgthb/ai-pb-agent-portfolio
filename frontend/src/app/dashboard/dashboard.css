@@ -1328,6 +1328,8 @@ th.rownum {
    (`.flag`와 같은 규칙: 라벨 없는 글리프는 그 둘이 유일한 설명이다). */
 .cust-chat .cchat-zoom {
   flex: none;
+  /* 제목은 왼쪽에 붙여 두고 버튼만 끝으로 민다 — 제목 줄에 다른 것이 늘어도 자리가 안 밀린다. */
+  margin-left: auto;
   font: inherit;
   font-size: 14px;
   line-height: 1;
@@ -2594,10 +2596,13 @@ a.fn-title:hover {
         글자를 --muted(라이트 5.0:1)에서 --ink-2(8.5:1)로 올리고 테두리를 줬다(3.4:1).
         형제 배지(UNSOURCED·확인함·보유)는 전부 면이나 테두리를 갖는데 이것만 없어서
         같은 줄에서 혼자 흐려 보였다. */
+/* ⚠️ **테두리를 되살리지 말 것**(2026-08-06). `얇은 실선 + 무채색 + 10~11px`이 옆에 서는
+   `담기` 버튼과 사실상 같은 모양이어서, 읽는 라벨과 누르는 조작이 한 쌍으로 읽혔다.
+   배지는 **면만**이고 테두리는 조작의 몫이다(점선인 `.hold`만 예외 — 저건 "출처는 맞지만
+   공개데이터가 아니다"를 나르는 표시라 뜻이 따로 있다). 테두리를 뺀 만큼 면을 올린다. */
 .sbadge.itp {
   color: var(--ink-2);
-  background: color-mix(in srgb, var(--ink-2) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--ink-2) 65%, transparent);
+  background: color-mix(in srgb, var(--ink-2) 18%, transparent);
 }
 
 /* 3시나리오 빈 상태(W6) — 데이터를 못 구한 항목도 카드로 남긴다. 카드가 아예 사라지면
@@ -2661,11 +2666,10 @@ a.fn-title:hover {
   flex-direction: column;
   gap: 14px;
 }
-/* 대화 로그를 감싸는 상자 — **로그 오른쪽 위에 조작을 겹쳐 놓기 위한 자리**다(2026-08-03).
-   버튼을 로그 안에 두면 스크롤 상자 안이라 대화와 같이 밀려 올라간다. 크기·스크롤은
-   여전히 `.chat-log`가 갖고, 이 상자는 좌표계만 만든다. */
+/* 대화 로그를 감싸는 상자. 원래는 로그 오른쪽 위에 조작(`크게 보기`)을 겹쳐 놓는 좌표계였고
+   (2026-08-03), 그 조작이 카드 제목 줄로 간 뒤에도 남는다 — 로그가 남는 높이를 전부 먹는
+   flex 배치를 이 상자가 들고 있다. 크기·스크롤은 여전히 `.chat-log`가 갖는다. */
 .chat-logwrap {
-  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -2673,12 +2677,6 @@ a.fn-title:hover {
 .chat-logwrap > .chat-log {
   flex: 1 1 auto;
   min-height: 0;
-}
-.chat-corner {
-  position: absolute;
-  top: 8px;
-  right: 10px;
-  z-index: 1;
 }
 .chat-empty {
   color: var(--muted);
@@ -2801,6 +2799,35 @@ a.fn-title:hover {
   border-left: 0;
   padding-left: 0;
   margin-top: 8px;
+  /* 아래 `@container`가 재는 기준. **뷰포트가 아니라 이 상자의 실폭**으로 판정해야 한다 —
+     같은 컴포넌트가 고객 카드 안(좁음)과 크게 보기(넓음)에 같이 서고, 어느 쪽인지는 CSS가
+     알 방법이 없다(부모 클래스로 갈라 두면 자리가 하나 늘 때마다 규칙도 늘어난다). */
+  container-type: inline-size;
+}
+/* 도넛(자산배분)과 보유 표(종목) — 기본은 쌓고, **폭이 나면 나란히** 선다.
+   문턱값 680px은 **반쪽의 최소폭 × 2**다: 표가 네 열(종목·평가금액·주식 내·잔고 대비)을
+   줄바꿈 없이 그리려면 340px쯤 필요하다. 이보다 좁으면 종목명이 접히므로 그냥 쌓는다. */
+.egress-cols {
+  display: flex;
+  flex-direction: column;
+}
+@container (min-width: 680px) {
+  /* **정확히 반반**이다(2026-08-06). flex로 "도넛은 제 크기, 표가 남는 폭"을 주면 표가
+     범례 바로 옆에서 시작해 둘이 한 덩어리로 붙어 보였다 — 배분과 종목은 따로 읽는 값이라
+     사이가 비어야 한다. 그 여백은 gap이 아니라 **왼쪽 칸이 제 내용보다 넓어서** 생긴다.
+     그래서 `gap: 0`이고, 표는 컨테이너의 정확히 절반 지점에서 시작한다.
+     ⚠️ `1fr`이 아니라 `minmax(0, 1fr)`이다 — `1fr`의 최소는 auto라 표가 제 내용폭을 우기면
+        절반이 깨진다(종목명이 긴 고객에서 왼쪽 칸이 밀린다). */
+  .egress-cols {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 0;
+  }
+  .egress-cols > .donut-wrap,
+  .egress-cols > .holdings {
+    margin-top: 0;
+  }
 }
 /* 나가지 않는 것이 **서던 자리**. 지우고 비우지 않고 없다고 적는다 — 빈칸은 "안 나간다"와
    "아직 안 채웠다"가 구분되지 않는다(보유 표의 `—`와 같은 규칙). */
@@ -2833,20 +2860,36 @@ a.fn-title:hover {
      경고는 경고가 아니다. */
   color: var(--ink-2);
 }
+/* 문장 사이 간격은 **문장 안 요소 간격(.chat-sent의 6px)보다 뚜렷이 넓어야 한다.**
+   7px이던 때는 둘이 거의 같아, 오른쪽 끝으로 밀린 앞 문장의 출처 배지와 다음 문장 맨 앞의
+   `담기`가 붙어 서서 **한 쌍처럼** 읽혔다(2026-08-06). 묶이는 단위가 눈에 보여야 한다. */
 .chat-answer {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 13px;
 }
+/* 한 문장 = **[조작 거터][문장 본문]** 두 칸이다(2026-08-06).
+   그전에는 `담기`·문장·배지가 한 줄의 형제였고(flex-wrap), 그래서 **문장 길이가 배치를
+   정했다**: 짧으면 셋이 한 줄, 길면 배지가 자기 줄로 떨어지고 문장은 첫 줄만 담기 옆에서
+   시작해 둘째 줄부터 왼쪽 끝으로 돌아왔다 — 문단 왼쪽 정렬선이 문장마다 무너졌다.
+   지금은 조작이 **글줄 밖**에 서므로 본문 시작점이 항상 같고, 배지는 본문 안 인라인이라
+   마지막 낱말 뒤에만 붙는다(각주가 하는 일 그대로).
+   ⚠️ 거터를 넓혀 글자를 넣지 말 것 — 폭은 본문에서 나온다. `담기`라는 말은 tooltip과
+      `aria-label`이 나른다(선택지 카드는 거터가 없으니 거기서는 글자를 그대로 쓴다). */
 .chat-sent {
-  display: flex;
-  gap: 6px;
-  align-items: baseline;
-  flex-wrap: wrap;
+  display: block;
 }
-.chat-sent > span:first-child {
-  flex: 1;
-  min-width: 60%;
+.chat-sent.has-pick {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 6px;
+}
+/* 배지는 문장에 **매달린다** — flex 형제였을 때처럼 혼자 떠돌지 않는다.
+   `.sbadge`가 이미 `white-space: nowrap`이라 배지 안에서는 줄이 안 갈린다. */
+.sent-text .sbadge {
+  margin-left: 6px;
+  vertical-align: 1px;
 }
 .chat-notice {
   margin-top: 8px;
@@ -3417,6 +3460,49 @@ a.fn-title:hover {
 .prepbox-head strong {
   font-size: 13px;
 }
+/* 제목 = 목록 접기 버튼. 이 화면의 접이식 어휘 그대로다(`.redact > summary`와 같은 꺾쇠) —
+   테두리·면 없이 꺾쇠 + 굵은 한 줄. ⚠️ 알약(칩)으로 만들지 말 것: 칩은 알약, 접이식은 꺾쇠. */
+.prep-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+/* 개수는 **제목에 딸린 값**이다 — 같은 크기·같은 색이면 제목이 둘로 읽힌다.
+   ⚠️ `.hint`에는 기본 규칙이 아예 없다(§#gen-msg 주석) — 자리마다 여기처럼 직접 준다. */
+.prep-toggle .hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+/* 삼각형은 직접 그린다 — `.redact`·`.aiwork`와 같은 방법(브라우저 기본 마커는 위치·색을
+   못 맞춘다). 색·회전 각도는 셋이 같고, **크기는 제 제목에 맞춘다** — 저쪽 머리말은
+   11.5px이고 이쪽은 13px이라, 같은 10px로 두면 여기서만 꺾쇠가 작아 보인다. */
+.prep-toggle::before {
+  content: '▸';
+  font-size: 12px;
+  color: var(--muted);
+  transition: transform 0.12s ease;
+}
+.prep-toggle[aria-expanded='true']::before {
+  transform: rotate(90deg);
+}
+.prep-toggle:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+/* 메모 입력창을 부르는 버튼 — 제목 줄 **오른쪽 끝**. `margin-left: auto`를 여기 두는 건
+   제목·개수가 왼쪽에 붙어 한 덩어리로 읽혀야 해서다(가운데가 비면 둘이 갈라 보인다). */
+.prep-addbtn {
+  margin-left: auto;
+  font-size: 11.5px;
+}
 /* 담긴 목록 — 길어지면 안쪽에서 스크롤한다(채팅 로그를 밀어내지 않게). */
 .prep-items {
   display: flex;
@@ -3424,6 +3510,12 @@ a.fn-title:hover {
   gap: 4px;
   max-height: 140px;
   overflow-y: auto;
+}
+/* ⚠️ `display`를 준 요소는 `hidden` 속성만으로 안 감춰진다 — 브라우저 기본 `[hidden]`은
+   `display: none`인데 위 `display: flex`가 나중에 와서 이긴다. 접기 버튼이 눌리는데도
+   목록이 그대로 있던 원인이다(2026-08-06). */
+.prep-items[hidden] {
+  display: none;
 }
 .prep-item {
   display: flex;
@@ -3447,9 +3539,18 @@ a.fn-title:hover {
   align-items: center;
   gap: 8px;
 }
-/* 답변 문장·선택지 옆의 `담기` — 문장 흐름을 밀지 않도록 작고 조용하게. 누를 수 있다는
-   신호는 테두리 하나이고, 색은 hover에서만 든다(대화 칸에 색이 늘면 배지가 안 보인다). */
+/* 답변 문장·선택지 옆의 `담기` — 문장 흐름을 밀지 않도록 작고 조용하게.
+   ⚠️ **출처 배지(.sbadge)와 같은 모양으로 만들지 말 것**(2026-08-06). 둘은 같은 크기로
+      나란히 서는데 하는 일이 정반대다(배지=문장이 무엇에 근거하는지 말하는 라벨, 이것=PB가
+      누르는 조작). 예전에는 `무채색 글자 + 얇은 실선 + 10~11px`이라 `해석` 배지와 사실상
+      같았고, 갈리는 건 모서리 반경뿐이었다 — 폭 30px에서 그건 안 읽힌다.
+      지금 종류를 나르는 건 셋이다: **모난 사각**(배지는 알약) · **아이콘**(＋/✓) ·
+      **눌리면 변한다**(배지는 절대 안 변한다). 색으로 가르려 하지 말 것 — 색 예산은
+      배지끼리 이미 다 썼다(HANDOFF §0-1). */
 .pickbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font: inherit;
   font-size: 11px;
   line-height: 1.4;
@@ -3462,27 +3563,40 @@ a.fn-title:hover {
   cursor: pointer;
   flex-shrink: 0;
 }
+/* 아이콘이 글자보다 크게 뜨는 글리프라(＋는 전각) 한 단계 줄여 글자와 키를 맞춘다. */
+.pick-ico {
+  font-size: 9.5px;
+  line-height: 1;
+}
+/* 답변 문장의 거터 변종 — 아이콘만이라 좌우 여백을 줄이고 문장 쪽 여백은 grid가 준다. */
+.chat-sent > .pickbtn {
+  padding: 0 4px;
+  margin-right: 0;
+}
 .pickbtn:hover {
   color: var(--ink);
   border-color: var(--muted);
 }
-/* 조정 선택지 카드 — 고르는 자리. 근거는 위 답변이 산문으로 말하므로 이름·대상까지만. */
-.chat-opts {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin: 6px 0 2px;
+/* 담긴 뒤 — **옐로**다. 이 화면에서 옐로는 "PB가 누르는 것"의 색이고(보내기·질문 말풍선),
+   배지에는 쓰지 않기로 되어 있어(노트 한 장이 통째로 강조 색이 된다) 겹치지 않는다.
+   면까지 채우지 않는 건 문장 왼쪽 바가 이미 같은 말을 하고 있어서다. */
+.pickbtn.is-picked {
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
-.chat-opt {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  font-size: 12px;
-  padding: 4px 6px;
-  border: 1px solid var(--grid);
-  border-radius: var(--r-md);
+.pickbtn.is-picked:hover {
+  color: var(--accent-text);
+  border-color: var(--accent);
 }
-.chat-opt-label {
-  flex-grow: 1;
-  min-width: 0;
+/* 담긴 문장 — 왼쪽 옐로 바. 버튼 하나만 바뀌면 답변을 훑을 때 무엇을 담았는지 한눈에
+   안 들어온다(버튼이 작다). 상담 메모 상자와 이 바가 같은 사실을 두 자리에서 말한다.
+   음수 여백으로 말풍선 안쪽 여백(12px)에 걸쳐 세운다 — 바가 글줄 밖에 서야 문장 폭이
+   담긴 것과 안 담긴 것 사이에서 흔들리지 않는다. */
+.chat-sent.is-picked {
+  border-left: 2px solid var(--accent);
+  padding-left: 7px;
+  margin-left: -9px;
 }
+/* 조정 선택지 카드(`.chat-opts`·`.chat-opt`·`.chat-opt-label`)의 자리였다 — 카드를 지우면서
+   같이 뺐다(2026-08-06, 사유는 `F1Chat.tsx`의 같은 자리 주석). */

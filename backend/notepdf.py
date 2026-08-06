@@ -117,6 +117,12 @@ def _p(markup: str, style) -> Paragraph:
     return Paragraph(_renderable(markup), style)
 
 
+def _bp(markup: str, style) -> Paragraph:
+    """글머리표 문단. 문자열 앞에 `· `를 붙이지 않고 `bulletText`를 쓰는 이유: 앞에 붙이면
+    둘째 줄이 글머리표 아래로 파고들어 어디서 한 항목이 끝나는지 흐려진다."""
+    return Paragraph(_renderable(markup), style, bulletText="·")
+
+
 # ── 스타일 ──────────────────────────────────────────────────────────────────
 # ⚠️ `wordWrap="CJK"`가 핵심이다. 기본 줄바꿈은 공백에서만 끊어서, 공백 없이 긴 한글
 #    덩어리나 URL이 나오면 오른쪽 여백을 넘어 잘린다(글자가 사라져도 예외는 없다).
@@ -139,8 +145,19 @@ def _styles() -> dict[str, ParagraphStyle]:
             spaceBefore=12, spaceAfter=4,
         ),
         "body": ParagraphStyle("body", parent=base, spaceAfter=7),
+        # 담은 항목의 불릿(2026-08-06). 상담 준비 메모는 **고른 것들의 목록**이지 이어지는
+        # 글이 아니다 — 문단으로 흘려 두면 어디서 한 항목이 끝나는지 문서가 말하지 않는다.
+        # `leftIndent`가 둘째 줄까지 글머리표 오른쪽에 맞춰 세운다(항목 경계가 유지된다).
+        # ⚠️ AI 문장과 PB 메모가 **같은 스타일**을 쓴다 — 둘을 가르는 건 크기가 아니라
+        #    제목(`AI 분석`·`PB 메모`)이다. PB가 쓴 줄이 각주보다 작게 앉으면 무게가 뒤집힌다.
+        "bullet": ParagraphStyle(
+            "bullet", parent=base, spaceAfter=7, leftIndent=10, bulletIndent=0
+        ),
         "srcnum": ParagraphStyle("srcnum", parent=base, fontSize=9, leading=14),
         "src": ParagraphStyle("src", parent=base, fontSize=9, leading=14),
+        # 한 불릿에 딸린 아랫줄(선택지의 근거·`바꾸지 않는 것`). 불릿 본문보다 안쪽에서
+        # 시작해야 **어느 항목에 딸린 것인지**가 자리로 드러난다.
+        "sub": ParagraphStyle("sub", parent=base, fontSize=9, leading=14, leftIndent=20),
         "url": ParagraphStyle("url", parent=base, fontSize=8, leading=12, textColor=_INK2),
         # 필수 고지 — **테두리 없이 작은 한 줄**(2026-08-06). 상자를 두르면 문서에서 가장
         # 눈에 띄는 덩어리가 되는데, 이 문장은 강조가 아니라 **문서를 닫는 말**이다
@@ -612,6 +629,24 @@ def prep_sentences(items: list[dict]) -> list[dict]:
     return out
 
 
+def prep_order(items: list[dict]) -> list[dict]:
+    """문서에 실리는 순서 — **AI가 낸 것 먼저, PB가 쓴 줄 나중**(2026-08-06).
+
+    담은 순서를 그대로 두던 때는 `AI 분석`·`PB 메모`·`AI 분석`처럼 구역이 번갈아 서서,
+    같은 종류의 줄을 읽으려면 문서를 오르내려야 했다(제목은 저자가 바뀔 때 서므로 순서를
+    그대로 두면 그렇게 되는 것이 맞다). 문서에서는 **누가 썼는지가 큰 갈래**이므로 그쪽으로
+    먼저 묶는다.
+    ⚠️ **묶음 안에서는 담은 순서를 지킨다** — 무엇을 먼저 꺼낼지가 이미 PB의 판단이다.
+    ⚠️ 화면(상담 준비 메모 상자)은 **담은 순서 그대로** 둔다. 거기는 방금 무엇을 담았는지
+       확인하는 자리라 마지막에 담은 것이 마지막 줄에 서야 한다.
+    ⚠️ `build_prep`은 이 순서로 **문장 목록과 각주 번호까지** 만든다 — 렌더 직전에 순서만
+       바꾸면 각주가 1,3,2로 붙는다(번호는 첫 등장 순서로 매겨진다).
+    """
+    return [it for it in items if it.get("kind") != "memo"] + [
+        it for it in items if it.get("kind") == "memo"
+    ]
+
+
 def prep_markdown(items: list[dict]) -> str:
     """게이트가 볼 본문. 화면 조립물이라 마크다운 구조가 없어 **문장을 줄로 잇는다** —
     금지 표현·MNPI는 문자열에서 찾으므로 이 형태로 충분하다."""
@@ -634,6 +669,8 @@ def build_prep(customer: dict, items: list[dict], now: datetime | None = None) -
     _ensure_fonts()
     st = _styles()
     now = now or datetime.now(BIZ_TZ)
+    # ⚠️ **여기서 한 번만 바꾼다.** 아래 문장 목록·각주 번호·본문 루프가 모두 이 순서를 쓴다.
+    items = prep_order(items)
     sentences = prep_sentences(items)
     number_of, sources = footnotes(sentences, [{"kind": "para", "idx": list(range(len(sentences)))}])
 
@@ -698,30 +735,51 @@ def build_prep(customer: dict, items: list[dict], now: datetime | None = None) -
 
     flow.append(Spacer(1, 12))
 
-    # 항목은 **PB가 담은 순서 그대로** 간다. 정렬하지 않는 이유: 무엇을 먼저 꺼낼지가
-    # 이미 그 사람의 판단이고, 문서가 그걸 다시 정하면 고른 의미가 줄어든다.
+    # 항목은 **묶음 안에서 담은 순서 그대로** 간다(묶음은 위 `prep_order`가 갈랐다).
+    # 그 안을 다시 정렬하지 않는 이유: 무엇을 먼저 꺼낼지가 이미 그 사람의 판단이다.
+    #
+    # 제목(`AI 분석`·`PB 메모`)은 **누가 쓴 줄인지가 바뀔 때** 선다(2026-08-06). 순서가 이미
+    # 묶여 있으므로 실제로는 각각 한 번씩 서지만, 조건을 "앞에 한 번씩 박기"로 바꾸지는
+    # 않는다 — 제목이 서는 근거는 위치가 아니라 **저자가 바뀌었다는 사실**이고, 이렇게 두면
+    # 순서 규칙이 바뀌어도 제목이 저자와 어긋나지 않는다.
+    # ⚠️ 이 구분은 규정 문제다 — AI 초안과 사람이 쓴 말이 문서에서 갈려 읽혀야 한다(가드레일 4).
     i = 0
+    section: str | None = None
+
+    def _section(name: str) -> None:
+        nonlocal section
+        if section != name:
+            flow.append(_p(name, st["h2"]))
+            section = name
+
     for it in items:
         kind = it.get("kind")
         if kind == "sentence":
-            flow.append(_p(escape(sentences[i]["text"]) + _refs(sentences[i], number_of), st["body"]))
+            _section("AI 분석")
+            flow.append(_bp(escape(sentences[i]["text"]) + _refs(sentences[i], number_of), st["bullet"]))
             i += 1
         elif kind == "option":
+            _section("AI 분석")
             targets = " · ".join(escape(t) for t in (it.get("targets") or []))
             head = f"선택지: {escape(it.get('label', ''))}"
-            flow.append(_p(head + (f" ({targets})" if targets else ""), st["h2"]))
+            # ⚠️ 제목(h2)이 아니라 **불릿**이다 — 선택지도 PB가 담은 한 항목이라 문장들과
+            #    같은 급이고, h2로 두면 `AI 분석`과 같은 크기가 되어 구역처럼 읽힌다.
+            flow.append(_bp(head + (f" ({targets})" if targets else ""), st["bullet"]))
             for _ in it.get("basis") or []:
-                flow.append(_p("· " + escape(sentences[i]["text"]) + _refs(sentences[i], number_of), st["src"]))
+                # 글머리표를 두 번 찍지 않는다 — 위 선택지 줄이 이미 불릿이고, 이 줄들은
+                # 거기 딸린 아랫줄이라 **들여쓰기가 소속을 말한다**(`바꾸지 않는 것`과 같은 자리).
+                flow.append(_p(escape(sentences[i]["text"]) + _refs(sentences[i], number_of), st["sub"]))
                 i += 1
             if it.get("keeps"):
-                flow.append(_p("바꾸지 않는 것: " + escape(sentences[i]["text"]), st["src"]))
+                flow.append(_p("바꾸지 않는 것: " + escape(sentences[i]["text"]), st["sub"]))
                 i += 1
         elif kind == "memo":
-            # PB가 쓴 줄 — AI 문장과 **한눈에 갈려야** 한다. 라벨을 앞에 두고 색을 내린다
-            # (문서가 흑백으로 나가도 라벨은 남는다).
-            flow.append(Spacer(1, 4))
-            flow.append(_p("[PB 메모] " + escape(sentences[i]["text"]), st["foot"]))
-            flow.append(Spacer(1, 2))
+            # PB가 쓴 줄 — AI 문장과 **한눈에 갈려야** 한다. 그 일을 이제 **제목**이 한다
+            # (2026-08-06). 그전에는 줄마다 `[PB 메모]` 라벨을 앞에 달고 8pt 회색으로 앉혔는데,
+            # 문서에서 사람이 직접 쓴 유일한 줄이 각주보다 작은 것은 무게가 뒤집힌 것이었다.
+            # 라벨은 구역이 대신하므로 뺀다 — 흑백으로 나가도 제목은 남는다.
+            _section("PB 메모")
+            flow.append(_bp(escape(sentences[i]["text"]), st["bullet"]))
             i += 1
 
     if sources:
