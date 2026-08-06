@@ -171,6 +171,19 @@ export type NoteAck = {
   text: string;
 };
 
+/** 금지 표현 예외 — 준법이 사유를 적어 그 문장의 투자권유·광고성 표현 위반을 통과시킨 기록.
+ *  ⚠️ `reason`이 **이 앱에서 유일한 자유 입력 사유**다(반려·보류·확인은 고정값).
+ *     통과의 근거가 건마다 달라서인데, 그 대신 사유별 집계는 포기했다(백엔드 WAIVER_MAX_LEN). */
+export type NoteWaiver = {
+  index: number;
+  /** 무엇을 통과시켰는가 — 사유만큼 중요하다(금지 목록이 늘어나도 기록이 남는다). */
+  phrase: string;
+  reason: string;
+  actor: string;
+  ts: string;
+  text: string;
+};
+
 /** 확인 사유 — 백엔드 main.py의 ACK_REASONS와 1:1. 자유 입력이 아닌 이유는 감사 대상이라서다. */
 export const ACK_REASONS = [
   '해석·전망',
@@ -236,9 +249,18 @@ export type NoteDetail = {
   /** PB가 제거·승인으로 판정한 문장들. acks와 달리 집계·게이트에는 영향이 없다.
    *  (이 필드가 붙기 전에 받은 응답은 없다 — 백엔드가 항상 배열을 준다.) */
   marks: NoteMark[];
+  /** 준법이 **사유를 직접 적어** 통과시킨 금지 표현(2026-08-06). ack과 컬럼이 다른 이유는
+   *  여는 규칙이 달라서다 — ack은 미인용, 이건 투자권유·광고성 표현 하나뿐. */
+  waivers: NoteWaiver[];
+  /** 금지 표현을 담은 문장 — **백엔드가 찾아 준다.** ⚠️ 금지 표현 목록을 이 파일로
+   *  복사하지 말 것: 컴플라이언스 어휘가 두 곳으로 갈린다(`compliance.FORBIDDEN_PHRASES`). */
+  blocking_phrases: { index: number; phrase: string }[];
   reviewer: string | null;
   deliberator: string | null;
   publisher: string | null;
+  /** 마지막 상태 변화 시각(ISO). 상담 준비의 노트 줄이 상태 옆에 날짜를 적는다 —
+   *  발행분이 우선이라 옛 발행분과 오늘 만든 초안이 같은 자리에 설 수 있다. */
+  updated_at: string;
   audit_log: AuditRow[];
 };
 

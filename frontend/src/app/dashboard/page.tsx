@@ -15,7 +15,6 @@
  */
 
 import {
-  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -38,6 +37,7 @@ import {
   fmtPct,
   hhmm,
   isDown,
+  notePdfUrl,
 } from './api';
 import {
   ALLOC_COLORS,
@@ -50,7 +50,6 @@ import {
 import F1Chat, { type ChatKeep, type ChatPrefill } from './F1Chat';
 // 고객 카드는 준비 줄만 보유 표 안에서 쓴다 — `PrepMemo`(이름 줄까지 그리는 쪽)는
 // 이제 고객 문의 모달 전용이다(ReviewModal).
-import { PrepLines } from './PrepMemo';
 import ResearchCard from './ResearchCard';
 import { ChatModal, NoteModal } from './ReviewModal';
 import {
@@ -187,8 +186,13 @@ type View = 'cust' | 'note' | 'ai';
 type Data = {
   customers: Customer[];
   queue: QueueItem[];
+  /** 상담 준비에 내보내는 종목별 **발행분 1건**(아래 `pickNotes`). 검토·심의 중인 노트는
+   *  안 담는다 — 그 자리에서 여는 것이 최종본 PDF이고, PDF는 발행분에만 있다. */
   notes: Record<string, NoteDetail>;
-  /** 노트 전건 색인(id 내림차순). notes는 종목별 최신 1건만 담아서 감사로그 필터를
+  /** id → 상세. **모달은 종목이 아니라 노트를 연다** — 종목으로 열면 큐에서 고른 건과
+   *  화면이 그린 건이 갈린다(큐 행은 심의중 #32인데 발행분 #23이 열리는 식). */
+  notesById: Record<number, NoteDetail>;
+  /** 노트 전건 색인(id 내림차순). notes는 종목별 1건만 담아서 감사로그 필터를
    *  못 만든다 — 같은 종목의 옛 노트(예: 기아 #8)가 키에서 밀려나기 때문이다. */
   noteList: NoteIndex[];
   summary: Summary;
@@ -200,6 +204,25 @@ type Data = {
      라우트를 다시 부르되, 쓰는 자리와 같이 들여올 것. */
   brief: Brief | null;
 };
+
+/** 상담 준비에 낼 노트 = 종목별 **발행분 최신 1건**(순수).
+ *
+ *  ⚠️ 예전 규칙은 "종목별 최신 1건"이라 **새 초안 하나가 발행분을 덮었다**(실측: 기아 #23
+ *     발행분이 #32 검토중에 가려 열리지 않았다). 발행분은 PB가 상담에 실제로 써도 되는
+ *     유일한 등급이고, 이 자리에서 여는 것도 그 등급에만 있는 **최종본 PDF**다.
+ *  ⚠️ 미발행 노트는 여기 담지 않는다. 감추는 게 아니라 **자리가 다른 것**이다 —
+ *     검토·심의는 `작성·검토` 탭의 큐가 맡는다("읽을 것"과 "처리할 일"은 다른 목록이다).
+ *  ⚠️ 보류(rejected)는 호출자가 걸러서 넘긴다 — PB가 직접 버린 물건은 상담 재료가 아니다.
+ *
+ *  입력은 **id 내림차순**(최신 먼저)을 가정한다 — `/api/notes`가 그 순서로 준다.
+ */
+function pickNotes(live: NoteDetail[]) {
+  const notes: Record<string, NoteDetail> = {};
+  for (const d of live) {
+    if (d.status === 'published' && !notes[d.stock_code]) notes[d.stock_code] = d;
+  }
+  return notes;
+}
 
 /* ── 최근 14일 라벨 + 날짜별 집계 ───────────────────────────
    하루 경계는 브라우저 위치와 무관하게 KST 고정 — 백엔드 집계(db.py의 BIZ_TZ)와 같은
@@ -344,7 +367,12 @@ export default function DashboardPage() {
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [modal, setModal] = useState<
-    | { kind: 'note'; code: string }
+    /* 종목코드가 아니라 **노트 id**다 — 종목으로 열면 큐에서 고른 건과 화면이 그린 건이
+       갈린다(같은 종목에 발행분과 새 초안이 같이 있으면 큐 행을 눌러도 발행분이 열렸다). */
+    | { kind: 'note'; id: number }
+    /* 발행분 **최종본 PDF**를 화면에 띄운다(상담 준비의 노트 줄). 검토 화면(`note`)과
+       다른 모달인 이유: 상담 직전에 필요한 건 문장별 판정 도구가 아니라 **문서 자체**다. */
+    | { kind: 'notepdf'; id: number }
     | { kind: 'chat'; id: number }
     /* `f1`은 여는 신호일 뿐 질문을 실어 오지 않는다(예전 `q`는 걷어냈다) — 이 모달은
        닫아도 언마운트되지 않으므로(아래 오버레이 주석) 마운트 시점에만 읽는 prop은
@@ -439,23 +467,19 @@ export default function DashboardPage() {
           api<NoteDetail>(`/api/notes/${n.id}`).catch(() => null),
         ),
       );
-      // 종목별 최신 1건. noteIndex는 id 내림차순이므로 먼저 담긴 것이 최신이다
-      // (덮어쓰면 같은 종목의 옛 노트가 이기고, 그게 예전 동작이었다).
-      const notes: Record<string, NoteDetail> = {};
+      const live = details.filter((d): d is NoteDetail => !!d && d.status !== 'rejected');
+      const notesById: Record<number, NoteDetail> = {};
       details.forEach((d) => {
-        // ⚠️ 보류된 노트는 **상담 재료가 아니다** — PB가 직접 버린 물건이다.
-        //    거르지 않으면 같은 종목의 옛 발행분을 이 최신 1건이 덮어, 상담 준비 메모에서
-        //    "PB가 상담에 실제로 써도 되는 유일한 등급"이 사라진다(HANDOFF §2와 같은 사고).
-        //    감사로그 노트별 조회(noteList)에는 그대로 남으므로 추적은 끊기지 않는다.
-        if (d && d.status !== 'rejected' && !notes[d.stock_code])
-          notes[d.stock_code] = d;
+        if (d) notesById[d.id] = d;
       });
+      const notes = pickNotes(live);
       // 브리프는 아직 없을 수 있다(404) — 그건 오류가 아니라 상태다.
       const brief = await api<Brief>('/api/briefs/latest').catch(() => null);
       setData({
         customers,
         queue,
         notes,
+        notesById,
         noteList: noteIndex,
         summary,
         audit,
@@ -554,15 +578,6 @@ export default function DashboardPage() {
         같이 열리고 같이 닫힌다. */
   const [briefOpen, setBriefOpen] = useState(false);
   const toggleBrief = useCallback(() => setBriefOpen((o) => !o), []);
-
-  /* 고객 카드의 보유 표도 같은 방식으로 접는다 — 펼치면 그 종목의 준비 줄(공시·뉴스·노트)이
-     행 바로 아래로 들어온다. 키가 종목코드라 고객을 바꿔도 펼친 종목은 펼친 채로 남는다:
-     여러 고객이 같은 종목을 들고 있고, 훑는 동안 보려는 것도 대개 그 종목이다. */
-  const [holdOpen, setHoldOpen] = useState<Record<string, boolean>>({});
-  const toggleHold = useCallback(
-    (code: string) => setHoldOpen((o) => ({ ...o, [code]: !o[code] })),
-    [],
-  );
 
   const deleteBrief = useCallback(
     async (id: number) => {
@@ -853,7 +868,7 @@ export default function DashboardPage() {
   const openItem = (it: QueueItem) =>
     setModal(
       it.type === 'note'
-        ? { kind: 'note', code: it.code }
+        ? { kind: 'note', id: it.id }
         : { kind: 'chat', id: it.id },
     );
 
@@ -1585,81 +1600,55 @@ export default function DashboardPage() {
                             <th>종목</th>
                             <th className="num">평가금액</th>
                             <th className="num">주식 내</th>
-                            {/* 꺾쇠 칸 — 머리글은 비운다(값이 아니라 조작이라 이름이 없다) */}
-                            <th className="hcaret" />
                           </tr>
                         </thead>
-                        {/* 준비 메모(공시·뉴스·노트)를 **이 표 안으로 넣었다**(2026-08-03).
-                            아래에 따로 두었더니 종목 이름이 표에 한 번, 메모에 또 한 번 나와
-                            같은 목록이 두 벌이었다 — 접는 자리도 둘이었다. 이제 보유 행을
-                            누르면 그 종목의 준비 줄이 바로 아래로 펼쳐진다: 금액·비중을 보던
-                            눈이 그 자리에서 근거로 이어진다. */}
+                        {/* **종목 이름이 곧 그 종목의 최종본 PDF를 여는 버튼이다**
+                            (2026-08-06). 예전에는 눌러서 준비 줄(공시·뉴스·노트)을 펼쳤는데,
+                            상담 직전에 실제로 여는 것은 결국 노트였고 펼침은 그 앞의 한 단계였다.
+                            ⚠️ **발행분이 없는 종목은 버튼을 아예 안 그린다** — 회색 버튼이나
+                               빈 뷰어를 여는 대신 누를 것이 없는 상태로 둔다("못 하는 조작은
+                               버튼을 그리지 않는다"와 같은 규칙).
+                            ⚠️ 꺾쇠 칸도 같이 걷어냈다 — 펼칠 것이 없으면 그 기호는 거짓말이다.
+                            ⚠️ 이 표에서 공시·뉴스 줄이 빠진다. 그건 브리핑 카드와 고객 문의
+                               모달(PrepMemo)에 그대로 있다. */}
                         <tbody>
                           {selected.holdings.map((h) => {
-                            const open = !!holdOpen[h.code];
+                            const note = data.notes[h.code] ?? null;
                             return (
-                              <Fragment key={h.code}>
-                                <tr className={open ? 'hrow open' : 'hrow'}>
-                                  <td>
-                                    {/* 종목명이 이 표의 주어다 — 고객 표의 이름과 같은
-                                        무게로. 종목코드는 부가정보라 그대로 둔다.
-                                        이름 칸 전체가 여는 버튼이다(금액·비중 칸은 아니다 —
-                                        숫자를 읽다 잘못 누르는 자리를 만들지 않는다). */}
+                              <tr className="hrow" key={h.code}>
+                                <td>
+                                  {note ? (
                                     <button
                                       type="button"
                                       className="hrow-toggle"
-                                      aria-expanded={open}
-                                      title={
-                                        open
-                                          ? '접기 — 공시·뉴스·노트를 숨깁니다'
-                                          : '펴기 — 공시·뉴스·노트를 봅니다'
+                                      title={`${h.name} 종목 노트 PDF 열기 (발행분)`}
+                                      onClick={() =>
+                                        setModal({ kind: 'notepdf', id: note.id })
                                       }
-                                      onClick={() => toggleHold(h.code)}
                                     >
                                       <strong>{h.name}</strong>{' '}
                                       <span style={{ color: 'var(--muted)' }}>
                                         {h.code}
                                       </span>
                                     </button>
-                                  </td>
-                                  <td className="num">₩{fmtKRW(h.amt)}</td>
-                                  {/* 비중이 없으면 빈칸이 아니라 `—`. 빈칸은 "0%"로도
-                                      "아직 안 셌다"로도 읽힌다. */}
-                                  <td className="num pct-eq">
-                                    {h.pct_of_equity == null
-                                      ? '—'
-                                      : `${h.pct_of_equity}%`}
-                                  </td>
-                                  {/* 꺾쇠는 **줄 맨 끝**이다 — 이름 옆에 두면 금액 열
-                                      앞에서 줄이 한 번 끊겨 읽힌다. 여기도 누르면 열리지만
-                                      낭독에 실리는 조작은 위 이름 버튼 하나뿐이다
-                                      (같은 일을 하는 컨트롤이 둘로 읽히지 않게). */}
-                                  <td
-                                    className="hcaret"
-                                    onClick={() => toggleHold(h.code)}
-                                  >
-                                    <span className="bcaret" aria-hidden="true">
-                                      {open ? '⌄' : '›'}
+                                  ) : (
+                                    <span className="hrow-plain">
+                                      <strong>{h.name}</strong>{' '}
+                                      <span style={{ color: 'var(--muted)' }}>
+                                        {h.code}
+                                      </span>
                                     </span>
-                                  </td>
-                                </tr>
-                                {open && (
-                                  <tr className="hrow-detail">
-                                    <td colSpan={4}>
-                                      <div className="prep prep-inline">
-                                        <PrepLines
-                                          code={h.code}
-                                          brief={data.brief}
-                                          notes={data.notes}
-                                          onOpenNote={(code) =>
-                                            setModal({ kind: 'note', code })
-                                          }
-                                        />
-                                      </div>
-                                    </td>
-                                  </tr>
-                                )}
-                              </Fragment>
+                                  )}
+                                </td>
+                                <td className="num">₩{fmtKRW(h.amt)}</td>
+                                {/* 비중이 없으면 빈칸이 아니라 `—`. 빈칸은 "0%"로도
+                                    "아직 안 셌다"로도 읽힌다. */}
+                                <td className="num pct-eq">
+                                  {h.pct_of_equity == null
+                                    ? '—'
+                                    : `${h.pct_of_equity}%`}
+                                </td>
+                              </tr>
                             );
                           })}
                         </tbody>
@@ -2093,23 +2082,67 @@ export default function DashboardPage() {
           }}
         >
           <div
-            className="modal"
+            className={`modal${modal.kind === 'notepdf' ? ' pdfmodal' : ''}`}
             role="dialog"
             aria-modal="true"
-            aria-label="검토 화면"
+            aria-label={modal.kind === 'notepdf' ? '종목 노트' : '검토 화면'}
           >
-            {modal.kind === 'note' && data.notes[modal.code] && (
+            {/* 발행분 최종본 — **문서를 그대로 띄운다.** 상담 직전에 필요한 건 문장별 판정
+                도구가 아니라 읽을 문서라, 검토 화면(NoteModal)을 열지 않는다.
+                ⚠️ 여기서 다시 그리지 않고 백엔드가 만든 PDF를 그대로 싣는다 — 화면용으로
+                   HTML을 따로 만들면 인쇄물과 화면이 갈린다(그게 각주 번호가 어긋나는 길이다).
+                브라우저 기본 뷰어라 내려받기·인쇄는 그 툴바에 이미 있다. */}
+            {modal.kind === 'notepdf' && data.notesById[modal.id] && (
+              <>
+                <div className="m-head">
+                  <h3>
+                    {data.notesById[modal.id].corp_name}(
+                    {data.notesById[modal.id].stock_code}) 종목 노트
+                  </h3>
+                  <span className="m-id" aria-label={`노트 번호 ${modal.id}`}>
+                    #{modal.id}
+                  </span>
+                  <span className="pill">{PILL.published[0]}</span>
+                  {/* 뷰어가 없는 브라우저에서 상자가 비어 버리는 경우의 탈출구다. 급이 낮아
+                      `.btn-quiet`(면도 테두리도 없는 글자)이고, 내려받기가 아니라 **여는**
+                      길이다 — 저장은 뷰어 툴바가 이미 갖고 있다. */}
+                  <div className="m-acts">
+                    <a
+                      className="btn-quiet"
+                      href={notePdfUrl(modal.id, ACTOR[role], true)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      새 탭에서 열기
+                    </a>
+                    <button
+                      className="m-close"
+                      aria-label="닫기"
+                      onClick={() => setModal(null)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+                <iframe
+                  className="pdfframe"
+                  src={notePdfUrl(modal.id, ACTOR[role], true)}
+                  title={`${data.notesById[modal.id].corp_name} 종목 노트 PDF`}
+                />
+              </>
+            )}
+            {modal.kind === 'note' && data.notesById[modal.id] && (
               <NoteModal
-                key={modal.code}
-                note={data.notes[modal.code]}
+                key={modal.id}
+                note={data.notesById[modal.id]}
                 role={role}
                 toast={toast}
                 onClose={() => setModal(null)}
                 onChanged={async () => {
                   await load();
-                  return api<NoteDetail>(
-                    `/api/notes/${data.notes[modal.code].id}`,
-                  ).catch(() => null);
+                  return api<NoteDetail>(`/api/notes/${modal.id}`).catch(
+                    () => null,
+                  );
                 }}
               />
             )}
@@ -2133,7 +2166,7 @@ export default function DashboardPage() {
                     brief={data.brief}
                     notes={data.notes}
                     customerNames={customerNames}
-                    onOpenNote={(code) => setModal({ kind: 'note', code })}
+                    onOpenNotePdf={(id) => setModal({ kind: 'notepdf', id })}
                     onClose={() => setModal(null)}
                     onChanged={() => void load()}
                     chatKeep={chatKeep}

@@ -2,8 +2,11 @@ FROM python:3.11-slim
 
 # Agent SDK spawns the `claude` CLI as a subprocess, so Node + the CLI package
 # must be present in the image (not just the Python SDK).
+# `fonts-nanum` is for the note PDF (backend/notepdf.py). reportlab embeds the TTF, and
+# without a Korean face the whole document renders as blank boxes *without raising* —
+# so the PDF route refuses to run when this package is missing.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
+    && apt-get install -y --no-install-recommends curl ca-certificates gnupg fonts-nanum \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm install -g @anthropic-ai/claude-code \

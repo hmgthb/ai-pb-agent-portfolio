@@ -15,24 +15,26 @@
 
 import { useState } from 'react';
 import { fmtDate, fmtKRW } from './api';
-import { PILL, type Brief, type Customer, type NoteDetail } from './types';
+import { type Brief, type Customer, type NoteDetail } from './types';
 
 /** 한 종목의 준비 줄(공시 2 · 뉴스 1 · 노트) — **이 파일이 유일한 정본**이다.
  *
- *  자리가 셋으로 늘었다(2026-08-03): 고객 카드의 **보유 표 안**(펼친 행) · 고객 문의 모달 ·
- *  아래 `PrepMemo`. 표 안으로 들어간 이유는 §고객 카드 주석에 있다 — 종목 이름이 표에
- *  한 번, 준비 메모에 또 한 번 나와 같은 목록이 두 벌이었다.
+ *  자리는 지금 **고객 문의 모달 하나**다(2026-08-06). 고객 카드의 보유 표 안에도 있었지만,
+ *  그 표의 종목 이름은 이제 **최종본 PDF를 여는 버튼**이 됐다(page.tsx) — 상담 직전에 실제로
+ *  여는 건 결국 노트였고, 공시·뉴스는 브리핑 카드가 이미 같은 것을 보여준다.
  *  ⚠️ 개수(공시 2·뉴스 1)와 빈 상태 문구를 여기 말고 다른 데서 다시 쓰지 말 것. */
 export function PrepLines({
   code,
   brief,
   notes,
-  onOpenNote,
+  onOpenNotePdf,
 }: {
   code: string;
   brief: Brief | null;
+  /** 종목별 **발행분 1건**(page.tsx `pickNotes`). 검토·심의 중인 노트는 여기 안 온다. */
   notes: Record<string, NoteDetail>;
-  onOpenNote: (code: string) => void;
+  /** 노트 PDF를 화면에 띄운다. ⚠️ 인자는 종목코드가 아니라 **노트 id**다. */
+  onOpenNotePdf: (noteId: number) => void;
 }) {
   const b = brief?.items.find((i) => i.stock_code === code) ?? null;
   const note = notes[code] ?? null;
@@ -61,18 +63,21 @@ export function PrepLines({
           <span className="bcode"> {l.meta}</span>
         </div>
       ))}
+      {/* 노트 줄은 **발행분에만** 선다(2026-08-06). 이 자리에서 여는 건 검토 화면이 아니라
+          **최종본 PDF**이고, 그건 발행된 노트에만 있다 — 상태 알약·날짜를 곁들이지 않는 것도
+          같은 이유다: 고를 게 하나뿐이면 그 옆의 설명은 고르는 데 쓰이지 않는다.
+          검토·심의 중인 노트를 여는 길은 `작성·검토` 탭의 큐다(거기가 그 일의 자리다). */}
       {note && (
         <div className="prep-line">
           <span className="btag">노트</span>
-          <button className="linklike" onClick={() => onOpenNote(code)}>
+          <button className="linklike" onClick={() => onOpenNotePdf(note.id)}>
             {note.corp_name} 종목 노트 열기
           </button>
-          <span className="bcode"> · {PILL[note.status]?.[0] ?? note.status}</span>
         </div>
       )}
       {!lines.length && !note && (
         <div className="prep-line muted">
-          오늘 브리핑·노트에 이 종목은 없습니다.
+          오늘 브리핑·발행된 노트에 이 종목은 없습니다.
         </div>
       )}
     </>
@@ -83,14 +88,16 @@ export default function PrepMemo({
   customer,
   brief,
   notes,
-  onOpenNote,
+  onOpenNotePdf,
   only,
   amounts,
 }: {
   customer: Customer;
   brief: Brief | null;
+  /** 종목별 **발행분 1건**. PrepLines와 같은 맵이다. */
   notes: Record<string, NoteDetail>;
-  onOpenNote: (code: string) => void;
+  /** ⚠️ 인자는 노트 id다(PrepLines와 같다). */
+  onOpenNotePdf: (noteId: number) => void;
   /** 종목코드 하나 — 주면 그 종목만 그린다(문의 모달). 없으면 전 보유 종목. */
   only?: string;
   /** 종목 이름 줄에 평가금액·주식 내 비중을 같이 적는다. 보유 표가 없는 화면에서만 켠다. */
@@ -150,7 +157,7 @@ export default function PrepMemo({
                 code={h.code}
                 brief={brief}
                 notes={notes}
-                onOpenNote={onOpenNote}
+                onOpenNotePdf={onOpenNotePdf}
               />
             )}
           </div>

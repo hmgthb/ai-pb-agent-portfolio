@@ -8,7 +8,7 @@
  */
 
 import { useState } from 'react';
-import { apiPost, errorMessage, fmtKRW, hhmm } from './api';
+import { apiPost, errorMessage, fmtKRW, hhmm, notePdfUrl } from './api';
 import F1Chat, { type ChatKeep, type ChatPrefill } from './F1Chat';
 import PrepMemo from './PrepMemo';
 import {
@@ -32,6 +32,7 @@ import {
   type NoteMark,
   type NoteSentence,
   type NoteSource,
+  type NoteWaiver,
   type PbMark,
   type QueueChat,
   type Role,
@@ -69,6 +70,57 @@ function reviewTier(s: NoteSentence, mark?: NoteMark): number {
 
 /** 문장 목록. `rows`의 i는 **원본 sentences 배열의 인덱스**다 — 확인 기록(ack)이 그
  *  인덱스로 저장되므로, 소제목·고지문구를 걸러낸 뒤의 순번을 쓰면 다른 문장을 가리킨다. */
+/** 금지 표현 예외 한 줄 — 사유 입력 + 적용/되돌리기.
+ *
+ *  입력값은 이 컴포넌트가 들고 있다(부모에 올리면 문장 하나 칠 때마다 목록 전체가 다시
+ *  그려진다). 예외가 걸린 뒤에는 입력 대신 **사유를 그대로 보여준다** — 무엇을 근거로
+ *  통과시켰는지가 화면에서 사라지면 감사로그를 열어야 알 수 있다. */
+function WaiveRow({
+  phrase,
+  waiver,
+  onWaive,
+}: {
+  phrase: string;
+  waiver?: NoteWaiver;
+  onWaive: (reason: string | null) => void;
+}) {
+  const [reason, setReason] = useState('');
+  if (waiver) {
+    return (
+      <div className="waive done">
+        <span className="waive-why">{waiver.reason}</span>
+        <button className="btn-quiet" onClick={() => onWaive(null)}>
+          예외 되돌리기
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="waive">
+      <input
+        className="waive-in"
+        // 고객 이야기가 아니라 규정 판단이지만, 이 앱의 입력창은 전부 자동완성을 끈다
+        // (브라우저 저장소에 업무 문장이 쌓이지 않게 — F1 입력창과 같은 규칙).
+        autoComplete="off"
+        placeholder={`'${phrase}'를 통과시키는 사유 (감사로그에 남습니다)`}
+        value={reason}
+        maxLength={200}
+        onChange={(e) => setReason(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && reason.trim()) onWaive(reason.trim());
+        }}
+      />
+      <button
+        className="btn"
+        disabled={!reason.trim()}
+        onClick={() => onWaive(reason.trim())}
+      >
+        예외 적용
+      </button>
+    </div>
+  );
+}
+
 function SentenceRows({
   rows,
   acks,
@@ -77,6 +129,9 @@ function SentenceRows({
   marks,
   canMark,
   onMark,
+  blocking,
+  waivers,
+  onWaive,
 }: {
   rows: { s: NoteSentence; i: number }[];
   acks: NoteAck[];
@@ -87,9 +142,16 @@ function SentenceRows({
   /** PB + 검토 단계에서만 판정할 수 있다 — 확인(ack)과 단계가 겹치지 않는다 */
   canMark: boolean;
   onMark: (index: number, mark: PbMark | null) => void;
+  /** 금지 표현을 담은 문장 — 백엔드가 찾아 준다(`blocking_phrases`). */
+  blocking: { index: number; phrase: string }[];
+  waivers: NoteWaiver[];
+  /** 사유는 **자유 입력**이다. null이면 예외를 되돌린다. */
+  onWaive: (index: number, reason: string | null) => void;
 }) {
   const ackOf = new Map(acks.map((a) => [a.index, a]));
   const markOf = new Map(marks.map((m) => [m.index, m]));
+  const phraseOf = new Map(blocking.map((b) => [b.index, b.phrase]));
+  const waiverOf = new Map(waivers.map((w) => [w.index, w]));
   /* 출처는 **번호 각주**로 나간다(2026-07-28). 예전에는 문장 옆에 날짜 배지를 붙였는데,
      `.stext`가 55%로 눌려 배지 2개짜리 문장이 4줄로 흘렀다(배지 없는 문장은 2줄).
      번호만 남기면 문장이 폭을 다 쓰고, 같은 출처를 여러 번 인용해도 번호가 하나라
@@ -161,6 +223,26 @@ function SentenceRows({
                   {PB_MARK_LABEL[mark.mark]}
                 </span>
               )}
+              {/* 금지 표현 — **왜 이 문장이 막고 있는지**를 문장 흐름 안에서 말한다.
+                  예외가 걸리면 같은 자리에서 배지가 바뀐다(사유는 title에 그대로). */}
+              {phraseOf.has(i) &&
+                (waiverOf.has(i) ? (
+                  <span
+                    className="sbadge ack inline"
+                    title={`${actorLabel(waiverOf.get(i)!.actor)} · ${hhmm(
+                      waiverOf.get(i)!.ts,
+                    )} 예외 · ${waiverOf.get(i)!.reason}`}
+                  >
+                    예외 승인 · {phraseOf.get(i)}
+                  </span>
+                ) : (
+                  <span
+                    className="sbadge un inline"
+                    title="투자권유·광고성 표현으로 발행이 막힙니다"
+                  >
+                    투자권유 표현 · {phraseOf.get(i)}
+                  </span>
+                ))}
             </span>
             {/* 확인 UI는 미인용 문장에만 붙는다. 출처가 있는 문장은 애초에 게이트를
                 막고 있지 않으므로 풀 것도 없다. 이것만 조작이라 문장 밖에 남긴다. */}
@@ -218,6 +300,19 @@ function SentenceRows({
                   제거
                 </button>
               </span>
+            )}
+            {/* 금지 표현 예외 — **이 앱에서 유일하게 사유를 손으로 적는 자리**다.
+                다른 사유(반려·보류·확인)는 전부 고정값인데 여기만 다른 이유: 통과시키는
+                근거가 건마다 다르다("제3자 목표주가의 사실 보도"는 다음 건에 안 맞는다).
+                ⚠️ 되돌릴 수 있는 조작이라 무장 단계를 두지 않는다(`.acksel`과 같은 규칙).
+                ⚠️ 규칙을 여는 조작이므로 **심의 단계의 준법에게만** 그린다(canAck과 같은 조건).
+                ⚠️ 이건 금지 표현 규칙 하나만 연다 — 미인용·지연시세는 그대로 남는다. */}
+            {canAck && phraseOf.has(i) && (
+              <WaiveRow
+                phrase={phraseOf.get(i)!}
+                waiver={waiverOf.get(i)}
+                onWaive={(reason) => onWaive(i, reason)}
+              />
             )}
             {/* PB 판정 — 셀렉트가 아니라 버튼 둘이다. 고를 것이 둘뿐이라 목록을 열어
                 고르는 것보다 한 번 누르는 게 짧고, 지금 무엇으로 판정돼 있는지가
@@ -497,6 +592,29 @@ export function NoteModal({
      말하지 않으면 "왜 발행이 안 되는지"를 셀렉트를 눌러 보고 알아내야 한다.
      (`PB 제거`는 위에서 이미 빠졌다 — 세지도 않고 막지도 않는다.) */
   const lockedBlocking = unacked.filter(({ i }) => !markOf.get(i)).length;
+  /* 미인용 말고도 막는 게 있다 — **금지 표현**. 예전에는 미인용만 세고 "이제 발행할 수
+     있습니다"라고 적어서, 다 확인하고도 발행이 409로 막히는 화면이 있었다(노트 #33 실측).
+     ⚠️ 여기서 새로 판정하지 않는다: 백엔드가 준 `blocking_phrases`에서 예외가 걸린 것만
+        뺀다(금지 표현 목록을 프론트로 복사하면 컴플라이언스 어휘가 두 곳으로 갈린다). */
+  const waivedSet = new Set((current.waivers ?? []).map((w) => w.index));
+  const phraseBlocking = (current.blocking_phrases ?? []).filter(
+    (b) => !waivedSet.has(b.index),
+  ).length;
+
+  /** 금지 표현 예외. ack과 같은 모양이다 — 응답의 위반 목록으로 화면을 다시 그린다. */
+  const waive = async (index: number, reason: string | null) => {
+    const r = await apiPost(`/api/notes/${current.id}/waive`, {
+      actor,
+      index,
+      reason,
+    });
+    if (!r.ok) {
+      setRes({ blocked: errorMessage(r.body) });
+      return;
+    }
+    const fresh = await onChanged();
+    if (fresh) setCurrent(fresh);
+  };
 
   const ack = async (index: number, reason: string | null) => {
     const r = await apiPost(`/api/notes/${current.id}/ack`, {
@@ -565,7 +683,9 @@ export function NoteModal({
                 (lockedBlocking
                   ? ` 그중 ${lockedBlocking}개는 PB 판정이 없어 잠겨 있습니다 — PB가 검토 단계에서 판정해야 풀립니다.`
                   : '')
-              : '미인용 문장을 모두 확인했습니다. 이제 발행할 수 있습니다.'}
+              : phraseBlocking
+                ? `투자권유·광고성 표현 ${phraseBlocking}개가 남아 있습니다. 인용이라면 사유를 적어 예외로 통과시키고, 아니면 그 문장을 빼세요.`
+                : '미인용 문장을 모두 확인했습니다. 이제 발행할 수 있습니다.'}
             {current.acks.length > 0 &&
               ` (확인 ${current.acks.length}개, 감사로그에 기록됨)`}
           </div>
@@ -575,6 +695,9 @@ export function NoteModal({
           acks={current.acks}
           canAck={canAck}
           onAck={ack}
+          blocking={current.blocking_phrases ?? []}
+          waivers={current.waivers ?? []}
+          onWaive={waive}
           marks={current.marks ?? []}
           canMark={canMark}
           onMark={mark}
@@ -593,6 +716,26 @@ export function NoteModal({
             if (fresh) setCurrent(fresh);
           }}
         />
+        {/* 발행분에서만 서는 조작 — 이 상태의 노트에는 상태 전이가 없어서 조작 줄이
+            비어 있었다. **PB·준법 둘 다에게 낸다**: 통과시키는 사람은 준법이지만 상담에
+            들고 가는 사람은 PB이고, 발행분은 PB가 상담에 써도 되는 유일한 등급이다.
+            ⚠️ 버튼이 아니라 링크다(api.notePdfUrl 주석) — 새 탭으로 열어 두면 모달과
+            검토 맥락을 잃지 않는다(출처 링크와 같은 규칙). */}
+        {current.status === 'published' && (
+          <div className="m-actions">
+            <a
+              className="btn primary"
+              href={notePdfUrl(current.id, actor)}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              PDF 내려받기
+            </a>
+            <span className="hint">
+              최종본입니다. 뺀 문장은 본문에서 빠지고 판정 이력으로 남습니다.
+            </span>
+          </div>
+        )}
         {/* 감사로그는 여기 두지 않는다 — 준법 · 감시 탭의 감사로그 카드에서 노트별로
             골라 본다(2026-07-28). 이 모달에 두면 화면 절반이 로그였고, 같은 원장이
             두 곳에 나뉘어 있었다. 이 자리에 남는 이력 요약은 모달 머리말 한 줄이다
@@ -650,7 +793,7 @@ export function ChatModal({
   customerNames,
   onClose,
   onChanged,
-  onOpenNote,
+  onOpenNotePdf,
   onOpenPortfolio,
   toast,
   chatKeep,
@@ -661,13 +804,14 @@ export function ChatModal({
   /** 오늘 브리프·노트 색인 — 고객 카드의 상담 준비 메모와 **같은 재료**다.
    *  여기서 에이전트를 새로 돌리지 않는다(크레딧 0). */
   brief: Brief | null;
+  /** 종목별 **발행분 1건**(page.tsx `pickNotes`). */
   notes: Record<string, NoteDetail>;
   /** 보내기 전 경고용 담당 고객 명단(알림일 뿐 — 판정은 백엔드 반출 가드가 한다). */
   customerNames: string[];
   onClose: () => void;
   onChanged: () => void;
-  /** 종목 노트 모달로 바꿔 연다. 문의는 큐에 그대로 남으므로 잃는 것은 없다. */
-  onOpenNote: (code: string) => void;
+  /** 발행분 최종본 PDF를 띄운다(인자는 **노트 id**). 문의는 큐에 그대로 남는다. */
+  onOpenNotePdf: (noteId: number) => void;
   /** 이 고객의 포트폴리오 카드로 보낸다(모달을 닫고 상담 준비 탭에서 그 고객을 고른다).
    *  준법에게는 고객 포트폴리오 카드 자체가 없으므로 넘어오지 않는다 — 정보장벽. */
   onOpenPortfolio?: () => void;
@@ -775,7 +919,7 @@ export function ChatModal({
                   customer={customer}
                   brief={brief}
                   notes={notes}
-                  onOpenNote={onOpenNote}
+                  onOpenNotePdf={onOpenNotePdf}
                   only={asked.code}
                   amounts
                 />

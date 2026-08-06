@@ -66,6 +66,105 @@ QUOTE_TERMS = ["시세", "주가", "종가", "현재가", "등락률"]
 _PRICE_RE = re.compile(r"\d[\d,]*(?:\.\d+)?\s*[천만억조]?\s*원")
 _PERCENT_RE = re.compile(r"-?\d+(?:\.\d+)?\s*%")
 
+
+def quotes_market_data(sentence: dict) -> bool:
+    """이 **문장**이 시세를 인용했는가(순수).
+
+    판정 근거 둘:
+      ① 출처가 시세 그 자체(`[^krx]`) — 수치 표기를 어떻게 하든 시세 인용이다.
+      ② 시세 낱말과 수치가 **같은 문장** 안에 있다 — 뉴스에서 옮긴 "주가 7만원 돌파"처럼
+         출처가 krx가 아니어도 값을 실었으면 고지 대상이다(옛 주석이 남긴 판단 그대로).
+    """
+    text = sentence.get("text") or ""
+    sources = sentence.get("sources") or (
+        [sentence["source"]] if sentence.get("source") else []
+    )
+    if any((s or {}).get("type") == "krx" for s in sources):
+        return True
+    # ⚠️ `목표주가`는 `주가`를 품지만 **시세가 아니다**(앞으로 갈 것이라는 전망치다).
+    #    가리지 않으면 "목표주가 49만원"이 시세 인용으로 잡혀, 지연시세 고지를 요구받는다 —
+    #    그 문장을 다루는 규칙은 FORBIDDEN_PHRASES 쪽이고 거기서 이미 본다.
+    text = text.replace("목표주가", "")
+    if not any(t in text for t in QUOTE_TERMS):
+        return False
+    return bool(_PRICE_RE.search(text) or _PERCENT_RE.search(text))
+
+
+def forbidden_carriers(sentences: list[dict], removed: set[int] | None = None) -> list[dict]:
+    """금지 표현을 담고 있는 **문장 목록** — `[{"index": i, "phrase": "목표주가"}, ...]`.
+
+    화면이 "어느 문장이 발행을 막고 있나"를 스스로 찾지 않게 하려고 백엔드가 준다.
+    ⚠️ 금지 표현 목록을 프론트로 복사하지 말 것 — 컴플라이언스 어휘가 두 곳으로 갈린다
+       (미인용 확인 유효성을 `live_acks` 한 곳에서만 판정하는 것과 같은 규칙, §1-2).
+    """
+    out: list[dict] = []
+    for i, s in enumerate(sentences or []):
+        if removed and i in removed:
+            continue
+        text = s.get("text") or ""
+        for phrase in FORBIDDEN_PHRASES:
+            if phrase in text:
+                out.append({"index": i, "phrase": phrase})
+    return out
+
+
+def forbidden_hits(
+    content_md: str,
+    sentences: list[dict],
+    waived: set[int] | None = None,
+    removed: set[int] | None = None,
+) -> list[str]:
+    """본문에 남아 있는 금지 표현. 예외(waiver)가 걸린 문장의 것은 빼고 센다.
+
+    ⚠️ **예외는 문장 단위다.** 같은 표현이 다른 문장에도 있으면 그건 그대로 위반이다 —
+       한 문장을 통과시킨 판단이 본문 전체에 번지면 예외가 아니라 규칙 해제가 된다.
+    ⚠️ **문장 목록에서 못 찾은 표현은 그대로 위반이다.** 본문에는 있는데 문장 배열에 없다는
+       건 소제목·고지문구처럼 파서가 다르게 담았다는 뜻이라, 면제할 근거가 없다(막는 쪽).
+    """
+    waived = waived or set()
+    hits: list[str] = []
+    for phrase in FORBIDDEN_PHRASES:
+        if phrase not in content_md:
+            continue
+        carriers = [
+            c["index"] for c in forbidden_carriers(sentences, removed) if c["phrase"] == phrase
+        ]
+        if not carriers or any(i not in waived for i in carriers):
+            hits.append(phrase)
+    return hits
+
+
+def _quoted_term(
+    content_md: str, sentences: list[dict], removed: set[int] | None = None
+) -> str | None:
+    """지연시세 고지가 필요하면 그 근거가 된 낱말을, 아니면 None.
+
+    ⚠️ **문서 단위 공존으로 판정하지 않는다**(2026-08-06 수정). 예전에는 「시세 낱말이
+       어딘가 있다」 + 「가격·퍼센트가 어딘가 있다」였는데, 그러면 시세를 한 줄도 인용하지
+       않은 노트가 **자기 실적 수치 때문에** 막힌다 — 실측: 노트 #33의 "주가가 최근 큰 폭
+       하락했으나…"(수치 없음)가 다른 문단의 "매출액 300조8,709억원"과 만나 걸렸다.
+       규칙의 뜻은 "시세를 실었으면 지연시세임을 밝혀라"이므로 **문장 단위**로 본다.
+    ⚠️ 뺀 문장(`제거`)은 최종본에 없으므로 세지 않는다 — 다만 **인덱스로 받는다.**
+       본문에 그 문장 원문이 남아 있는지로 추론하면, 본문과 문장 목록이 어긋나는 순간
+       규칙이 **조용히 꺼진다**(그 방향으로 틀리면 안 된다, §1-1). 확인(ack)과 달리
+       제거만 뺀다 — 확인은 미인용 규칙 하나만 푼다.
+    ⚠️ 문장 목록이 비면 **문서 단위로 되돌아간다.** 파싱이 실패했을 때 규칙이 조용히
+       꺼지는 것보다 과검출이 낫다.
+    """
+    for i, s in enumerate(sentences or []):
+        if removed and i in removed:
+            continue
+        if quotes_market_data(s):
+            text = s.get("text") or ""
+            return next((t for t in QUOTE_TERMS if t in text), "시세")
+    if sentences:
+        return None
+    if any(t in content_md for t in QUOTE_TERMS) and (
+        _PRICE_RE.search(content_md) or _PERCENT_RE.search(content_md)
+    ):
+        return next(t for t in QUOTE_TERMS if t in content_md)
+    return None
+
 # ponytail: 진짜 MNPI/PII 탐지는 NER·분류 모델급 작업이다. F3는 DART 공시·공개 뉴스만
 # 입력으로 쓰는 파이프라인이라(자유 텍스트 챗이 아님) 리스크가 F1보다 낮은 편이라
 # 명백한 키워드 휴리스틱으로 시작한다 — F1(대화형 챗) 붙일 때 반드시 강화할 것.
@@ -209,6 +308,8 @@ def check_note(
     sentences: list[dict],
     feature: str = "F3",
     acked_indices: set[int] | None = None,
+    removed_indices: set[int] | None = None,
+    waived_indices: set[int] | None = None,
 ) -> list[str]:
     """위반 사유 목록을 반환한다. 빈 리스트면 게이트 통과.
 
@@ -222,6 +323,15 @@ def check_note(
 
     ⚠️ **면제되는 건 미인용 규칙 하나뿐이다.** 투자권유·광고성 표현, MNPI 패턴,
     지연시세 고지 누락은 확인으로 풀 수 없다 — 그건 문장을 고쳐야 하는 위반이다.
+
+    removed_indices: **최종본에서 뺀** 문장(PB `제거`·준법 `제거`). 확인과 달리 본문에
+    남지 않으므로 시세 인용 판정에서 뺀다. `content_md`도 그 문장이 빠진 본문이 온다
+    (`main._effective_md`) — 인덱스를 따로 받는 이유는 `_quoted_term` 주석에 있다.
+
+    waived_indices: 준법이 **사유를 직접 적어** 금지 표현 위반을 통과시킨 문장(2026-08-06).
+    ⚠️ **금지 표현 규칙 하나만 연다.** 미인용은 확인(ack)이, 시세 고지는 문장 수정·제거가
+       푼다 — 셋을 한 조작으로 묶으면 "무엇을 판단했는지"가 기록에서 사라진다.
+    ⚠️ MNPI는 어떤 예외로도 안 열린다. 그건 판단의 문제가 아니라 정보장벽이다.
     """
     violations: list[str] = []
 
@@ -229,21 +339,20 @@ def check_note(
     if notice not in content_md:
         violations.append(f"{feature} 필수 고지문구 누락: \"{notice}\"")
 
-    for phrase in FORBIDDEN_PHRASES:
-        if phrase in content_md:
-            violations.append(f"투자권유·광고성 표현 감지: '{phrase}'")
+    for phrase in forbidden_hits(content_md, sentences, waived_indices, removed_indices):
+        violations.append(f"투자권유·광고성 표현 감지: '{phrase}'")
 
     for pattern in MNPI_PATTERNS:
         if re.search(pattern, content_md):
             violations.append(f"MNPI 의심 패턴 감지 (정규식: {pattern})")
 
     # "지연시세" 자체가 QUOTE_TERMS의 "시세"를 포함하므로, 고지가 있으면 자연히 통과한다.
-    quoted = [t for t in QUOTE_TERMS if t in content_md]
-    has_figure = _PRICE_RE.search(content_md) or _PERCENT_RE.search(content_md)
-    if quoted and has_figure and "지연시세" not in content_md:
-        violations.append(
-            f"시세 정보 포함('{quoted[0]}') — 지연시세 고지 누락 (실시간이 아님을 명시해야 함)"
-        )
+    if "지연시세" not in content_md:
+        term = _quoted_term(content_md, sentences, removed_indices)
+        if term:
+            violations.append(
+                f"시세 정보 포함('{term}') — 지연시세 고지 누락 (실시간이 아님을 명시해야 함)"
+            )
 
     # 소제목뿐 아니라 고지문구·구분선도 뺀다 — 우리가 강제로 붙인 워터마크가
     # "출처 없는 문장"으로 세어져 스스로 발행을 막던 문제가 있었다(citations 참고).

@@ -60,6 +60,15 @@ ALTER TABLE notes ADD COLUMN IF NOT EXISTS acks_json JSONB NOT NULL DEFAULT '[]'
 -- text를 같이 두는 이유도 acks_json과 같다(재파싱 후 인덱스 어긋남 대조).
 ALTER TABLE notes ADD COLUMN IF NOT EXISTS pb_marks_json JSONB NOT NULL DEFAULT '[]';
 
+-- 금지 표현 예외(waiver). 준법이 **사유를 직접 적어** 그 문장의 투자권유·광고성 표현
+-- 위반을 통과시킨 기록이다(2026-08-06). 확인(ack)·판정(mark)과 같은 모양이지만 **여는 것이
+-- 다르다**: ack은 미인용 규칙만, 이건 금지 표현 규칙만 연다. 서로 대신하지 못한다.
+-- [{"index": 10, "phrase": "목표주가", "reason": "제3자 목표주가의 사실 보도", ...}]
+-- ⚠️ reason이 **자유 입력인 유일한 사유 칸**이다(반려·보류·확인은 고정값). 통과시키는 근거는
+--    건마다 달라서 고정값으로 못 적는다는 판단이고, 그 대신 집계는 포기했다.
+-- text를 같이 두는 이유는 acks_json과 같다(재파싱 후 인덱스 어긋남 대조).
+ALTER TABLE notes ADD COLUMN IF NOT EXISTS waivers_json JSONB NOT NULL DEFAULT '[]';
+
 -- append-only: 애플리케이션 코드에서 UPDATE/DELETE 하지 않는다
 -- (강제하는 DB 트리거·권한 분리는 MVP 스코프 밖 — 운영 전환 시 추가할 것).
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -206,6 +215,37 @@ async def set_note_ack(
         json.dumps(acks, ensure_ascii=False),
     )
     return acks
+
+
+async def set_note_waiver(
+    note_id: int, index: int, phrase: str, reason: str | None, actor: str, text: str
+) -> list[dict]:
+    """금지 표현 예외를 남기거나(reason) 지운다(reason=None). 갱신된 전체 목록을 준다.
+
+    `set_note_ack`과 모양이 같다 — 한 문장에 하나, 되돌린 이력은 감사로그에.
+    ⚠️ `phrase`를 같이 남긴다: **무엇을 통과시켰는지**가 사유만큼 중요하고, 나중에 금지
+       목록이 늘어나면 "그때 그 표현에 대한 예외"였음이 기록으로 남아야 한다.
+    """
+    row = await pool().fetchrow("SELECT waivers_json FROM notes WHERE id = $1", note_id)
+    waivers = [w for w in json.loads(row["waivers_json"]) if w.get("index") != index]
+    if reason is not None:
+        waivers.append(
+            {
+                "index": index,
+                "phrase": phrase,
+                "reason": reason,
+                "actor": actor,
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "text": text[:60],
+            }
+        )
+    waivers.sort(key=lambda w: w["index"])
+    await pool().execute(
+        "UPDATE notes SET waivers_json = $2::jsonb, updated_at = now() WHERE id = $1",
+        note_id,
+        json.dumps(waivers, ensure_ascii=False),
+    )
+    return waivers
 
 
 async def set_note_mark(

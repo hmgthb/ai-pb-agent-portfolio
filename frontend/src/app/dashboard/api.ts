@@ -48,6 +48,20 @@ export const chatStreamUrl = (
   (session ? `&session=${encodeURIComponent(session)}` : '') +
   (customerId != null ? `&customer_id=${customerId}` : '');
 
+/** 발행된 노트의 최종본 PDF. **fetch가 아니라 링크로 연다** — 응답이 파일이라 브라우저가
+ *  내려받게 두는 편이 낫고(blob으로 받으면 파일명을 담은 헤더를 CORS로 다시 열어야 한다),
+ *  링크 이동은 예비요청(OPTIONS)을 타지 않아 CORS 함정(HANDOFF §2)에서도 비켜 있다.
+ *  ⚠️ 발행분만 열린다 — 다른 상태는 서버가 409다. */
+export const notePdfUrl = (
+  noteId: number,
+  actor: string,
+  /** 화면에 띄울 때(iframe) 켠다 — 서버가 `Content-Disposition: inline`으로 준다.
+   *  끄면 첨부라 누르는 순간 내려받는다. 같은 문서이고 쓰임만 다르다. */
+  inline = false,
+) =>
+  `${BASE}/api/notes/${noteId}/pdf?actor=${encodeURIComponent(actor)}` +
+  (inline ? '&inline=1' : '');
+
 /** FastAPI의 에러 본문에서 사람이 읽을 메시지를 꺼낸다. 게이트 차단은 violations를 준다. */
 export function errorMessage(body: unknown, fallback = '처리에 실패했습니다.'): string {
   const detail = (body as { detail?: unknown } | null)?.detail;

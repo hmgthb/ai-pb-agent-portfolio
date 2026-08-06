@@ -73,21 +73,106 @@ def test_unsourced_sentence_blocks():
     assert _check("실적 요약", heading) == []
 
 
+def _qsent(text, source=None):
+    """시세 규칙용 문장. ⚠️ 이 파일 아래쪽에 확인(ack) 테스트용 `_sent`가 따로 있다 —
+    이름이 겹치면 **나중 정의가 이깁니다**(실제로 겹쳐서 픽스처가 조용히 바뀌었다)."""
+    return {"text": text, "source": source, "sources": [source] if source else [],
+            "is_heading": False, "kind": "claim"}
+
+
+def _quote_check(*texts, sentences=None, feature="F3", removed=None):
+    """본문과 문장 목록이 **같은 내용**이 되도록 묶어 검사한다 — 시세 규칙은 문장 단위라
+    둘이 어긋나면 규칙이 아니라 픽스처를 시험하게 된다."""
+    body = " ".join(texts)
+    return check_note(
+        apply_notice(body, feature),
+        sentences if sentences is not None else [_qsent(t, {"type": "dart"}) for t in texts],
+        feature,
+        None,
+        removed,
+    )
+
+
 def test_delayed_quote_notice():
     # 시세를 실었는데 지연시세 고지가 없으면 막힌다 (F2 상담 전 브리핑 대비)
-    v = _check("현재 주가는 7만원이다.")
+    v = _quote_check("현재 주가는 7만원이다.")
     assert any("지연시세" in x for x in v), v
 
     # 고지가 있으면 통과한다 — "지연시세"가 "시세"를 포함하므로 자기충족적으로 풀린다
-    assert _check("현재 주가는 7만원이다. 본 시세는 지연시세입니다.") == []
+    assert _quote_check("현재 주가는 7만원이다.", "본 시세는 지연시세입니다.") == []
 
     # 시세를 아예 안 싣는 F3 노트는 이 규칙에 걸리지 않는다 (오탐 방지)
-    assert _check("매출액은 300조원, 영업이익은 30조원이다.") == []
+    assert _quote_check("매출액은 300조원, 영업이익은 30조원이다.") == []
 
     # 시세 단어가 있어도 수치가 없으면 발동하지 않는다 — F2 빈 결과 안내문에서 실제로
     # 오탐이 났던 케이스. 여기가 깨지면 조회 0건인 브리프가 발행 불가가 된다.
-    assert _check("전일 공시·밤사이 뉴스·시세 모두 조회된 항목이 없습니다.") == []
-    assert _check("주가 흐름을 지켜볼 필요가 있다는 평가가 나온다.") == []
+    assert _quote_check("전일 공시·밤사이 뉴스·시세 모두 조회된 항목이 없습니다.") == []
+    assert _quote_check("주가 흐름을 지켜볼 필요가 있다는 평가가 나온다.") == []
+
+
+def test_quote_rule_is_per_sentence_not_per_document():
+    """⚠️ 회귀 고정(2026-08-06) — 예전에는 **문서 단위 공존**으로 판정해서, 시세를 한 줄도
+    인용하지 않은 노트가 **자기 실적 수치 때문에** 막혔다(실측: 노트 #33).
+    시세 낱말과 수치가 **같은 문장**에 있어야 고지 대상이다."""
+    v = _quote_check(
+        "관련 보도는 주가가 최근 큰 폭 하락했으나 펀더멘탈에 변화가 없다고 전했다.",  # 수치 없음
+        "2024 매출액은 300조8,709억원으로 전기 대비 약 16% 늘었다.",  # 시세 아님
+    )
+    assert v == [], v
+    # 같은 문장 안에 있으면 그대로 잡는다("주가 7만원 돌파" 같은 뉴스 인용)
+    assert any("지연시세" in x for x in _quote_check("주가가 7만원을 돌파했다고 보도됐다."))
+
+
+def test_quote_rule_follows_the_source_even_without_a_price_word():
+    """출처가 시세 그 자체(`[^krx]`)면 표기와 무관하게 고지 대상이다."""
+    krx = [_qsent("전 거래일 대비 오름세로 마감했다.", {"type": "krx", "as_of": "20260804"})]
+    v = _quote_check("전 거래일 대비 오름세로 마감했다.", sentences=krx)
+    assert any("지연시세" in x for x in v), v
+
+
+def test_removed_sentence_drops_out_of_the_quote_rule():
+    """`제거`로 최종본에서 뺀 문장은 시세 규칙에서도 빠진다 — 게이트가 보는 건 최종본이다.
+    ⚠️ 확인(ack)은 이 규칙을 못 푼다(test_ack_cannot_waive_forbidden_phrase와 짝)."""
+    texts = ("주가는 7만원이다.", "매출액은 300조원이다.")
+    assert any("지연시세" in x for x in _quote_check(*texts))
+    assert _quote_check(*texts, removed={0}) == []
+
+
+def test_waiver_opens_the_forbidden_phrase_rule_for_that_sentence_only():
+    """준법이 사유를 적어 통과시킨 문장의 금지 표현만 빠진다(2026-08-06).
+
+    쓰임: 제3자 목표주가를 **각주와 함께 인용한** 문장. 규칙은 제시와 인용을 구분하지
+    못하고, 확인(ack)은 미인용 전용이라 예전엔 삭제 말고 길이 없었다.
+    """
+    quoted = "골드만삭스가 목표주가를 49만원으로 제시했다고 보도됐다."
+    other = "당사는 목표주가를 12만원으로 봅니다."
+    ours = [_qsent(quoted, {"type": "news"}), _qsent(other, {"type": "news"})]
+    body = apply_notice(f"{quoted} {other}", "F3")
+
+    # ⚠️ 위반 문구는 미인용 예시로 **문장 원문을 인용**한다 — `'목표주가' in x`로 세면
+    #    엉뚱한 위반이 잡힌다. 규칙 이름("투자권유")으로 본다.
+    assert any("투자권유" in x for x in check_note(body, ours, "F3"))
+    # 인용 문장만 예외 → **다른 문장에 같은 표현이 남아 있으므로 여전히 막힌다**
+    assert any("투자권유" in x for x in check_note(body, ours, "F3", None, None, {0}))
+    # 둘 다 예외라야 풀린다 — 예외가 본문 전체로 번지지 않는다는 뜻이다
+    assert check_note(body, ours, "F3", None, None, {0, 1}) == []
+
+
+def test_waiver_opens_nothing_else():
+    """⚠️ 예외는 **금지 표현 규칙 하나만** 연다 — 미인용·지연시세·MNPI는 그대로 막는다."""
+    s = [_qsent("목표주가 49만원이라고 내부자 정보에 따르면 전해진다.")]  # 출처 없음
+    v = check_note(apply_notice(s[0]["text"], "F3"), s, "F3", None, None, {0})
+    assert not any("투자권유" in x for x in v)  # 금지 표현은 풀렸는데
+    assert any("MNPI" in x for x in v), v  # MNPI는 그대로
+    assert any("출처 없는" in x for x in v), v  # 미인용도 그대로
+
+
+def test_target_price_is_not_a_market_quote():
+    """`목표주가`는 `주가`를 품지만 시세가 아니다 — 지연시세 고지를 요구하지 않는다.
+    (요구하면 예외로 금지 표현을 풀어도 시세 규칙이 남아 결국 못 낸다.)"""
+    s = [_qsent("골드만삭스가 목표주가를 49만원으로 제시했다.", {"type": "news"})]
+    v = check_note(apply_notice(s[0]["text"], "F3"), s, "F3", None, None, {0})
+    assert v == [], v
 
 
 def test_f1_notice_self_satisfies_delayed_quote():

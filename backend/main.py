@@ -6,6 +6,7 @@ import re
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -23,7 +24,7 @@ from claude_agent_sdk import (
 )
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from backend import (
@@ -34,6 +35,7 @@ from backend import (
     db,
     f1,
     market,
+    notepdf,
     redact,
     session_store,
 )
@@ -1103,6 +1105,17 @@ class AckBody(BaseModel):
     reason: str | None = None
 
 
+class WaiveBody(BaseModel):
+    """금지 표현 예외. reason=None이면 예외를 되돌린다.
+
+    ⚠️ reason이 **자유 입력**인 유일한 사유다(WAIVER_MAX_LEN 주석).
+    """
+
+    actor: str
+    index: int
+    reason: str | None = None
+
+
 class MarkBody(BaseModel):
     """PB의 문장 판정. mark=None이면 판정을 지운다."""
 
@@ -1146,6 +1159,12 @@ PB_MARKS = ("remove", "approve")
 # 판정되고, `확인`을 누르면 심의로 넘어간다.
 PB_MARK_STATUSES = ("review",)
 
+# 금지 표현 예외(waiver)의 사유 길이 상한. **이 사유만 자유 입력이다**(2026-08-06) —
+# 반려·보류·확인은 전부 고정값인데, 여기만 다른 이유는 통과시키는 근거가 건마다 다르기
+# 때문이다("제3자 목표주가의 사실 보도"는 다음 건에 그대로 쓰이지 않는다).
+# ⚠️ 자유 입력이라 **집계가 안 된다.** 대신 감사로그에 원문 그대로 남는다.
+WAIVER_MAX_LEN = 200
+
 # 반려·폐기 사유도 같은 이유로 닫힌 값이다 — "왜 막았나"를 나중에 세려면 자유 입력이면 안 된다.
 # 두 목록을 나눠 둔 건 **뜻이 다른 거절**이기 때문이다:
 #   REJECT  = 준법이 심의중 노트를 PB에게 되돌린다(고칠 수 있다 → 검토중).
@@ -1154,6 +1173,35 @@ PB_MARK_STATUSES = ("review",)
 # 둘 다 그 단계에서 할 수 있는 판단이 아니다.
 REJECT_REASONS = ("출처 불충분", "표현·규정 위반", "사실관계 재확인 필요")
 DISCARD_REASONS = ("사실관계 오류", "내용 부족", "중복·불필요")
+
+
+def _live_violations(row, sentences: list[dict]) -> list[str]:
+    """지금 기준으로 이 노트를 막고 있는 것들. **게이트를 부르는 자리가 하나여야 한다** —
+    발행·PDF·확인 응답이 각자 인자를 조립하면 한 곳만 빠뜨려도 화면과 발행이 갈린다
+    (실제로 "이제 발행할 수 있습니다"라고 말한 뒤 409로 막힌 적이 있다, §1-2).
+    """
+    removed = _removed_indices(row, sentences)
+    return compliance.check_note(
+        _effective_md(row["content_md"], sentences, removed),
+        sentences,
+        "F3",
+        _gate_exempt(row, sentences),
+        removed,
+        _waived_indices(row, sentences),
+    )
+
+
+def _waived_indices(row, sentences: list[dict]) -> set[int]:
+    """준법이 **사유를 적어** 금지 표현을 통과시킨 문장(2026-08-06).
+
+    ⚠️ 여는 건 **금지 표현 규칙 하나뿐**이다 — 미인용은 확인(ack)이, 지연시세는 문장
+       수정·제거가 푼다. `_gate_exempt`(미인용 집계)와 합치지 말 것: 합치는 순간 "무엇을
+       판단해서 통과시켰는지"가 기록에서 사라진다.
+    ⚠️ 유효성 대조는 `live_acks` 한 곳이다(§1-2) — 재파싱으로 인덱스가 밀리면 무효가 되고,
+       그때는 **막히는 쪽**으로 판정된다.
+    """
+    waivers = compliance.live_acks(json.loads(row["waivers_json"]), sentences)
+    return {w["index"] for w in waivers}
 
 
 def _gate_exempt(row, sentences: list[dict]) -> set[int]:
@@ -1229,9 +1277,20 @@ def _note_to_dict(row, audit_rows) -> dict:
         # PB 판정도 같은 함수로 거른다 — `live_acks`가 보는 건 확인이라는 뜻이 아니라
         # **인덱스+원문 앞 60자가 지금 문장과 맞는가**이고, 그 문제는 두 목록이 똑같다.
         "marks": compliance.live_acks(json.loads(row["pb_marks_json"]), sentences),
+        # 준법이 사유를 적어 통과시킨 금지 표현(2026-08-06). 유효성 대조는 확인·판정과
+        # 같은 함수다 — 재파싱으로 밀린 예외는 화면에서도 사라져야 게이트와 말이 맞는다.
+        "waivers": compliance.live_acks(json.loads(row["waivers_json"]), sentences),
+        # **어느 문장이 금지 표현 때문에 막고 있는가.** 화면이 스스로 찾지 않게 백엔드가 준다
+        # (금지 표현 목록을 프론트로 복사하면 컴플라이언스 어휘가 두 곳으로 갈린다).
+        "blocking_phrases": compliance.forbidden_carriers(
+            sentences, _removed_indices(row, sentences)
+        ),
         "reviewer": row["reviewer"],
         "deliberator": row["deliberator"],
         "publisher": row["publisher"],
+        # 색인(`/api/notes`)에만 있던 값을 상세에도 준다 — 상담 준비의 노트 줄이 상태 옆에
+        # 날짜를 적으려면 필요하다(발행분 우선이라 옛 문서가 그 자리에 설 수 있다).
+        "updated_at": row["updated_at"].isoformat(),
         "audit_log": [
             {
                 "event_type": a["event_type"],
@@ -1375,13 +1434,64 @@ async def ack_sentence(note_id: int, body: AckBody):
     #    확인까지 세어, 이 응답은 "0개 남음"인데 발행은 409로 막힌다.
     live = compliance.live_acks(acks, sentences)
     fresh = await db.get_note(note_id)
-    remaining = compliance.check_note(
-        _effective_md(fresh["content_md"], sentences, _removed_indices(fresh, sentences)),
-        sentences,
-        "F3",
-        _gate_exempt(fresh, sentences),
-    )
+    remaining = _live_violations(fresh, sentences)
     return {"acks": live, "violations": remaining}
+
+
+@app.post("/api/notes/{note_id}/waive")
+async def waive_forbidden_phrase(note_id: int, body: WaiveBody):
+    """금지 표현이 든 문장 하나를 **사유를 적어** 통과시키거나(reason) 되돌린다(reason=null).
+
+    왜 필요한가: 금지 표현 규칙은 제시와 **인용**을 구분하지 못한다. 제3자(증권사)의
+    목표주가를 뉴스가 보도한 것을 각주와 함께 옮긴 문장도 똑같이 막히는데, 확인(ack)은
+    미인용 전용이라 준법에게 남는 수단이 **삭제**뿐이었다 — 판단을 남길 자리가 없었다.
+
+    - **심의 단계에서만.** 검토 단계에서 미리 풀면 검토가 형식이 된다(ack과 같은 규칙).
+    - **한 문장만 연다.** 같은 표현이 다른 문장에도 있으면 그건 그대로 막힌다.
+    - **금지 표현 규칙만 연다.** 미인용·지연시세·MNPI는 이걸로 안 풀린다.
+    - 사유는 자유 입력이지만 **비워 둘 수 없다** — 통과의 근거가 곧 감사 기록이다.
+    """
+    row = await _require_status(note_id, "deliberation")
+    sentences = json.loads(row["sentences_json"])
+    if not 0 <= body.index < len(sentences):
+        raise HTTPException(400, "문장 인덱스가 범위를 벗어났습니다.")
+
+    s = sentences[body.index]
+    carried = [
+        c["phrase"]
+        for c in compliance.forbidden_carriers(sentences, _removed_indices(row, sentences))
+        if c["index"] == body.index
+    ]
+    reason = (body.reason or "").strip() if body.reason is not None else None
+    if reason is not None:
+        # 되돌리는 쪽은 검사하지 않는다(ack과 같은 규칙) — 조건이 달라진 뒤 남은 예외를
+        # 되돌릴 길이 없으면 안 된다.
+        if not carried:
+            raise HTTPException(400, "이 문장에는 예외를 걸 금지 표현이 없습니다.")
+        if not reason:
+            raise HTTPException(400, "통과시키는 사유를 적어야 합니다.")
+        if len(reason) > WAIVER_MAX_LEN:
+            raise HTTPException(400, f"사유는 {WAIVER_MAX_LEN}자 이내로 적어 주세요.")
+
+    waivers = await db.set_note_waiver(
+        note_id, body.index, carried[0] if carried else "", reason, body.actor, s["text"]
+    )
+    await db.append_audit(
+        "waiver_added" if reason else "waiver_removed",
+        note_id,
+        body.actor,
+        {
+            "index": body.index,
+            "phrase": carried[0] if carried else None,
+            "reason": reason,
+            "text": s["text"][:60],
+        },
+    )
+    fresh = await db.get_note(note_id)
+    return {
+        "waivers": compliance.live_acks(waivers, sentences),
+        "violations": _live_violations(fresh, sentences),
+    }
 
 
 @app.post("/api/notes/{note_id}/mark")
@@ -1426,12 +1536,7 @@ async def publish_note(note_id: int, body: ActorBody):
     sentences = json.loads(row["sentences_json"])
     # 게이트는 **뺀 문장이 없는 본문**을 본다(_effective_md) — 지연시세 고지·금지 표현처럼
     # 문장을 고쳐야 풀리는 위반도, 그 문장을 빼기로 했다면 남을 이유가 없다.
-    violations = compliance.check_note(
-        _effective_md(row["content_md"], sentences, _removed_indices(row, sentences)),
-        sentences,
-        "F3",
-        _gate_exempt(row, sentences),
-    )
+    violations = _live_violations(row, sentences)
     if violations:
         await db.append_audit("publish_blocked", note_id, body.actor, {"violations": violations})
         raise HTTPException(
@@ -1440,6 +1545,69 @@ async def publish_note(note_id: int, body: ActorBody):
     await db.advance_status(note_id, "published", body.actor, violations=[])
     await db.append_audit("published", note_id, body.actor, {})
     return {"status": "published"}
+
+
+@app.get("/api/notes/{note_id}/pdf")
+async def export_note_pdf(
+    note_id: int, actor: str = Query("PB"), inline: bool = Query(False)
+):
+    """발행된 노트의 **최종본 PDF**. 조립은 `notepdf`(코드·LLM 미개입)가 한다.
+
+    inline=1이면 **화면에 띄우는 용도**다(대시보드가 iframe으로 연다). 기본은 첨부라
+    누르면 내려받는다 — 같은 문서를 두 가지로 쓰는 것이므로 라우트를 나누지 않는다.
+
+    - **발행분만 낸다.** 검토·심의 중인 노트는 아직 사람이 통과시키지 않았고, PDF는 화면
+      밖으로 나가는 첫 산출물이라 "초안이 파일로 돌아다니는" 경로를 열지 않는다.
+    - **게이트를 한 번 더 본다.** 발행 뒤에 분류기가 바뀌면(재파싱) 확인이 무효가 되어
+      지금 기준으로는 통과하지 못하는 본문일 수 있다(§1-2) — 그때는 **막히는 쪽**으로
+      판정한다. 발행 시점과 같은 함수·같은 본문(`_effective_md`)을 쓴다.
+    - **뺀 문장이 여기서 실제로 빠진다.** 지금까지 `제거` 판정은 게이트 판정용 사본에만
+      적용됐다(`_effective_md` 주석) — 발행물에서 덜어내는 자리가 여기다.
+    - 생성 사실은 감사로그에 남긴다. 파일은 저장하지 않는다(요청 때마다 같은 입력에서
+      같은 문서가 나오므로 사본을 들고 있을 이유가 없다).
+    """
+    row = await db.get_note(note_id)
+    if row is None:
+        raise HTTPException(404, "노트를 찾을 수 없습니다.")
+    if row["status"] != "published":
+        raise HTTPException(409, "발행된 노트만 PDF로 받을 수 있습니다.")
+
+    sentences = json.loads(row["sentences_json"])
+    removed = _removed_indices(row, sentences)
+    violations = _live_violations(row, sentences)
+    if violations:
+        await db.append_audit("note_export_blocked", note_id, actor, {"violations": violations})
+        raise HTTPException(
+            409,
+            detail={
+                "message": "발행 이후 기준이 바뀌어 지금은 게이트를 통과하지 못합니다.",
+                "violations": violations,
+            },
+        )
+
+    note = _note_to_dict(row, await db.get_audit_log(note_id))
+    try:
+        pdf = notepdf.build(note, removed=removed)
+    except RuntimeError as exc:  # 한글 폰트 없음 — 두부(□) PDF를 내보내느니 실패한다
+        logger.error("PDF 생성 실패: %s", exc)
+        raise HTTPException(503, str(exc)) from exc
+
+    await db.append_audit(
+        "note_exported", note_id, actor, {"bytes": len(pdf), "inline": inline}
+    )
+    name = notepdf.filename(note)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            # 한글 파일명은 `filename*`(RFC 5987)로만 안전하게 나간다. 옛 브라우저용
+            # `filename`은 ASCII 폴백이라 노트 번호만 적는다 — 깨진 한글보다 낫다.
+            "Content-Disposition": (
+                f'{"inline" if inline else "attachment"}; filename="note-{note_id}.pdf"; '
+                f"filename*=UTF-8''{quote(name)}"
+            )
+        },
+    )
 
 
 # --- 대시보드(관리자/PB 콘솔) --------------------------------------------
