@@ -39,12 +39,20 @@ export function PrepLines({
   const b = brief?.items.find((i) => i.stock_code === code) ?? null;
   const note = notes[code] ?? null;
   const lines = [
-    ...(b?.disclosures ?? []).slice(0, 2).map((d) => ({
-      tag: '공시',
-      text: d.report_nm.trim(),
-      href: d.viewer_url,
-      meta: fmtDate(d.rcept_dt),
-    })),
+    /* 임원·주요주주 보고는 여기 올리지 않는다(2026-08-06) — 두 줄뿐인 자리라 임원 개인의
+       소액 매매 신고가 차지하면 정작 상담에서 말할 공시가 밀린다. 브리핑 카드에서는 접힌
+       줄로 남아 있고, 여기서 빠졌다고 데이터가 사라지는 건 아니다.
+       ⚠️ 빠지는 건 그것뿐이다 — 5%룰(`주식등의대량보유상황보고서`)은 `major`라 그대로 뜬다.
+       ⚠️ 보고서명으로 다시 판정하지 말 것 — 등급의 정본은 백엔드(`brief.IMPORTANCE`)다. */
+    ...(b?.disclosures ?? [])
+      .filter((d) => d.importance !== 'insider')
+      .slice(0, 2)
+      .map((d) => ({
+        tag: '공시',
+        text: d.report_nm.trim(),
+        href: d.viewer_url,
+        meta: fmtDate(d.rcept_dt),
+      })),
     ...(b?.news ?? []).slice(0, 1).map((n) => ({
       tag: '뉴스',
       text: n.title,

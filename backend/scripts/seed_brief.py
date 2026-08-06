@@ -13,16 +13,22 @@
 """
 
 import asyncio
+import json
 import sys
 
 from backend import bizdate, brief, db, market
-from backend.main import MAX_DISCLOSURES_PER_STOCK, MAX_NEWS_PER_STOCK, _recent, pb_watchlist
+from backend.main import (
+    MAX_DISCLOSURES_PER_STOCK,
+    MAX_NEWS_PER_STOCK,
+    holdings_index,
+    pb_watchlist,
+)
 from backend.mcp_servers.dart_server import dart_search
 from backend.mcp_servers.krx_server import krx_quote
 from backend.mcp_servers.news_server import news_search
 
 
-def collect(stock_codes: list[str]) -> list[dict]:
+def collect(stock_codes: list[str], holders: dict[str, int]) -> list[dict]:
     items = []
     for code in stock_codes:
         quote = krx_quote(code)
@@ -31,11 +37,14 @@ def collect(stock_codes: list[str]) -> list[dict]:
             {
                 "stock_code": code,
                 "corp_name": corp_name,
-                "quote": quote,
+                "holders": holders.get(code, 0),
+                "quote": brief.annotate_quote(quote),
                 "disclosures": brief.pick_disclosures(
                     dart_search(code, days=7), MAX_DISCLOSURES_PER_STOCK
                 ),
-                "news": _recent(news_search(corp_name, display=10), "pub_date", MAX_NEWS_PER_STOCK),
+                "news": brief.pick_news(
+                    news_search(corp_name, display=10), corp_name, MAX_NEWS_PER_STOCK
+                ),
             }
         )
         print(
@@ -50,19 +59,29 @@ async def main() -> None:
     # 먼저 필요하다.
     await db.init_pool()
     codes = sys.argv[1:] or await pb_watchlist()
+    holders, _ = await holdings_index()
     print(f"수집 중 (에이전트 없이 MCP 직접 호출): {', '.join(codes)}")
-    items = collect(codes)
+    items = collect(codes, holders)
 
     indices, market_note = market.fetch_market_snapshot()
     if market_note:
         print(f"  지수: {market_note}")
 
+    # 어제 대비 새로 생긴 것 — F2 파이프라인과 같은 규칙·같은 기준(오늘 이전 날짜의 브리프).
+    today = bizdate.biz_today()
+    prev = await db.brief_before(today)
+    items = brief.mark_new(items, brief.seen_keys(json.loads(prev["items_json"])) if prev else None)
+
     content_md, sentences = brief.assemble(items, indices)
     violations = brief.check(content_md, sentences)
 
     brief_id = await db.create_brief(
-        bizdate.biz_today(), content_md, items, sentences, violations,
+        today, content_md, items, sentences, violations,
         {"indices": indices, "note": market_note},
+        # ⚠️ 종목 한 줄 요약(LLM)은 붙지 않는다 — 이 스크립트는 크레딧 없이 도는 시드이고,
+        #    그래서 종목 줄은 규칙 문장으로만 나온다(F2 본 파이프라인과 다른 유일한 점).
+        {"bullets": brief.digest(items, compared=prev is not None,
+                                 market_note=market_note)},
     )
     await db.append_audit(
         "brief_created", None, None,

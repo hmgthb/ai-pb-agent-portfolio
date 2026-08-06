@@ -474,9 +474,21 @@ tr:focus-visible,
   font-weight: 500;
   color: var(--muted);
 }
+/* 시세 줄 — 가격·등락률은 붙어 읽히고(한 덩어리다), 기준일만 오른쪽 끝으로 밀린다.
+   ⚠️ `gap`을 주지 않는다. 주면 `246,000원`과 `▲2.50%`까지 벌어지는데 그 둘은 한 값이다 —
+      떨어뜨릴 것은 기준일 하나뿐이라 그 자리에서 `margin-left: auto`로만 민다. */
 .bcard .bquote {
   font-size: 12.5px;
   margin: 4px 0 8px;
+  display: flex;
+  align-items: baseline;
+}
+/* 기준일 — 숫자가 먼저 읽히도록 줄 끝으로. 감추는 게 아니라 순서를 뒤로 미루는 것이다:
+   이 값이 오늘 종가가 아니라는 사실은 화면에 남아 있어야 한다(`.mkt-asof`와 같은 판단). */
+.bcard .bquote .bcode {
+  margin-left: auto;
+  padding-left: 8px;
+  white-space: nowrap;
 }
 .bcard .bline {
   font-size: 12px;
@@ -505,6 +517,43 @@ tr:focus-visible,
   font-size: 12px;
   color: var(--muted);
   padding: 6px 0;
+}
+/* 지분공시 접힘 줄 — 공시·뉴스 줄과 **같은 모양**이다(버튼이라 초기화만 얹는다).
+   여기서 색이나 굵기를 달리하면 등급을 글자 대신 색으로 말하는 셈이 된다. 이 줄이
+   다른 줄과 다른 점은 링크가 아니라 **펼침**이라는 것 하나뿐이라, 그 말은 꺾쇠가 한다. */
+.bcard .bline-fold {
+  width: 100%;
+  background: none;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  align-items: baseline;
+}
+.bcard .bline-fold:hover {
+  color: var(--ink-2);
+}
+.bcard .bline-fold .bcaret {
+  margin-left: 6px;
+}
+/* 펼친 지분공시는 태그 없이 들여쓴다 — 바로 위 접힘 줄이 이미 `공시`라고 말했고,
+   같은 태그를 다섯 번 더 적으면 접어서 줄인 글자가 도로 늘어난다. */
+.bcard .bline.insider {
+  padding-left: 24px;
+  color: var(--muted);
+}
+/* 어제 브리프에도 있던 줄 — **톤만 낮춘다.** 지우지도, 접지도, 표를 달지도 않는다:
+   브리핑의 delta는 "새것에 표시를 붙이는 것"이 아니라 **새것만 또렷한 것**이다(글자가
+   안 늘어난다). 링크는 여전히 눌린다 — 어제 것도 오늘 상담에서 쓰인다.
+   ⚠️ `is_new`가 **없을 때는 이 클래스가 붙지 않는다**(비교할 어제가 없는 첫 브리프).
+      falsy로 판정하면 카드 전체가 흐려진다 — 규칙은 page.tsx의 `seen()` 하나다. */
+.bcard .bline.seen,
+.bcard .bline.seen a {
+  color: var(--muted);
 }
 
 /* ── 카테고리 탭 (PB: 상담 준비/작성·검토 · 준법: 심의/감시) ────── */
@@ -2960,7 +3009,9 @@ a.fn-title:hover {
   flex-wrap: wrap;
   padding: 9px 12px;
   margin-bottom: 12px;
-  background: var(--page);
+  /* 바탕을 깔지 않는다 — 아래 종목 카드(.bcard)와 **같은 면**이어야 한다(2026-08-06).
+     지수와 종목은 둘 다 "데이터"라 같은 색이고, 색이 다른 것은 위의 요약 불릿(.digest)
+     하나뿐이다: 요약과 근거를 색으로 가른다. */
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
 }
@@ -2996,6 +3047,60 @@ a.fn-title:hover {
 }
 .mkt.off .hint {
   font-size: 12px;
+}
+
+/* 브리핑 요약 불릿 — 카드 맨 위, **지수 줄보다 위**. 여기 3~4줄이 "오늘 무슨 일이
+   있었나"를 통째로 답하고 그 아래는 근거다.
+   ⚠️ **새 색을 만들지 않는다**(HANDOFF §0-1). 눈이 여기부터 가야 하지만 그 일은 색이 아니라
+      **자리**가 한다 — 카드 맨 위이고 위에 아무것도 없다. 옐로(--accent)를 쓰면 브리핑이
+      페이지 전체의 1차 CTA를 가져간다.
+   아래 지수 줄(.mkt)과 **같은 상자**를 쓴다: 둘은 "오늘 전체"를 말하는 같은 급이고, 모양이
+   갈리면 불릿이 카드 밖 안내문처럼 읽힌다. */
+.digest {
+  margin: 0 0 12px;
+  padding: 10px 12px 10px 28px;
+  font-size: 13px;
+  line-height: 1.6;
+  background: var(--page);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  color: var(--ink-2);
+}
+.digest li {
+  list-style: disc;
+}
+.digest li + li {
+  margin-top: 4px;
+}
+/* 유의사항 — 조회 실패·빈 구간. 적색을 쓰지 않는다: 게이트 차단(--critical)과 같은 무게로
+   읽히면 안 된다. 이건 막힌 것이 아니라 **덜 채워진 것**이다. 톤만 낮춘다. */
+.digest .digest-caution {
+  color: var(--muted);
+}
+/* ⚠️ **줄 간격은 하나다**(2026-08-06). 종목 줄 앞을 한 칸 더 띄웠다가 걷어냈다 — 목록 안에서
+   간격이 두 종류면 읽는 사람이 "왜 여기서 끊기지?"를 먼저 묻는다. 급이 다르다는 건 순서가
+   이미 말한다(전체 → 종목). 여기에 `margin-top` 예외를 다시 만들지 말 것. */
+/* `AI 요약` — 이 문장만 규칙이 아니라 LLM이 썼다는 표시. 문장 끝에 조용히 붙는다:
+   경고가 아니라 **출처 표시**라 적색을 쓰지 않고, 카드의 `N명 보유` 배지와 같은 형태를 쓴다
+   (새 모양을 만들지 않는다). ⚠️ 지우지 말 것 — 규칙 문장과 갈리는 자리가 화면에서 여기뿐이다. */
+.digest .digest-ai {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--elevated);
+  border-radius: var(--r-pill);
+  padding: 1px 6px;
+  white-space: nowrap;
+  cursor: help;
+}
+.digest a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dotted var(--muted);
+}
+.digest a:hover {
+  color: var(--accent-text);
 }
 
 /* 브리프 카드 — 이 종목을 보유한 고객 수(종목 선정 근거) */

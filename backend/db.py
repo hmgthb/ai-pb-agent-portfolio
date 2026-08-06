@@ -98,6 +98,13 @@ CREATE TABLE IF NOT EXISTS briefs (
 -- 더한다. {"indices": [...], "note": "미연결 사유"} 형태이며, 못 가져왔으면 사유가 남는다.
 ALTER TABLE briefs ADD COLUMN IF NOT EXISTS market_json JSONB NOT NULL DEFAULT '{}';
 
+-- 브리핑의 리드(A)와 조용한 날 한 줄(C). 시장 현황과 같은 이유로 멱등 ALTER다.
+-- {"lead": {...}|null, "quiet": "..."|null} 형태이며, 둘 다 없을 수 있다(빈 객체).
+-- ⚠️ **본문(content_md·sentences)과 따로 두는 것이 설계다.** 리드는 새 사실이 아니라
+--    이미 본문에 있는 줄을 가리키는 것이라, 본문에 또 적으면 같은 사실이 두 번 세어져
+--    출처 부착률의 분모가 흔들린다(brief.pick_lead 주석).
+ALTER TABLE briefs ADD COLUMN IF NOT EXISTS lead_json JSONB NOT NULL DEFAULT '{}';
+
 CREATE TABLE IF NOT EXISTS pb_customers (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
@@ -332,23 +339,43 @@ async def create_brief(
     sentences: list[dict],
     violations: list[str],
     market: dict | None = None,
+    lead: dict | None = None,
 ) -> int:
     row = await pool().fetchrow(
         """INSERT INTO briefs
-             (brief_date, content_md, items_json, sentences_json, violations_json, market_json)
-           VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb) RETURNING id""",
+             (brief_date, content_md, items_json, sentences_json, violations_json,
+              market_json, lead_json)
+           VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb)
+           RETURNING id""",
         brief_date,
         content_md,
         json.dumps(items, ensure_ascii=False),
         json.dumps(sentences, ensure_ascii=False),
         json.dumps(violations, ensure_ascii=False),
         json.dumps(market or {}, ensure_ascii=False),
+        json.dumps(lead or {}, ensure_ascii=False),
     )
     return row["id"]
 
 
 async def latest_brief() -> asyncpg.Record | None:
     return await pool().fetchrow("SELECT * FROM briefs ORDER BY id DESC LIMIT 1")
+
+
+async def brief_before(brief_date) -> asyncpg.Record | None:
+    """그 날짜 **이전**의 가장 최근 브리프 — "어제 대비 새로 생긴 것"의 비교 기준.
+
+    ⚠️ **같은 날 회차는 기준이 될 수 없다.** 브리프는 재실행마다 한 행씩 쌓이는데, 직전
+       행(`latest_brief`)을 기준으로 잡으면 오늘 두 번째 실행부터 **모든 것이 "어제도 있던 것"**이
+       되어 강조가 통째로 꺼진다. 그래서 id가 아니라 **날짜로** 자른다.
+    ⚠️ 없으면 None이고, 그때 화면은 새것/구것을 **구분하지 않는다** — "비교할 어제가 없다"와
+       "어제와 비교했더니 전부 새것"은 다르다(brief.mark_new 주석).
+    """
+    return await pool().fetchrow(
+        """SELECT * FROM briefs WHERE brief_date < $1
+           ORDER BY brief_date DESC, id DESC LIMIT 1""",
+        brief_date,
+    )
 
 
 async def brief_date_of(brief_id: int):

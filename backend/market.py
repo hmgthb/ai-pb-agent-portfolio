@@ -234,3 +234,60 @@ def fetch_change_batch(codes: list[str]) -> tuple[dict[str, dict], str | None]:
     missing = [c for c in codes if c not in out]
     note = f"{len(missing)}종목은 두 기준일 시세가 모두 있지 않아 제외했습니다." if missing else None
     return out, note
+
+
+# ── 오늘 움직임이 평소 대비 어느 정도인가 (2026-08-06) ──────────────────────────
+#
+# **추가 조회가 없다.** `krx_quote`도 `fetch_index`도 이미 한 번의 요청으로 수십 일치를
+# 받아 놓고 마지막 한 줄만 쓰고 버리고 있었다 — 이 함수는 그 버려지던 행들을 쓴다.
+#
+# 왜 필요한가: 브리프 카드가 `▼4.31%`라고만 적으면 그게 큰 움직임인지 평범한지를 읽는
+# 사람이 알 수 없다. 브리핑은 절대값이 아니라 **비교**다.
+#
+# ⚠️ **같은 방향끼리만 견준다.** 하락을 상승과 섞어 절대값으로 줄 세우면 "가장 큰 하락"이
+#    실은 상승장 한복판의 작은 하락일 수 있다.
+# ⚠️ 창이 짧으면 **아무 말도 하지 않는다**(None). 신규상장·긴 연휴로 5거래일치만 잡혔는데
+#    "5거래일 중 가장 큰 하락"이라고 적으면 없는 무게를 실어 주는 것이다.
+NOTABLE_RANK = 3  # 상위 몇 위까지 "평소와 다르다"고 말할지
+MIN_WINDOW = 8  # 이보다 짧은 창에서는 판단하지 않는다
+
+
+def as_pct(raw) -> float | None:
+    """등락률 문자열(`"-4.31"`) → float. 못 읽으면 None — **0으로 채우지 않는다**
+    (0은 '보합'이라는 뜻이 되어 버린다)."""
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def daily_pcts(rows: list[dict]) -> list[float]:
+    """KRX 응답 행들 → 일별 등락률. 못 읽은 행은 **빼고** 넘긴다 — 창 크기(`of`)도 같이
+    줄어들어 "N거래일 중"의 N이 실제로 본 날수와 어긋나지 않는다.
+
+    ⚠️ 이 함수가 krx_server가 아니라 여기 있는 이유: 그쪽은 `mcp` 패키지가 있어야 import되어
+       순수 함수인데도 테스트가 안 돈다. 판정(`rank_recent_move`)과 같은 자리에 둔다."""
+    return [p for p in (as_pct(r.get("fltRt")) for r in rows) if p is not None]
+
+
+def rank_recent_move(pcts: list[float], latest: float | None) -> dict | None:
+    """오늘 등락률이 최근 창에서 몇 번째로 큰 움직임인가 (순수·결정론적).
+
+    pcts: 창 안의 일별 등락률 전부(오늘 포함). latest: 오늘 등락률.
+    반환: {"of": 창 크기(거래일), "direction": "up"|"down"|"flat", "rank": 1~N 또는 None}
+      - rank가 None이면 "평소 수준"이다(같은 방향 상위 `NOTABLE_RANK` 밖).
+      - 창이 짧거나 보합이면 통째로 None — 말할 근거가 없으면 말하지 않는다.
+    """
+    if latest is None or latest == 0 or len(pcts) < MIN_WINDOW:
+        return None
+    direction = "up" if latest > 0 else "down"
+    same = [p for p in pcts if (p > 0) == (latest > 0)]
+    # 오늘보다 더 큰 움직임이 몇 번 있었나 + 1 = 순위. 동률이면 공동 순위가 되어
+    # "가장 큰"이 둘이 될 수 있는데, 같은 폭이면 실제로 둘 다 가장 큰 것이 맞다.
+    bigger = sum(1 for p in same if abs(p) > abs(latest))
+    rank = bigger + 1
+    return {
+        "of": len(pcts),
+        "direction": direction,
+        "rank": rank if rank <= NOTABLE_RANK else None,
+    }

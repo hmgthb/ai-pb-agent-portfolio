@@ -299,9 +299,34 @@ export type AgentCalls = { agent: string; calls: number };
 export type BriefItem = {
   stock_code: string;
   corp_name: string;
-  quote: { close: string; change_pct: string; as_of: string } | null;
-  disclosures: { report_nm: string; rcept_dt: string; viewer_url: string }[];
-  news: { title: string; link: string; pub_date: string }[];
+  quote: {
+    close: string;
+    change_pct: string;
+    as_of: string;
+    /* ⚠️ `recent_text`(`20거래일 중 가장 큰 하락`)는 **화면이 더는 쓰지 않는다**(2026-08-06 —
+       시세 줄에서 걷어냈다). 백엔드는 계속 보내고 브리프 기록에도 남아 있으므로, 되살릴 때는
+       `brief.recent_move_text`가 만든 **완성된 문구를 그대로** 찍을 것: 판정(`quote.recent`)을
+       화면에서 문장으로 조립하면 브리프 본문과 다른 말을 하게 된다. */
+  } | null;
+  disclosures: {
+    report_nm: string;
+    rcept_dt: string;
+    viewer_url: string;
+    /** 백엔드(`brief.IMPORTANCE`)가 정한 등급. **화면에 글자로 뜨지 않는다** — 태그는 그대로
+     *  `공시` 하나이고, 이 값이 하는 일은 임원·주요주주 보고를 접힌 한 줄로 모으는 것뿐이다.
+     *  ⚠️ `insider` = 임원·주요주주 **개인의 소액 매매 신고**(매일 수십 건)만이다.
+     *     5%룰(`주식등의대량보유상황보고서`)은 이름만 비슷하고 `major`다 — 접히지 않는다.
+     *  ⚠️ 프론트에서 보고서명으로 등급을 다시 판정하지 말 것 — 규칙이 두 벌이 되어 갈린다.
+     *  옛 브리프(2026-08-06 이전 생성)에는 이 필드가 없다 → `other`로 본다(다시 생성하면 붙는다). */
+    importance?: 'major' | 'periodic' | 'other' | 'insider';
+    /** 어제 브리프에 없던 것인가. 화면은 `false`인 줄의 **톤을 낮춘다**(지우지 않는다 —
+     *  어제 것도 오늘 상담에서 쓰인다).
+     *  ⚠️ **없을 수 있고, 없는 것과 `false`는 다르다.** 비교할 어제 브리프가 없으면 필드
+     *     자체가 붙지 않는다 — 그때는 새것/구것을 구분하지 않는 게 맞다(`is_new === false`로
+     *     좁혀 판정할 것. falsy로 보면 첫 브리프가 통째로 흐려진다). */
+    is_new?: boolean;
+  }[];
+  news: { title: string; link: string; pub_date: string; is_new?: boolean }[];
 };
 
 /** 지수(코스피·코스닥). 종목 시세와 같은 일별 종가 기준이라 "지연" 표기가 붙는다. */
@@ -317,11 +342,48 @@ export type MarketIndex = {
  *  (지수 도입 전에 만들어진 브리프는 빈 객체다.) */
 export type BriefMarket = { indices?: MarketIndex[]; note?: string | null };
 
+/** 카드 맨 위 요약 불릿 한 줄 — 지수 줄 **위**에 3~4개가 선다.
+ *
+ *  **문장은 백엔드(`brief.digest`)가 완성해서 보낸다.** LLM은 이 경로에 없고, 화면도 조립하지
+ *  않는다 — 여기서 문장을 만들면 저장된 브리프와 화면이 다른 말을 하게 된다.
+ *  ⚠️ 이 값은 본문(`content_md`·`sentences`)에 없다 — 같은 사실을 두 번 세면 출처 부착률의
+ *     분모가 흔들린다(`brief.pick_lead` 주석).
+ *  ⚠️ **불릿당 한 문장이고, 없는 항목은 오지 않는다.** 0건을 나열하지 않는 것이 규칙이라
+ *     `kind`로 자리를 비워 두거나 빈 문구를 채우지 말 것. */
+export type BriefBullet = {
+  /** lead=먼저 볼 것 · quiet=조용합니다(lead와 배타적) · delta=어제와 달라진 것 ·
+   *  market=시장 대비 · caution=유의사항(조회 실패·빈 구간) */
+  /** delta=어제와 달라진 것 · caution=유의사항(조회 실패) ·
+   *  stock=종목 한 줄(맨 아래, 브리프에 실린 만큼 전부).
+   *  ⚠️ 걷어낸 것 셋(2026-08-06): `lead`(`먼저 볼 것`)·`quiet`는 종목 줄과 같은 말을 했고,
+   *     `market`(시장 대비)은 **어느 지수와 견줄지를 종목의 시장으로 고르지 않았다**.
+   *     되살리려면 백엔드 `brief.pick_lead`·`digest` 위 주석부터 읽을 것. */
+  kind: 'delta' | 'caution' | 'stock';
+  text: string;
+  /** 공시 뷰어 링크. 시세 기반 불릿에는 열어 볼 원문이 없어 null(링크를 지어내지 않는다). */
+  href: string | null;
+  /** **밑줄이 걸리는 구간** — `text` 안에 그대로, 한 번만 나타난다.
+   *  ⚠️ 불릿 전체를 앵커로 만들지 말 것: `먼저 볼 것:`과 `(21명 보유)`는 공시 원문이 아니다.
+   *     누르면 어디로 가는지가 밑줄 범위와 맞아야 한다.
+   *  ⚠️ `text` 안에서 못 찾으면 **링크 없이 문장 전체를 그대로 찍는다** — 문장을 자르거나
+   *     버리지 않는다(`page.tsx`의 `DigestText`). */
+  link_text?: string | null;
+  /** 이 문장을 **LLM이 썼는가**. F2에서 유일하게 규칙이 아닌 문장이라 화면이 그렇게 표시한다
+   *  (`AI 요약`). 나머지 불릿은 데이터에 없는 말을 할 수 없다는 보장이 있고 이것만 없다.
+   *  ⚠️ 표시를 빼지 말 것 — 이 불릿은 게이트를 안 타므로(본문이 아니라 `lead_json`),
+   *     "규칙이 만든 문장"과 구분되는 자리가 화면의 이 배지뿐이다. */
+  ai?: boolean;
+};
+
+/** (2026-08-06 이전 브리프는 빈 객체 — 화면은 그때 아무것도 그리지 않는다.) */
+export type BriefLeadPayload = { bullets?: BriefBullet[] };
+
 export type Brief = {
   id: number;
   brief_date: string;
   items: BriefItem[];
   market?: BriefMarket;
+  lead?: BriefLeadPayload;
   violations: string[];
   created_at: string;
 };

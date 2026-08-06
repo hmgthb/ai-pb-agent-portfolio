@@ -1895,6 +1895,20 @@ async def pb_watchlist(limit: int = BRIEF_MAX_STOCKS) -> list[str]:
     이유가 성립하지 않고 선정 결과도 실제로 틀렸다** — 시드 기준 전사 1위(SK하이닉스, 21명)는
     박PB에게는 5명짜리 4위권 밖 종목이고, 정작 내 고객 8명이 든 셀트리온보다 위에 올라왔다.
     """
+    holders, amounts = await holdings_index()
+    if not holders:
+        return FALLBACK_WATCHLIST[:limit]
+    ranked = sorted(holders, key=lambda c: (holders[c], amounts[c]), reverse=True)
+    return ranked[:limit]
+
+
+async def holdings_index() -> tuple[dict[str, int], dict[str, int]]:
+    """담당 고객의 보유 집계 — (종목코드 → 보유 고객 수, 종목코드 → 보유금액 합계).
+
+    종목 선정(`pb_watchlist`)과 브리프 카드의 `N명 보유`가 **같은 수를 봐야 해서** 여기
+    하나로 뺐다. 나가는 것은 **집계 수치까지**다 — 이름·계좌는 이 함수 밖으로 안 나간다
+    (가드레일 1: 화면에 나가는 건 "보유 고객 N명" 같은 집계까지).
+    """
     holders: dict[str, int] = {}
     amounts: dict[str, int] = {}
     for row in await db.list_customers(PB_NAME):
@@ -1904,20 +1918,14 @@ async def pb_watchlist(limit: int = BRIEF_MAX_STOCKS) -> list[str]:
                 continue
             holders[code] = holders.get(code, 0) + 1
             amounts[code] = amounts.get(code, 0) + int(h.get("amt") or 0)
-    if not holders:
-        return FALLBACK_WATCHLIST[:limit]
-    ranked = sorted(holders, key=lambda c: (holders[c], amounts[c]), reverse=True)
-    return ranked[:limit]
+    return holders, amounts
 
 # 대형주는 며칠치만 봐도 공시가 수십 건 쌓인다(삼성전자 5일 = 81건). 브리프는 훑어보는
 # 화면이라 종목당 최신 몇 건으로 자른다 — 전체 목록이 필요하면 F3 노트로 간다.
+# ⚠️ 이 상한은 **임원·주요주주 보고가 아닌 것**에만 걸린다 — 그쪽 몫은 `brief.INSIDER_LIMIT`이
+#    따로 세고, 화면은 그 몫을 접힌 한 줄로 그린다(brief.pick_disclosures 주석).
 MAX_DISCLOSURES_PER_STOCK = 5
 MAX_NEWS_PER_STOCK = 3
-
-
-def _recent(rows: list[dict], key: str, limit: int) -> list[dict]:
-    """최신순 상위 N건. 도구가 어떤 순서로 주든 시점 기준으로 다시 정렬한다."""
-    return sorted(rows, key=lambda r: r.get(key) or "", reverse=True)[:limit]
 
 BRIEF_SYSTEM_PROMPT = (
     "너는 PB의 '상담 전 브리핑' 파이프라인의 오케스트레이터(O)다. 종목들은 담당 고객이 "
@@ -1936,6 +1944,47 @@ BRIEF_SYSTEM_PROMPT = (
 
 class BriefRunBody(BaseModel):
     stock_codes: list[str] | None = None
+
+
+async def _stock_summaries(items: list[dict]) -> dict[str, str]:
+    """종목 한 줄 요약 — **F2에서 유일하게 LLM이 문장을 쓰는 자리**(2026-08-06).
+
+    a5와 같은 구조다: 도구를 못 쓰게 막고(`_deny_all_tools`) 넘겨받은 텍스트 밖으로 나가지
+    못하게 한 뒤, 나온 문장을 **순수 함수가 다시 검사한다**(`brief.parse_summaries` —
+    형식·길이·금지 표현·입력에 없는 숫자). 통과 못 한 종목은 규칙 문장으로 떨어진다.
+
+    ⚠️ **실패해도 브리프를 죽이지 않는다.** 요약은 있으면 좋은 것이고, 없다고 브리프 전체가
+       사라지면 안 된다 — 지수 조회와 같은 규약이다(사유만 남기고 나머지는 산다).
+    ⚠️ 입력은 `brief.summary_input`이 만든다 — **제목·공시명만** 나간다(기사 본문도 시세도
+       보유 고객 수도 아니다). 넓히려면 그 함수를 고칠 것: 여기서 직접 조립하지 마라.
+    """
+    # 근거가 0건인 종목은 아예 넘기지 않는다 — 그 종목은 규칙 문장이 정답이다.
+    targets = brief.summarizable(items)
+    if not targets:
+        return {}
+
+    texts: list[str] = []
+    try:
+        async for message in query(
+            prompt=_prompt_stream(brief.summary_input(targets)),
+            options=ClaudeAgentOptions(
+                cwd=str(REPO_ROOT),
+                system_prompt=brief.SUMMARY_SYSTEM_PROMPT,
+                can_use_tool=_deny_all_tools,
+                max_turns=1,
+                hooks={
+                    "PreToolUse": [HookMatcher(hooks=[_pre_tool_use_hook])],
+                    "PostToolUse": [HookMatcher(hooks=[_post_tool_use_hook])],
+                },
+            ),
+        ):
+            if isinstance(message, AssistantMessage):
+                texts += [b.text for b in message.content if isinstance(b, TextBlock)]
+    except Exception:
+        return {}
+    # ⚠️ `items`가 아니라 `targets`로 검사한다 — 넘기지 않은 종목의 줄을 모델이 지어내도
+    #    여기서 걸러진다(그 종목은 알려진 코드가 아니게 된다).
+    return brief.parse_summaries("\n".join(texts), targets)
 
 
 def _corp_name_of(code: str, quotes: dict, disclosures: dict) -> str:
@@ -2071,23 +2120,50 @@ async def run_brief(body: BriefRunBody):
     # 필요 없고, 실패해도 브리프 전체가 흔들리면 안 된다(사유만 남기고 종목 파트는 산다).
     indices, market_note = await asyncio.to_thread(market.fetch_market_snapshot)
     quotes, disclosures, news = await _collect_brief_data(codes)
-    items = [
-        {
-            "stock_code": code,
-            "corp_name": _corp_name_of(code, quotes, disclosures),
-            "quote": quotes.get(code),
-            "disclosures": brief.pick_disclosures(
-                disclosures.get(code, []), MAX_DISCLOSURES_PER_STOCK
-            ),
-            "news": _recent(news.get(code, []), "pub_date", MAX_NEWS_PER_STOCK),
-        }
-        for code in codes
-    ]
+    # 보유 고객 수는 종목 선정 기준이면서 요약 불릿의 "담당 고객 N명 보유"이기도 하다 —
+    # 같은 집계를 두 번 세지 않도록 한 함수에서 받는다.
+    holders, _ = await holdings_index()
+    items = []
+    for code in codes:
+        # 법인명이 뉴스 고르기의 입력이다(제목이 이 종목을 말하는지 본다) — 먼저 정한다.
+        corp_name = _corp_name_of(code, quotes, disclosures)
+        items.append(
+            {
+                "stock_code": code,
+                "corp_name": corp_name,
+                "holders": holders.get(code, 0),
+                "quote": brief.annotate_quote(quotes.get(code)),
+                "disclosures": brief.pick_disclosures(
+                    disclosures.get(code, []), MAX_DISCLOSURES_PER_STOCK
+                ),
+                "news": brief.pick_news(news.get(code, []), corp_name, MAX_NEWS_PER_STOCK),
+            }
+        )
+    # 어제 대비 새로 생긴 것 — 비교 기준은 **오늘 이전 날짜의** 가장 최근 브리프다
+    # (같은 날 재실행분을 기준으로 잡으면 두 번째 실행부터 전부 "어제도 있던 것"이 된다).
+    # 어제가 없으면 seen이 None이고, 그때는 표시 자체를 붙이지 않는다(brief.mark_new 주석).
+    today = bizdate.biz_today()
+    prev = await db.brief_before(today)
+    seen = brief.seen_keys(json.loads(prev["items_json"])) if prev else None
+    items = brief.mark_new(items, seen)
+
     market_payload = {"indices": indices, "note": market_note}
+    # 카드 맨 위 요약 불릿 — 규칙이 **고르고 문장까지 만든다**(LLM 미개입). 본문에는
+    # 들어가지 않는다(brief.pick_lead 주석).
+    # ⚠️ mark_new **뒤에** 부른다 — 리드가 "어제 없던 것"을 우선하고, 델타 불릿이 is_new를 센다.
+    lead_payload = {
+        "bullets": brief.digest(
+            items,
+            compared=seen is not None,
+            market_note=market_note,
+            summaries=await _stock_summaries(items),
+        )
+    }
     content_md, sentences = brief.assemble(items, indices)
     violations = brief.check(content_md, sentences)
     brief_id = await db.create_brief(
-        bizdate.biz_today(), content_md, items, sentences, violations, market_payload
+        today, content_md, items, sentences, violations,
+        market_payload, lead_payload,
     )
     await db.append_audit(
         "brief_created", None, None,
@@ -2104,6 +2180,7 @@ async def run_brief(body: BriefRunBody):
         "id": brief_id,
         "items": items,
         "market": market_payload,
+        "lead": lead_payload,
         "violations": violations,
         "content_md": content_md,
     }
@@ -2121,6 +2198,9 @@ async def get_latest_brief():
         "items": json.loads(row["items_json"]),
         # 지수 도입 전에 만들어진 브리프는 {}다 — 화면은 "없음"과 "미연결"을 구분해야 한다.
         "market": json.loads(row["market_json"] or "{}"),
+        # 리드·조용한 줄이 붙기 전(2026-08-06 이전) 브리프는 {}다 — 화면은 그때 아무것도
+        # 그리지 않는다(다시 생성하면 붙는다). 없는 걸 지어내지 않는 것이 여기서도 규칙이다.
+        "lead": json.loads(row["lead_json"] or "{}"),
         "sentences": json.loads(row["sentences_json"]),
         "violations": json.loads(row["violations_json"]),
         "created_at": row["created_at"].isoformat(),

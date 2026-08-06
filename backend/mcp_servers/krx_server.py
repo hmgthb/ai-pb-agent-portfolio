@@ -40,12 +40,18 @@ ENDPOINT = (
 mcp = FastMCP("krx")
 
 # 연휴가 길어도 직전 영업일이 잡히도록 넉넉히 뒤로 본다.
-LOOKBACK_DAYS = 14
+# ⚠️ 28일인 이유는 직전 영업일 찾기가 아니라 **비교 창**이다(2026-08-06). 브리프가
+#    "20거래일 중 가장 큰 하락"을 말하려면 그만큼의 과거가 한 응답에 들어와야 한다 —
+#    달력 28일 ≈ 영업일 20일. 요청 횟수는 그대로 1회이고 numOfRows만 넉넉히 잡는다.
+#    좁히면 `market.MIN_WINDOW` 아래로 떨어져 꼬리표가 조용히 사라진다.
+LOOKBACK_DAYS = 28
 
 
 def _pick_latest(items: list[dict]) -> dict:
     """조회 구간 안에서 기준일자가 가장 최근인 항목을 고른다."""
     return max(items, key=lambda i: i["basDt"])
+
+
 
 
 @mcp.tool()
@@ -61,7 +67,7 @@ def krx_quote(stock_code: str) -> dict:
         params={
             "serviceKey": API_KEY,
             "resultType": "json",
-            "numOfRows": 30,
+            "numOfRows": 40,  # LOOKBACK_DAYS(28) 안의 영업일을 다 담고도 남게
             "pageNo": 1,
             "likeSrtnCd": stock_code,
             "beginBasDt": (today - timedelta(days=LOOKBACK_DAYS)).strftime("%Y%m%d"),
@@ -95,6 +101,12 @@ def krx_quote(stock_code: str) -> dict:
         "change_pct": latest["fltRt"],
         "volume": latest["trqu"],
         "is_delayed": True,
+        # 오늘 움직임이 평소 대비 어느 정도인가 — **이 응답으로 이미 받은 행들**로 계산한다
+        # (추가 조회 0회). 판정 규칙은 backend/market.py 한 곳이고 문구는 brief.py가 만든다.
+        # 창이 짧거나 보합이면 None이다 — 근거가 얇으면 말하지 않는다.
+        "recent": market.rank_recent_move(
+            market.daily_pcts(rows), market.as_pct(latest["fltRt"])
+        ),
         "source": "공공데이터포털 금융위원회 주식시세정보 (일별 종가 기준, 실시간 아님)",
     }
 

@@ -60,6 +60,7 @@ import {
   RISK,
   type AgentCalls,
   type Brief,
+  type BriefBullet,
   type ChatRedaction,
   type Customer,
   type DashboardAudit,
@@ -348,6 +349,27 @@ function CustomerRow({
   );
 }
 
+/** 요약 불릿 한 줄 — **문장은 백엔드가 완성한 것 그대로**이고 여기서 하는 일은 밑줄 범위를
+ *  가르는 것뿐이다(`link_text` 구간만 앵커).
+ *
+ *  ⚠️ 불릿 전체를 앵커로 감싸지 말 것 — `먼저 볼 것:`과 `(21명 보유)`는 공시 원문이 아니다.
+ *     누르면 어디로 가는지가 밑줄 범위와 맞아야 한다.
+ *  ⚠️ `link_text`를 못 찾으면 **링크 없이 문장 전체를 그대로 찍는다.** 문장을 자르거나
+ *     버리는 쪽으로 틀리면 안 된다 — 링크가 없는 것보다 문장이 사라지는 게 훨씬 나쁘다. */
+function DigestText({ b }: { b: BriefBullet }) {
+  const at = b.href && b.link_text ? b.text.indexOf(b.link_text) : -1;
+  if (at < 0 || !b.link_text || !b.href) return <>{b.text}</>;
+  return (
+    <>
+      {b.text.slice(0, at)}
+      <a href={b.href} target="_blank" rel="noreferrer">
+        {b.link_text}
+      </a>
+      {b.text.slice(at + b.link_text.length)}
+    </>
+  );
+}
+
 export default function DashboardPage() {
   // 기본 역할은 PB다 — 이 제품의 사용자가 PB이므로 첫 화면도 PB가 보는 화면이어야 한다.
   const [role, setRole] = useState<Role>('pb');
@@ -578,6 +600,22 @@ export default function DashboardPage() {
         같이 열리고 같이 닫힌다. */
   const [briefOpen, setBriefOpen] = useState(false);
   const toggleBrief = useCallback(() => setBriefOpen((o) => !o), []);
+
+  /* 임원·주요주주 소유상황보고는 카드 안에서 **한 줄로 접힌다**(2026-08-06).
+     대형주는 이런 게 매일 수십 건이라, 뒤로 미는 것만으로는 조용한 날 카드를 그것이 다
+     채운다 — 백엔드가 자리를 갈라 주고(`brief.INSIDER_LIMIT`) 화면은 건수만 적는다.
+     ⚠️ 접는 대상은 **임원 개인의 소액 매매 신고**뿐이다. 5%룰(`주식등의대량보유상황보고서`)은
+        이름만 비슷하고 접히지 않는다 — 판정은 백엔드가 하고(`brief.IMPORTANCE`) 여기서
+        보고서명으로 다시 가르지 않는다.
+     ⚠️ **지우지 않는다.** 접힌 줄이 건수를 말하고 누르면 펴진다 — 브리프에서 무엇이 빠졌는지
+        화면이 스스로 말해야 한다(빈 카드가 "없음"인지 "가려짐"인지 구분되어야 한다).
+     ⚠️ 브리핑 접기(`briefOpen`)와 달리 **종목별**이다. 이건 한 종목을 파고드는 조작이고,
+        가로 3열의 높이를 흔들 만큼 줄이 늘지 않는다(접히기 전에도 최대 5줄). */
+  const [insiderOpen, setInsiderOpen] = useState<Record<string, boolean>>({});
+  const toggleInsider = useCallback(
+    (code: string) => setInsiderOpen((o) => ({ ...o, [code]: !o[code] })),
+    [],
+  );
 
   const deleteBrief = useCallback(
     async (id: number) => {
@@ -925,6 +963,10 @@ export default function DashboardPage() {
     if (!ixs.length) return null;
     return ixs.every((x) => x.as_of === ixs[0].as_of) ? ixs[0].as_of : null;
   })();
+  /* 카드 맨 위 요약 불릿 — **백엔드가 완성한 문장을 그대로 꺼내 쓴다.**
+     여기서 items를 다시 훑어 문장을 만들면 규칙이 두 벌이 되고, 화면과 저장된 브리프가
+     서로 다른 말로 "오늘 무슨 일이 있었나"를 답하게 된다. */
+  const briefBullets = data.brief?.lead?.bullets ?? [];
   const aiwork = [
     briefToday && `상담 전 브리핑 ${briefToday.items.length}종목 수집`,
     today.tool_calls &&
@@ -960,10 +1002,12 @@ export default function DashboardPage() {
      감사로그 실집계다(없으면 없다고 말한다). 펼침은 native <details>다 — 직접 만든 토글은
      키보드·스크린리더 동작을 다시 구현해야 하지만 이건 브라우저가 준다.
 
-     자리는 역할이 정한다: **감시 탭이 있으면 거기, 없으면 첫 탭 맨 위.**
-     준법에게 이 줄은 "오늘 손댈 것"이 아니라 지켜본 결과라 심의(처리) 탭이 아니라 감시
-     탭에 속한다 — 감시 탭의 다른 카드(AI 신뢰도·알림·감사로그)와 같은 성격이고, 실제로
-     같은 감사로그를 원본으로 쓴다. PB에게는 감시 탭이 없으므로 첫 탭에 남는다. */
+     **자리는 감시 탭 하나다**(2026-08-06). 이 줄은 "오늘 손댈 것"이 아니라 **지켜본 결과**라
+     심의(처리) 탭이 아니라 감시 탭에 속한다 — 감시 탭의 다른 카드(AI 신뢰도·알림·감사로그)와
+     같은 성격이고 실제로 같은 감사로그를 원본으로 쓴다.
+     ⚠️ 예전에는 감시 탭이 없는 역할(PB)의 첫 탭 맨 위에도 놓았는데 걷어냈다 — PB의 첫 화면
+        맨 윗자리는 상담 준비(브리핑·고객)의 것이고, 지켜본 결과가 그 앞에 설 이유가 없다.
+        **PB 화면에 되살리지 말 것.** */
   const aiworkCard = (
     <details className="aiwork">
       <summary>AI가 오늘 한 일</summary>
@@ -987,14 +1031,80 @@ export default function DashboardPage() {
     </details>
   );
 
+  /* 발행된 노트 — **읽을 것**의 목록이다. 바로 아래 `종목 노트` 카드는 **처리할 일**의
+     목록이고(큐는 발행분을 뺀다), 둘은 같지 않다(HANDOFF §2 · `/api/notes` 주석).
+     지금까지 발행된 노트는 화면 어디에도 목록이 없었다 — 고객 카드의 보유 표를 펴야
+     한 종목씩 나왔고, 그래서 "다 된 게 뭐가 있나"를 볼 자리가 없었다.
+
+     ⚠️ **PDF로 열리는 유일한 등급이 발행분이다**(`notePdfUrl`이 다른 상태면 서버가 409).
+        카드 이름이 곧 왜 여기 것만 PDF가 되는지를 말한다 — `완성된`·`보관함` 같은 말로
+        바꾸면 그 연결이 끊긴다.
+     ⚠️ **다시 정렬하지 않는다.** `/api/notes`가 이미 최신순(id DESC)이고, 여기서 또 정렬하면
+        순서 규칙이 두 벌이 된다.
+     ⚠️ 상태 배지를 줄마다 달지 않는다 — 이 카드는 한 상태만 담아서 모든 행이 카드 제목을
+        그대로 반복하게 된다(옆 큐 카드에서 종류 배지를 뺀 것과 같은 이유). */
+  const publishedNotes = data.noteList.filter((n) => n.status === 'published');
+  const publishedCard = (
+    <section className="card" aria-labelledby="pub-title">
+      <div className="card-head">
+        <h2 id="pub-title">발행된 노트</h2>
+        <span className="hint" aria-live="polite">
+          {publishedNotes.length}건
+        </span>
+      </div>
+      <div className="queue">
+        {publishedNotes.map((n) => {
+          // 본문 상세를 못 받은 건은 PDF 모달이 아무것도 못 그린다 — 누르면 조용히
+          // 아무 일도 안 일어나느니, 눌리지 않고 이유를 말하는 편이 낫다.
+          const ready = !!data.notesById[n.id];
+          return (
+            <div className="qrow" key={n.id}>
+              <span className="title">
+                {n.corp_name}({n.stock_code})
+              </span>
+              {/* `updated_at`은 마지막 상태 변화 시각인데, 발행이 종착이라 발행분에서는
+                  곧 발행 시각이다. 그래도 `발행 시각`이라고 단정해 적지는 않는다. */}
+              <span className="meta">{fmtDateTime(n.updated_at)}</span>
+              <span className="spacer" />
+              <button
+                className="btn"
+                disabled={!ready}
+                title={
+                  ready
+                    ? `${n.corp_name} 종목 노트 PDF 열기`
+                    : '노트 본문을 불러오지 못했습니다. 새로 고쳐 주세요.'
+                }
+                onClick={() => setModal({ kind: 'notepdf', id: n.id })}
+              >
+                PDF
+              </button>
+            </div>
+          );
+        })}
+        {!publishedNotes.length && (
+          <div className="hint" style={{ padding: '10px 4px' }}>
+            아직 발행된 노트가 없습니다. 검토·심의를 거쳐 발행되면 여기 쌓입니다.
+          </div>
+        )}
+      </div>
+    </section>
+  );
+
   /* 처리 대기 카드 — 두 화면이 나눠 갖는다.
      PB에게는 「작성·검토」 탭(만드는 것과 처리하는 것을 같이 두는 곳)에,
      준법에게는 그 탭이 없으므로 원래 자리에 남긴다 — 준법이 큐를 잃으면
-     심의할 노트를 화면에서 찾을 방법이 아예 없어진다. */
+     심의할 노트를 화면에서 찾을 방법이 아예 없어진다.
+
+     ⚠️ 이름은 **`처리 대기`**다(2026-08-06에 `종목 노트`에서 되돌렸다). 이 카드가 담는 건
+        노트 전부가 아니라 **아직 처리할 것**이고(발행분은 빠진다), 바로 위에 `발행된 노트`가
+        서면서 `종목 노트`라는 이름이 둘을 다 가리키는 것처럼 읽혔다.
+        코드의 나머지는 줄곧 이 이름을 쓰고 있었다 — 생성 토스트(`처리 대기 큐에 올렸습니다`),
+        보류·처리 완료 토스트, `PILL` 주석(`처리 대기 → 처리 완료`가 짝), `db.py`·`main.py`
+        주석. 카드 하나만 갈려 있던 것이라 되돌리는 쪽이 맞다. */
   const queueCard = (
     <section className="card" aria-labelledby="q-title">
       <div className="card-head">
-        <h2 id="q-title">종목 노트</h2>
+        <h2 id="q-title">처리 대기</h2>
         {/* 건수는 두 화면 모두 **제목 옆**에 둔다 — 세는 대상(제목)에서 멀어지면 표 헤더처럼
             읽힌다. aria-live: 목록이 갈리는 변화가 스크린리더에는 안 들리므로 수를 읽어 준다. */}
         <span className="hint" aria-live="polite">
@@ -1006,8 +1116,8 @@ export default function DashboardPage() {
           const [label, cls] = PILL[it.status] ?? [it.status, ''];
           return (
             <div className="qrow" key={`${it.type}-${it.id}`}>
-              {/* 종류 배지(`종목 노트`)는 뺐다 — 목록이 한 종류뿐이라 모든 행이 카드
-                  제목을 그대로 반복했다. 종류가 다시 섞이면 되살릴 자리다. */}
+              {/* 종류 배지(`종목 노트`)는 뺐다 — 목록이 한 종류뿐이라 배지가 가르는 게
+                  없다. 종류가 다시 섞이면(고객 문의가 큐로 돌아오면) 되살릴 자리다. */}
               <span className="title">{it.title}</span>
               {/* 담당자(it.who)는 적지 않는다 — 1인용 대시보드에서 이 큐의 건은 전부
                         한 사람 몫이라 "미배정/관리자/박PB"가 구분하는 게 없다. 누가 무엇을
@@ -1083,12 +1193,14 @@ export default function DashboardPage() {
 
       {/* ══════════ 탭 1 · 고객 관리 ══════════ */}
       <div className="view stack" hidden={view !== 'cust'}>
-        {/* 감시 탭이 있는 역할(준법)에게는 여기가 아니라 그쪽에 붙는다 — 정의는 위 한 곳. */}
-        {!cfg.aiTab && aiworkCard}
+        {/* ⚠️ 여기 있던 「AI가 오늘 한 일」은 걷어냈다(2026-08-06) — **감시 탭에만 산다.**
+            그 줄은 "오늘 손댈 것"이 아니라 **지켜본 결과**라, PB의 첫 화면 맨 위에서
+            상담 준비(브리핑·고객)보다 앞자리를 먹을 이유가 없었다. 성격이 같은 카드
+            (AI 신뢰도·컴플라이언스 알림·감사로그)가 전부 감시 탭에 있고 원본도 같은
+            감사로그다. **PB 화면에 되살리지 말 것.** */}
 
         {/* 오늘 규모(내 담당 고객·내 처리 대기) → 바로 만들 수 있는 것(종목 노트) 순서다.
-            "AI가 오늘 한 일" 바로 아래에 오늘의 수치와 조작이 붙고, 그 아래로 읽을거리
-            (브리핑·처리 대기·고객)가 이어진다. */}
+            그 아래로 읽을거리(브리핑·처리 대기·고객)가 이어진다. */}
         {/* 타일은 어느 화면에서나 균등 2열이다. 한때 준법 화면에서만 감시 탭의
             사이드바 격자(2fr 1fr)에 맞췄는데, 두 타일의 무게가 같은데 폭이 다르면
             왼쪽이 더 중요한 것처럼 읽힌다 — 탭 사이 이음매보다 이쪽이 우선이다. */}
@@ -1190,6 +1302,37 @@ export default function DashboardPage() {
           )}
           {data.brief ? (
             <>
+              {/* 요약 불릿 — **지수 줄보다 위**다(2026-08-06). 여기 3~4줄이 "오늘 무슨 일이
+                  있었나"를 통째로 답하고, 그 아래(지수·종목 카드)는 근거다. 예전에는 리드
+                  한 줄이 지수 **아래**에 있었는데 그러면 종목 카드의 머리말처럼 읽혀서,
+                  "오늘 전체"를 말하는 자리가 화면에 없었다.
+                  ⚠️ **문장을 여기서 만들지 않는다** — 백엔드가 완성해서 보낸 것을 그대로
+                     찍는다(types.ts `BriefBullet`). 없는 항목은 오지 않으므로 빈 자리를
+                     문구로 채우지도 않는다.
+                  ⚠️ 새 색을 쓰지 않는다. 눈이 여기부터 가야 하지만 그 일은 색이 아니라
+                     **자리**가 한다(카드 맨 위). */}
+              {briefBullets.length > 0 && (
+                <ul className="digest">
+                  {briefBullets.map((b, i) => (
+                    <li className={`digest-${b.kind}`} key={i}>
+                      <DigestText b={b} />
+                      {/* **규칙이 쓴 문장과 구분한다.** 이 불릿들은 본문이 아니라
+                          `lead_json`에 살아 컴플라이언스 게이트를 안 탄다 — 나머지는
+                          "데이터에 없는 말을 못 한다"는 보장이 있고 이것만 없다.
+                          그 사실을 말하는 자리가 화면에서 이 배지뿐이라 **빼지 말 것**.
+                          근거가 되는 공시·뉴스는 바로 아래 카드에 원문 링크로 있다. */}
+                      {b.ai && (
+                        <span
+                          className="digest-ai"
+                          title="이 한 줄은 AI가 공시명·뉴스 제목만 보고 쓴 요약입니다. 근거는 아래 종목 카드의 원문 링크에 있습니다."
+                        >
+                          AI 요약
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
               {/* 오늘 시장 — PB가 고객에게 가장 먼저 듣는 질문이 개별 종목이 아니라 시장이다.
                   못 가져왔으면 빈칸으로 두지 않고 미연결 사유를 그대로 말한다. */}
               {data.brief.market?.indices?.length ? (
@@ -1238,18 +1381,34 @@ export default function DashboardPage() {
                 {data.brief.items.map((it) => {
                   const q = it.quote;
                   const down = q ? isDown(q.change_pct) : false;
+                  /* 공시 줄은 등급으로 두 몫이 된다 — 위(주요사항·정기·기타)는 그대로 펴고,
+                     임원·주요주주 보고는 아래 접힌 한 줄로 모은다. **태그·색·모양은 그대로
+                     `공시` 하나다**: 등급은 무엇을 접을지 정할 뿐 화면에 글자로 나오지 않는다.
+                     ⚠️ 접히는 건 임원 개인의 소액 매매 신고뿐이다 — 5%룰(`주식등의대량보유
+                        상황보고서`)은 이름만 비슷하고 위에 선다(`brief._MATERIAL_KEYWORDS`). */
+                  const insiderRows = it.disclosures.filter(
+                    (d) => d.importance === 'insider',
+                  );
+                  /* `is_new === false`로 좁혀 본다 — **필드가 없는 것과 false는 다르다**.
+                     비교할 어제 브리프가 없으면 백엔드가 필드를 안 붙이는데, falsy로 보면
+                     첫 브리프가 통째로 흐려진다(types.ts `is_new`). */
+                  const seen = (v?: boolean) => (v === false ? ' seen' : '');
                   const rows = [
-                    ...it.disclosures.map((d) => ({
-                      tag: '공시',
-                      text: d.report_nm.trim(),
-                      href: d.viewer_url,
-                      meta: fmtDate(d.rcept_dt),
-                    })),
+                    ...it.disclosures
+                      .filter((d) => d.importance !== 'insider')
+                      .map((d) => ({
+                        tag: '공시',
+                        text: d.report_nm.trim(),
+                        href: d.viewer_url,
+                        meta: fmtDate(d.rcept_dt),
+                        cls: seen(d.is_new),
+                      })),
                     ...it.news.map((n) => ({
                       tag: '뉴스',
                       text: n.title,
                       href: n.link,
                       meta: fmtDate(n.pub_date),
+                      cls: seen(n.is_new),
                     })),
                   ];
                   const open = briefOpen;
@@ -1297,18 +1456,34 @@ export default function DashboardPage() {
                               {down ? '▼' : '▲'}
                               {fmtPct(q.change_pct)}%
                             </span>
+                            {/* ⚠️ 평소 대비 꼬리표(`20거래일 중 가장 큰 상승`·`평소 수준`)는
+                                **화면에서 걷어냈다**(2026-08-06). 시세 줄은 값 하나를 읽는
+                                자리인데 판정 문구가 가격과 기준일 사이에 끼면서, 좁은 카드에서
+                                두 줄로 접히고 정작 가격이 눈에 안 들어왔다.
+                                백엔드 판정(`quote.recent`)과 문구(`recent_text`)는 브리프
+                                기록에 그대로 남는다 — 되살릴 자리는 여기이고, 되살린다면
+                                시세 줄이 아니라 **다른 줄**이어야 한다. */}
+                            {/* 기준일은 **줄 오른쪽 끝**이다(2026-08-06 · `.mkt-asof`와 같은
+                                처방). 값 바로 뒤에 붙어 있으면 가격·등락률을 읽는 눈이 매번
+                                날짜를 지나가는데, 이 값이 오늘 것이 아니라는 사실은 남되
+                                **읽는 순서에서는 뒤로** 밀리는 게 맞다.
+                                앞의 `·`는 뺐다 — 붙어 있을 때 앞뒤를 잇던 기호라, 떨어뜨려
+                                놓고도 남기면 무엇과 무엇을 잇는지가 없어진다. */}
                             <span className="bcode">
-                              · {fmtDate(q.as_of)} 지연시세
+                              {fmtDate(q.as_of)} 지연시세
                             </span>
                           </div>
                         ) : (
                           <div className="bempty">시세 조회 결과 없음</div>
                         )}
                       </button>
-                      {open &&
-                        (rows.length ? (
-                          rows.map((r, i) => (
-                            <div className="bline" key={i}>
+                      {open && (
+                        <>
+                          {/* 어제도 있던 줄은 톤만 낮춘다(`.seen`) — 지우지 않는다.
+                              고객이 어제 기사를 오늘 물어볼 수 있고, 브리프 기록에서 빠져도
+                              안 된다. 진하게 남는 것이 곧 "밤사이 새로 생긴 것"이다. */}
+                          {rows.map((r, i) => (
+                            <div className={`bline${r.cls}`} key={i}>
                               <span className="btag">{r.tag}</span>
                               <span style={{ minWidth: 0 }}>
                                 <a
@@ -1321,10 +1496,61 @@ export default function DashboardPage() {
                                 <span className="bcode"> {r.meta}</span>
                               </span>
                             </div>
-                          ))
-                        ) : (
-                          <div className="bempty">전일 공시·밤사이 뉴스 없음</div>
-                        ))}
+                          ))}
+                          {/* 임원·주요주주 보고 — **뉴스 아래**, 접힌 한 줄. 가장 안 중요한
+                              것이 맨 아래에 서고, 건수를 적어 "가려져 있다"를 스스로 말한다.
+                              태그는 그대로 `공시`다 — 등급을 글자로 늘리지 않는다.
+                              ⚠️ 이 줄을 `지분공시`라고 부르지 말 것(2026-08-06) — 5%룰
+                                 보고도 지분공시인데 그건 **위에** 선다. 접히는 게 무엇인지
+                                 이름이 정확히 말해야 위아래가 갈린 이유가 읽힌다. */}
+                          {insiderRows.length > 0 && (
+                            <>
+                              <button
+                                type="button"
+                                className="bline bline-fold"
+                                aria-expanded={!!insiderOpen[it.stock_code]}
+                                title={
+                                  insiderOpen[it.stock_code]
+                                    ? '접기 — 임원·주요주주 소유상황보고를 한 줄로 모읍니다'
+                                    : '펴기 — 임원·주요주주 개인의 매매 신고를 봅니다'
+                                }
+                                onClick={() => toggleInsider(it.stock_code)}
+                              >
+                                <span className="btag">공시</span>
+                                <span>
+                                  임원·주요주주 보고 {insiderRows.length}건
+                                  <span className="bcaret" aria-hidden="true">
+                                    {insiderOpen[it.stock_code] ? '⌄' : '›'}
+                                  </span>
+                                </span>
+                              </button>
+                              {insiderOpen[it.stock_code] &&
+                                insiderRows.map((d) => (
+                                  <div className="bline insider" key={d.viewer_url}>
+                                    <span style={{ minWidth: 0 }}>
+                                      <a
+                                        href={d.viewer_url || '#'}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                      >
+                                        {d.report_nm.trim()}
+                                      </a>
+                                      <span className="bcode">
+                                        {' '}
+                                        {fmtDate(d.rcept_dt)}
+                                      </span>
+                                    </span>
+                                  </div>
+                                ))}
+                            </>
+                          )}
+                          {!rows.length && !insiderRows.length && (
+                            <div className="bempty">
+                              전일 공시·밤사이 뉴스 없음
+                            </div>
+                          )}
+                        </>
+                      )}
                     </div>
                   );
                 })}
@@ -1819,6 +2045,10 @@ export default function DashboardPage() {
             onNoteCreated={() => void load()}
             onRunningChange={setNoteRunning}
           />
+          {/* 순서는 **만든다 → 다 된 것을 읽는다 → 처리할 것을 본다**이다. 발행분을 큐
+              위에 두는 이유: 상담에 실제로 쓸 수 있는 등급은 발행분뿐이고, 큐는 아직
+              쓸 수 없는 것들이다. ⚠️ 이 카드는 PB 화면 전용이다 — 준법에는 이 탭이 없다. */}
+          {publishedCard}
           {queueCard}
         </div>
       )}
