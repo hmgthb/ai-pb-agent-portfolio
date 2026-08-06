@@ -945,6 +945,105 @@ tr:focus-visible,
 .qrow .spacer {
   flex: 1;
 }
+
+/* 상담 준비 메모 목록의 **고객 묶음**(native <details>). 한 고객에게 날짜가 다른 여러 건이
+   쌓이므로 이름으로 한 겹 접는다 — 꺾쇠·여닫이 어휘는 감사로그(`.aitem`)와 같은 것을 쓴다.
+   ⚠️ 줄(`.qrow`)의 생김새는 손대지 않는다 — `발행된 노트`와 **같은 형식**이어야 두 카드가
+      같은 종류의 목록으로 읽힌다. 여기서 더하는 건 묶는 줄 하나뿐이다. */
+.prepgrp {
+  border-top: 1px solid var(--grid);
+}
+.prepgrp:first-child {
+  border-top: 0;
+}
+.prepgrp > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 2px;
+  cursor: pointer;
+  list-style: none; /* Firefox 기본 삼각형 제거 */
+}
+.prepgrp > summary::-webkit-details-marker {
+  display: none; /* Safari 기본 삼각형 제거 */
+}
+/* 꺾쇠는 제 제목에 맞춘 크기다 — 이 줄의 이름이 13.5px이라 감사로그(11.5px 제목 · 10px
+   꺾쇠)보다 한 눈금 크다. 작게 두면 묶음을 여는 조작이 눌러 볼 것으로 안 보인다. */
+.prepgrp > summary::before {
+  content: '▸';
+  flex: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  transition: transform 0.12s ease;
+}
+.prepgrp[open] > summary::before {
+  transform: rotate(90deg);
+}
+.prepgrp > summary:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
+  border-radius: var(--r-sm);
+}
+/* 고객 번호 — 고객 상세의 순번(`.detail .name .rowno`)과 **같은 어휘**다: 숫자용 글꼴에
+   회색, 이름보다 한 눈금 작게. 이름 앞에 서지만 이름보다 세면 안 된다(가리키는 값이지
+   읽을 값이 아니다). */
+.prepgrp > summary .cno {
+  flex: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+.prepgrp > summary strong {
+  font-size: 13.5px;
+  font-weight: 700;
+}
+/* 건수는 **이름에 딸린 값**이다 — 같은 크기·같은 색이면 이름과 나란히 읽혀 묶음 제목이
+   둘로 보인다(상담 메모 상자의 `.prep-toggle .hint`와 같은 처방).
+   ⚠️ `.hint`에는 기본 규칙이 없다 — 이 줄이 없으면 본문 크기·본문 색으로 그려진다. */
+.prepgrp > summary .hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+/* 최근 시각은 **줄 끝**으로 민다 — 접었을 때 이름·건수는 왼쪽에서 이어 읽고, 시각은
+   묶음마다 같은 자리에 서야 세로로 훑힌다. */
+.prepgrp > summary .meta {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* 묶음 안의 줄은 한 칸 들여쓴다 — 들여쓰기가 없으면 펼친 줄과 다음 묶음 제목이 같은
+   층으로 보여, 어느 고객 것인지가 스크롤 중에 흐려진다. */
+.prepgrp > .qrow {
+  padding-left: 18px;
+}
+/* 줄 끝의 글리프 조작(지금은 삭제 하나). **면도 테두리도 없다** — 옆의 `PDF`가 이 줄에서
+   할 일이고, 지우기는 가끔 쓰는 조작이라 같은 무게로 서면 안 된다(`.btn-quiet`과 같은 급을
+   글자 대신 아이콘으로 낸 것).
+   ⚠️ 평소 색은 `--muted`이고 **빨강은 손을 얹었을 때만** 든다 — 지우는 자리라고 늘 빨갛게
+      두면 목록이 경고문처럼 읽힌다(무장한 뒤에는 `.btn-quiet.danger`가 그 말을 한다). */
+.iconbtn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.iconbtn:hover {
+  color: var(--critical);
+}
+.iconbtn:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
+}
 .pill {
   font-size: 11px;
   font-weight: 600;
@@ -1324,12 +1423,20 @@ th.rownum {
   flex-wrap: wrap;
   gap: 8px;
 }
+/* 제목 줄의 조작 묶음(`↻ 새 대화` · 크게 보기) — 제목은 왼쪽에 붙여 두고 이 상자만 끝으로
+   민다. **auto는 여기 하나뿐**이어야 한다: 버튼마다 달면 남는 자리가 갈려 둘 사이가 벌어진다
+   (모달 머리말 `.m-acts`와 같은 이유). */
+.cust-chat .cchat-acts {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 /* 크게 보기 버튼 — 줄 맨 오른쪽. 글리프 하나뿐이라 설명은 aria-label·title이 나른다
    (`.flag`와 같은 규칙: 라벨 없는 글리프는 그 둘이 유일한 설명이다). */
 .cust-chat .cchat-zoom {
   flex: none;
-  /* 제목은 왼쪽에 붙여 두고 버튼만 끝으로 민다 — 제목 줄에 다른 것이 늘어도 자리가 안 밀린다. */
-  margin-left: auto;
   font: inherit;
   font-size: 14px;
   line-height: 1;
@@ -1343,6 +1450,29 @@ th.rownum {
 .cust-chat .cchat-zoom:hover {
   color: var(--ink-2);
   border-color: var(--baseline);
+}
+/* `↻ 새 대화` — 크게 보기와 같은 생김새로 두되 글자가 붙는다(비우는 조작이라 글리프만으로는
+   무엇이 사라지는지 알 수 없다). 답변이 도는 동안은 흐리게 두고 눌리지 않는다. */
+.cust-chat .cchat-reset {
+  flex: none;
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1;
+  padding: 4px 7px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cust-chat .cchat-reset:hover:not(:disabled) {
+  color: var(--ink-2);
+  border-color: var(--baseline);
+}
+.cust-chat .cchat-reset:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 /* 크게 본 상태 — **같은 컴포넌트를 그대로 두고 상자만 화면 위로 띄운다**(page.tsx 주석).
    리마운트가 없어야 스트리밍 중인 답변과 지금까지의 대화가 살아남는다.

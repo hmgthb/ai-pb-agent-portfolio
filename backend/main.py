@@ -1681,6 +1681,30 @@ async def export_prep_note_pdf(customer_id: int, body: PrepNoteBody, actor: str 
 
     cust = _customer_to_dict(row)
     cust["risk_label"] = f1.RISK_LABELS[cust["risk"]] if 0 <= cust["risk"] < len(f1.RISK_LABELS) else ""
+    # 아직 처리하지 않은 고객 문의를 문서에 싣는다(2026-08-06) — 상담 직전에 PB가 손에 들고
+    # 가는 종이라, "이 고객이 이미 무엇을 물었는가"가 화면(고객 카드)에만 있고 문서에는
+    # 없으면 그 종이만 보는 자리에서 빠진다.
+    # ⚠️ **원문은 신뢰하지 않는 데이터다**(가드레일 5) — 문서에 글자로만 싣고, 그 안의
+    #    지시문처럼 보이는 문장을 무엇으로도 해석하지 않는다(LLM은 이 경로에 없다).
+    # ⚠️ 다만 **MNPI·PII·인젝션 패턴은 걸러 낸다**(가드레일 2) — 채팅 입력과 같은 문지기를
+    #    같은 이유로 쓴다. 걸리면 그 한 건만 원문 없이 표시하고 나머지는 그대로 간다:
+    #    메모 전체를 막으면 PB가 손쓸 수 없는 사유(고객이 쓴 문장)로 상담 자료가 사라진다.
+    cust["asks"] = []
+    for s in await db.list_customer_asks(customer_id, PB_NAME):
+        text = (s["question"] or "").strip()
+        if not text:
+            continue
+        blocked = compliance.input_guard(text)
+        if blocked:
+            await db.append_audit("prep_note_ask_withheld", None, actor, {
+                "customer_id": customer_id, "session_id": s["id"], "violations": blocked,
+            })
+        cust["asks"].append({
+            "topic": s["topic"],
+            "at": s["started_at"].isoformat(),
+            "question": "" if blocked else text,
+            "withheld": bool(blocked),
+        })
     now = datetime.now(bizdate.BIZ_TZ)
     try:
         pdf = notepdf.build_prep(cust, items, now=now)
@@ -1688,23 +1712,140 @@ async def export_prep_note_pdf(customer_id: int, body: PrepNoteBody, actor: str 
         logger.error("상담 메모 PDF 생성 실패: %s", exc)
         raise HTTPException(503, str(exc)) from exc
 
+    # 만든 것을 남긴다(2026-08-06). 그전에는 인쇄만 하고 아무것도 안 남겨서, 어제 만든 메모를
+    # 다시 열 길이 없었다 — 감사로그에는 "몇 건을 인쇄했다"만 있었지 무엇을 담았는지가 없다.
+    # ⚠️ **PDF 바이트가 아니라 재료를 담는다.** 다시 열 때 같은 함수로 다시 그리면 문서 규칙을
+    #    고쳤을 때 옛 메모도 같이 따라오고, 게이트도 다시 받게 할 수 있다(아래 재발행 라우트).
+    # ⚠️ 저장 실패로 인쇄까지 막지는 않는다 — 손에 든 PDF는 이미 게이트를 통과한 것이고,
+    #    목록에서 못 여는 것보다 지금 상담 자료를 못 받는 쪽이 크다.
+    prep_id: int | None = None
+    try:
+        saved = await db.insert_prep_note(customer_id, items, _prep_snapshot(cust), actor)
+        prep_id = saved["id"]
+    except Exception:  # noqa: BLE001 — 저장은 곁다리다(위 주석)
+        logger.exception("상담 메모 저장 실패 (customer_id=%s)", customer_id)
+
     await db.append_audit("prep_note_exported", None, actor, {
         "customer_id": customer_id,
+        "prep_id": prep_id,
         "items": len(items),
         "kinds": {k: sum(1 for it in items if it["kind"] == k) for k in ("sentence", "option", "memo")},
         "bytes": len(pdf),
     })
+    return _prep_pdf_response(pdf, cust, now)
+
+
+def _prep_snapshot(cust: dict) -> dict:
+    """다시 그릴 때 필요한 **인쇄 당시의 고객 사실**만 추린다(`notepdf.build_prep`이 읽는 것).
+
+    ⚠️ 통째로 담지 않는 이유는 둘이다: ① **계좌번호(`acct`)는 이 표에 둘 이유가 없다** —
+       PDF도 안 쓰고, 원본은 `pb_customers`에 있다 ② 담아 두면 쓰이지 않는 값까지 사본이
+       생겨, 나중에 무엇이 문서에 실렸는지를 이 dict만 보고는 알 수 없게 된다.
+    ⚠️ 문의(`asks`)·위험 플래그(`flagReasons`)도 **찍힌 그대로** 담긴다 — 문의는 나중에
+       처리되고 플래그는 값이 바뀌지만, 다시 여는 문서는 그때 인쇄한 것이어야 한다.
+    """
+    return {
+        k: cust.get(k)
+        for k in ("id", "name", "age", "risk_label", "balance", "alloc", "holdings",
+                  "flagReasons", "asks")
+    }
+
+
+def _prep_pdf_response(pdf: bytes, cust: dict, now: datetime) -> Response:
+    """만들 때와 다시 열 때가 **같은 파일명·같은 헤더**로 나가게 한다."""
     name = notepdf.prep_filename(cust, now)
     return Response(
         content=pdf,
         media_type="application/pdf",
         headers={
             "Content-Disposition": (
-                f'inline; filename="prep-{customer_id}.pdf"; '
+                f'inline; filename="prep-{cust.get("id")}.pdf"; '
                 f"filename*=UTF-8''{quote(name)}"
             )
         },
     )
+
+
+@app.get("/api/prep-notes")
+async def list_prep_notes():
+    """지금까지 만든 상담 준비 메모 목록 — **담당 고객 것만**(스코핑은 서버가 한다).
+
+    본문은 안 준다(`db.list_prep_notes` 주석). 화면은 고객별로 접어 두고, 열어야 할 때
+    아래 PDF 라우트를 부른다.
+    """
+    return [
+        {
+            "id": r["id"],
+            "customer_id": r["customer_id"],
+            "customer_name": r["customer_name"],
+            "items": r["items"],
+            "created_by": r["created_by"],
+            "created_at": r["created_at"].isoformat(),
+        }
+        for r in await db.list_prep_notes(PB_NAME)
+    ]
+
+
+@app.get("/api/prep-notes/{prep_id}/pdf")
+async def get_prep_note_pdf(prep_id: int, actor: str = Query("PB")):
+    """저장해 둔 상담 준비 메모를 **그때 인쇄한 그대로** 다시 만든다.
+
+    - 담당 고객의 것이 아니면 404(노트·고객과 같은 규칙 — 존재를 알려주지 않는다).
+    - 고객 사실도 시각도 **저장된 스냅샷**을 쓴다. 지금 값으로 그리면 어제 날짜 문서에 오늘
+      잔고가 실린다(`db.SCHEMA`의 `prep_notes` 주석).
+    - **게이트를 다시 받는다.** 만들 때 통과한 것이지만 규칙은 그 뒤에 바뀔 수 있고, 이 문서는
+      지금 상담에 들고 나가는 물건이다 — 오늘 기준으로 막혀야 할 것이 오늘 열려서는 안 된다.
+    """
+    row = await db.get_prep_note(prep_id)
+    if row is None or row["pb"] != PB_NAME:
+        raise HTTPException(404, "메모를 찾을 수 없습니다.")
+
+    items = json.loads(row["items_json"])
+    cust = json.loads(row["customer_json"])
+    content = compliance.apply_notice(notepdf.prep_markdown(items), "F1")
+    violations = compliance.check_note(content, notepdf.prep_sentences(items), "F1")
+    if violations:
+        await db.append_audit("prep_note_blocked", None, actor,
+                              {"prep_id": prep_id, "customer_id": row["customer_id"],
+                               "violations": violations})
+        raise HTTPException(
+            409,
+            detail={"message": "컴플라이언스 게이트를 통과하지 못했습니다.", "violations": violations},
+        )
+
+    now = row["created_at"].astimezone(bizdate.BIZ_TZ)
+    try:
+        pdf = notepdf.build_prep(cust, items, now=now)
+    except RuntimeError as exc:  # 한글 폰트 없음(노트 PDF와 같은 실패)
+        logger.error("상담 메모 PDF 재생성 실패: %s", exc)
+        raise HTTPException(503, str(exc)) from exc
+
+    await db.append_audit("prep_note_opened", None, actor,
+                          {"prep_id": prep_id, "customer_id": row["customer_id"]})
+    return _prep_pdf_response(pdf, cust, now)
+
+
+@app.delete("/api/prep-notes/{prep_id}")
+async def delete_prep_note(prep_id: int, actor: str = Query("PB")):
+    """만들어 둔 메모를 지운다 — **되돌릴 수 없다**(재료가 사라지면 다시 그릴 수 없다).
+
+    지우는 것은 **한 건뿐**이다(브리핑 삭제가 그 날짜 전부를 지우는 것과 다르다) — 목록에서
+    보이는 줄과 지워지는 것이 같아야 한다.
+    ⚠️ **감사로그는 남는다**(append-only) — 무엇을 언제 만들었고 지웠는지는 지워지지 않는다.
+       지워지는 건 다시 열 수 있는 재료뿐이다.
+    """
+    row = await db.get_prep_note(prep_id)
+    if row is None or row["pb"] != PB_NAME:
+        raise HTTPException(404, "메모를 찾을 수 없습니다.")
+
+    await db.delete_prep_note(prep_id)
+    await db.append_audit("prep_note_deleted", None, actor, {
+        "prep_id": prep_id,
+        "customer_id": row["customer_id"],
+        "items": len(json.loads(row["items_json"])),
+        "created_at": row["created_at"].isoformat(),
+    })
+    return {"id": prep_id, "deleted": 1}
 
 
 # --- 대시보드(관리자/PB 콘솔) --------------------------------------------

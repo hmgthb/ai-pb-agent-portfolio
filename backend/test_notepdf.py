@@ -196,6 +196,42 @@ def test_pb_memo_is_checked_like_everything_else():
     assert any("투자권유" in x for x in v), v
 
 
+def test_prep_flag_line_quotes_the_saved_rule_result():
+    """위험 플래그 줄은 **저장된 판정을 인용**할 뿐이다 — 없으면 줄 자체가 없다
+    ("플래그 없음"을 적지 않는다).
+    ⚠️ `위험 플래그`라는 말은 안 붙는다 — 그 자리는 기호(⚑)가 대신한다(`_flag_mark`)."""
+    assert notepdf.prep_flag_line({"flagReasons": []}) == ""
+    assert notepdf.prep_flag_line({}) == ""
+    line = notepdf.prep_flag_line(
+        {"flagReasons": [{"key": "conc", "text": "보유주식 내 삼성전자 집중 70%"},
+                         {"key": "risk", "text": "성향 대비 주식 비중 과다"}]}
+    )
+    assert line == "보유주식 내 삼성전자 집중 70% · 성향 대비 주식 비중 과다"
+
+
+def test_flag_mark_is_drawn_because_the_font_has_no_flag():
+    """⚑(U+2691)는 나눔고딕에 없다 — 글자로 쓰면 `_renderable`이 조용히 지운다.
+    이 확인이 깨지면(폰트가 바뀌어 글리프가 생기면) 그림 대신 글자를 써도 된다."""
+    assert notepdf._renderable("⚑") == ""
+    d = notepdf._flag_mark()
+    assert d.width > 0 and len(d.contents) == 2  # 깃대(선) + 깃발(면)
+
+
+def test_prep_asks_keep_the_withheld_one_visible():
+    """⚠️ 규정 검사에 걸린 문의는 **자리를 남긴다** — 조용히 지우면 "문의가 없었다"와
+    구분되지 않는다. 사유는 문서가 아니라 감사로그에 남는다.
+    ⚠️ 주제(topic)는 문서에 안 실린다 — 원문 옆에 요약 제목이 서면 원문 대신 그걸 읽는다."""
+    asks = notepdf.prep_asks({"asks": [
+        {"question": "리밸런싱 해야 할까요?", "topic": "포트폴리오 리밸런싱 문의",
+         "at": "2026-07-29T13:12:00+09:00", "withheld": False},
+        {"question": "", "topic": "기타 문의", "at": None, "withheld": True},
+    ]})
+    assert asks[0] == ("리밸런싱 해야 할까요?", "2026-07-29 13:12")
+    assert asks[1][0].startswith("[확인 필요]") and asks[1][1] == ""
+    # 문의가 없는 고객은 구역 자체가 서지 않는다
+    assert notepdf.prep_asks({}) == []
+
+
 def test_build_prep_and_filename():
     cust = {"id": 19, "name": "권명희", "age": 53, "risk_label": "안정형", "balance": 570_000_000}
     pdf = notepdf.build_prep(cust, _PREP, now=datetime(2026, 8, 6, 15, 0, tzinfo=BIZ_TZ))

@@ -62,10 +62,16 @@ export const notePdfUrl = (
   `${BASE}/api/notes/${noteId}/pdf?actor=${encodeURIComponent(actor)}` +
   (inline ? '&inline=1' : '');
 
-/** 상담 준비 메모 PDF. **POST다** — 담은 목록을 몸통으로 보내야 해서 링크로 못 연다
- *  (노트 PDF는 저장된 것을 GET으로 받는다). 서버는 저장하지 않고 그 자리에서 만든다. */
+/** 상담 준비 메모를 **새로 만드는** 길. **POST다** — 담은 목록을 몸통으로 보내야 해서 링크로
+ *  못 연다. 서버는 만든 것을 남기므로(`prep_notes`), 만든 뒤 목록을 다시 받으면 그 줄이 선다. */
 export const prepNotePdfUrl = (customerId: number, actor: string) =>
   `${BASE}/api/customers/${customerId}/prep-note/pdf?actor=${encodeURIComponent(actor)}`;
+
+/** 이미 만들어 둔 상담 준비 메모의 PDF. 노트 PDF와 같은 이유로 **링크로 연다**(위 주석) —
+ *  저장된 것을 GET으로 받는 자리라 blob으로 감쌀 이유가 없다.
+ *  ⚠️ 담당 고객의 것만 열린다(아니면 서버가 404). */
+export const prepNoteFileUrl = (prepId: number, actor: string) =>
+  `${BASE}/api/prep-notes/${prepId}/pdf?actor=${encodeURIComponent(actor)}`;
 
 /** FastAPI의 에러 본문에서 사람이 읽을 메시지를 꺼낸다. 게이트 차단은 violations를 준다. */
 export function errorMessage(body: unknown, fallback = '처리에 실패했습니다.'): string {

@@ -38,6 +38,7 @@ import {
   hhmm,
   isDown,
   notePdfUrl,
+  prepNoteFileUrl,
   prepNotePdfUrl,
 } from './api';
 import {
@@ -69,6 +70,7 @@ import {
   type DashboardAudit,
   type NoteDetail,
   type NoteIndex,
+  type PrepNoteIndex,
   type QueueChat,
   type QueueItem,
   type Role,
@@ -202,6 +204,9 @@ type Data = {
   summary: Summary;
   audit: DashboardAudit[];
   agents: AgentCalls[];
+  /** 지금까지 만든 상담 준비 메모(최신순, 담당 고객 것만). 노트와 달리 상태가 없다 —
+   *  승인 흐름을 타지 않는 PB 본인용 문서라, 목록은 "만든 것 전부"다. */
+  prepNotes: PrepNoteIndex[];
   /* ⚠️ `sessions`를 여기 다시 넣지 말 것(2026-07-30에 뺐다). `/api/sessions`를 받아
      담아 두기만 하고 **읽는 곳이 한 군데도 없었다** — 화면에 닿는 상담 데이터는 큐
      (`pending`만)와 `summary.sessions_pending`뿐이다. 문의 상세가 필요해지면 그때
@@ -399,6 +404,9 @@ export default function DashboardPage() {
     /* 발행분 **최종본 PDF**를 화면에 띄운다(상담 준비의 노트 줄). 검토 화면(`note`)과
        다른 모달인 이유: 상담 직전에 필요한 건 문장별 판정 도구가 아니라 **문서 자체**다. */
     | { kind: 'notepdf'; id: number }
+    /* 만들어 둔 상담 준비 메모(`prep_notes.id`). 노트 PDF와 **다른 종류**로 두는 이유:
+       id 공간이 다르고(노트 #12와 메모 #12는 남남), 문서 종류도 다르다. */
+    | { kind: 'prepdf'; id: number }
     | { kind: 'chat'; id: number }
     /* `f1`은 여는 신호일 뿐 질문을 실어 오지 않는다(예전 `q`는 걷어냈다) — 이 모달은
        닫아도 언마운트되지 않으므로(아래 오버레이 주석) 마운트 시점에만 읽는 prop은
@@ -409,10 +417,12 @@ export default function DashboardPage() {
   /** 전역 F1 답변이 도는 중인가 — 모달을 닫아도 스트림은 계속 돈다(언마운트하지 않는다).
    *  닫아 둔 동안 그 사실을 말할 자리는 고정 버튼뿐이다. */
   const [f1Running, setF1Running] = useState(false);
-  /** 고객 문의 모달의 대화를 **문의별로** 들고 있는 자리. 그 모달은 닫으면 언마운트되므로
-   *  (전역 F1처럼 감춰 둘 수 없다 — 감추면 어느 문의의 대화인지가 사라진다) 대화를 여기
-   *  페이지 쪽에 둔다. ⚠️ **고객 카드 채팅에는 넘기지 않는다** — 그쪽은 고객을 바꾸면 새로
-   *  시작하는 것이 결정이다(`key={selected.id}`).
+  /** F1 대화를 **자리별로** 들고 있는 곳(말풍선 · 세션 id · 쓰던 질문). 쓰는 데는 둘이고 키
+   *  앞머리로 갈라 둔다: 고객 문의 모달(`session-{문의id}`)과 고객 카드(`customer-{고객id}`).
+   *  둘 다 전역 F1처럼 감춰 둘 수가 없어서(모달은 닫으면 언마운트되고, 카드의 채팅 칸은
+   *  고객을 바꾸면 그 자리가 다른 고객의 것이 된다) 대화를 여기 페이지 쪽에 둔다.
+   *  ⚠️ 키를 뭉뚱그리지 말 것 — 세션 id가 대화별로 보관되는 덕에 후속 질문이 **자기 대화의
+   *     종목**만 이어받는다. 키가 겹치면 앞 고객의 종목이 다음 고객 답에 섞인다.
    *  ⚠️ `useRef`가 아니라 `useState`인 건 규칙 때문이다 — 렌더 중에 `ref.current`를 읽어
    *     자식에게 넘기면 `react-hooks/refs`가 잡는다. 초기화 함수로 주면 **한 번만** 만들어지고
    *     같은 Map이 계속 넘어간다(값을 바꾸지 않으므로 리렌더도 유발하지 않는다). */
@@ -476,7 +486,7 @@ export default function DashboardPage() {
 
   const load = useCallback(async () => {
     try {
-      const [customers, queue, noteIndex, summary, audit, agents] =
+      const [customers, queue, noteIndex, summary, audit, agents, prepNotes] =
         await Promise.all([
           api<Customer[]>('/api/customers'),
           api<QueueItem[]>('/api/dashboard/queue'),
@@ -484,6 +494,8 @@ export default function DashboardPage() {
           api<Summary>('/api/dashboard/summary'),
           api<DashboardAudit[]>('/api/dashboard/audit?limit=200'),
           api<AgentCalls[]>('/api/dashboard/agents'),
+          // 목록만 받는다(본문은 PDF를 열 때 서버가 읽는다). 담당 고객 스코핑도 서버다.
+          api<PrepNoteIndex[]>('/api/prep-notes').catch(() => []),
         ]);
       // 노트 본문·감사로그는 목록에 없으므로 건별 상세를 따로 받는다.
       // 목록을 큐가 아니라 /api/notes에서 받는 이유: 큐는 발행분을 빼기 때문에, 큐를 쓰면
@@ -512,6 +524,7 @@ export default function DashboardPage() {
         summary,
         audit,
         agents,
+        prepNotes,
         brief,
       });
       setError('');
@@ -667,14 +680,26 @@ export default function DashboardPage() {
      닫는 길은 셋이다: 같은 버튼 · 배경 클릭 · Esc. */
   const [chatBig, setChatBig] = useState(false);
 
+  /* 고객 카드 채팅의 `↻ 새 대화`(2026-08-06) — 대화가 고객을 바꿔도 남게 된 뒤로, 끊는 자리가
+     여기밖에 없다(예전엔 다른 고객을 고르는 것이 곧 비우기였다).
+     ⚠️ 비우는 일은 F1Chat이 아니라 여기서 한다: 보관본을 지우고 `key`에 붙은 수를 올려
+        **새 마운트로 갈아 끼운다** — 말풍선과 함께 세션 id도 버려야(F1Chat의 `reset`과 같은
+        이유) 다음 질문이 방금 지운 대화의 종목을 이어받지 않는다.
+     ⚠️ 조작은 채팅 칸의 **제목 줄**에 선다(`⤢` 옆) — 로그 상자 안에 겹치지 않는다는 이 화면의
+        규칙 그대로다. 대화가 있을 때만 내므로 개수를 아래에서 받아 둔다. */
+  const [cardChatNonce, setCardChatNonce] = useState<Record<number, number>>(
+    {},
+  );
+  const [cardChatTurns, setCardChatTurns] = useState(0);
+  const [cardChatRunning, setCardChatRunning] = useState(false);
+
   /* 상담 준비 메모(2026-08-06) — **AI가 낸 것 중 PB가 담은 것**. 채팅이 답을 내면 PB가
      고르고, 고른 것만 PDF로 나간다. 이 화면에서 PB가 하는 일이 "질문 고르기" 하나뿐이던
      문제의 답이다(피드백 3).
      ⚠️ **저장하지 않는다.** 서버에 고객 이야기를 쌓지 않는다는 F1의 규칙 그대로이고,
         PDF를 받을 때만 서버로 넘어간다(`sessionStorage`도 쓰지 않는다 — 같은 이유).
-     ⚠️ 고객별로 나눠 담는다. 대화는 고객을 바꾸면 새로 시작하지만(key) 메모는 남긴다 —
-        대화를 갈라 놓는 이유(앞 고객 종목을 이어받는 것)가 메모에는 없고, 고객을 오가며
-        훑는 동안 담아 둔 것이 사라지면 담는 일 자체가 손해가 된다. */
+     ⚠️ 고객별로 나눠 담는다 — 고객을 오가며 훑는 동안 담아 둔 것이 사라지면 담는 일 자체가
+        손해가 된다. 대화(`chatKeep`)도 같은 이유로 고객별로 남는다. */
   const [prep, setPrep] = useState<Record<number, PrepItem[]>>({});
   const [prepMemo, setPrepMemo] = useState('');
   /** 메모 입력창을 폈나. **기본은 접힘**이다 — 이 상자에서 주로 하는 일은 담은 것을 훑고
@@ -686,6 +711,41 @@ export default function DashboardPage() {
   const [listOpen, setListOpen] = useState(false);
   const [prepBusy, setPrepBusy] = useState(false);
   const [prepError, setPrepError] = useState('');
+  /* ── 만들어 둔 메모 삭제 ──────────────────────────────────────────
+     ⚠️ **되돌릴 수 없다**(재료가 사라지면 다시 그릴 수 없다) — 그래서 브리핑 삭제와 같은
+        규칙으로 **두 번 누른다**(무장 → 실행). 첫 누름은 그 줄만 무장시킨다.
+     ⚠️ 무장은 **한 번에 한 줄**이다: 다른 줄의 쓰레기통을 누르면 앞의 무장이 풀린다.
+        여러 줄이 동시에 빨갛게 서 있으면 어느 것을 지우는 중인지가 화면에서 흐려진다. */
+  const [prepArmed, setPrepArmed] = useState<number | null>(null);
+  const [prepDeleting, setPrepDeleting] = useState<number | null>(null);
+  const deletePrepNote = useCallback(
+    async (id: number) => {
+      setPrepDeleting(id);
+      try {
+        const r = await apiDelete(`/api/prep-notes/${id}?actor=${MY_PB}`);
+        if (!r.ok) {
+          toast(errorMessage(r.body, '메모를 삭제하지 못했습니다.'));
+          return;
+        }
+        toast('메모를 삭제했습니다.');
+        setPrepArmed(null);
+        // 방금 지운 것을 보고 있었다면 뷰어를 닫는다 — 안 닫으면 서버가 404를 주는 빈 판이
+        // 그대로 서 있다(그 자리에서는 무슨 일이 일어났는지 알 수 없다).
+        setModal((m) => (m?.kind === 'prepdf' && m.id === id ? null : m));
+        // 목록을 다시 받는다(브리핑 삭제와 같은 이유) — 감사로그에 `prep_note_deleted`가 붙는다.
+        await load();
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e));
+      } finally {
+        setPrepDeleting(null);
+      }
+    },
+    [load, toast],
+  );
+
+  /** 만들어 둔 메모 목록에서 **사람이 펼쳐 둔 고객**. 값이 없으면 접힘이다(아래 `prepCard`) —
+   *  새로 만든 메모가 펼쳐진 채로 끼어들어 카드가 튀어 오르지 않게 한다. */
+  const [prepOpen, setPrepOpen] = useState<Record<number, boolean>>({});
   /* 담기는 **토글**이다(2026-08-06). 버튼이 담긴 뒤 `✓ 담김`으로 서서 상태를 말하므로,
      다시 누르면 빠지는 것이 그 표시의 짝이다(안 그러면 같은 문장이 두 번 담긴다).
      ⚠️ PB가 손으로 쓴 줄(memo)은 예외로 그냥 쌓는다 — 버튼이 아니라 입력창에서 오고,
@@ -744,12 +804,15 @@ export default function DashboardPage() {
       window.open(url, '_blank', 'noopener');
       // 새 탭이 읽어 간 뒤에 놓는다 — 바로 revoke하면 빈 탭이 열린다.
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      // 서버가 방금 것을 남겼으므로 목록을 다시 받는다 — 만든 메모가 아래 카드에 바로
+      // 서야 "저장됐다"는 사실이 화면에서 확인된다(새로고침을 시키지 않는다).
+      void load();
     } catch (e) {
       setPrepError(e instanceof Error ? e.message : String(e));
     } finally {
       setPrepBusy(false);
     }
-  }, []);
+  }, [load]);
   useEffect(() => {
     if (!chatBig) return;
     const onKey = (e: KeyboardEvent) => {
@@ -930,6 +993,33 @@ export default function DashboardPage() {
       null,
     [visibleCustomers, selectedId],
   );
+
+  /* 대화를 어느 자리에 보관하나 · 어느 것을 마운트하나 — **키는 고객별, nonce는 `key`에만**.
+     보관 키에 nonce를 섞지 않는 이유: 비울 때 자리를 옮기는 게 아니라 그 자리의 내용을
+     갈아 끼우는 것이라야, 쓰던 질문을 그대로 넘겨줄 수 있다(아래). */
+  const cardChatKeep = selected ? `customer-${selected.id}` : '';
+  const cardChatKey = selected
+    ? `${cardChatKeep}:${cardChatNonce[selected.id] ?? 0}`
+    : '';
+  /* 이 고객의 대화를 비운다 — 말풍선과 **세션 id를 함께** 버린다(F1Chat의 `reset`과 같은
+     이유: 세션이 남으면 다음 질문이 방금 지운 대화의 종목을 이어받는다).
+     ⚠️ **입력창은 비우지 않는다** — 지금 쓰고 있는 질문은 지난 대화가 아니라 사람의 것이다
+        (모달의 `↻ 새 대화`와 같은 규칙). 그래서 지우는 대신 빈 대화 + 쓰던 질문으로 덮어쓰고,
+        `key`의 수를 올려 F1Chat이 그것을 읽으며 새로 서게 한다.
+     ⚠️ 도는 중에는 막는다: 지금 끊으면 받는 중인 답을 크레딧만 쓰고 버리게 된다. */
+  const resetCardChat = useCallback(() => {
+    if (!selected || cardChatRunning) return;
+    chatKeep.set(cardChatKeep, {
+      turns: [],
+      session: null,
+      input: chatKeep.get(cardChatKeep)?.input ?? '',
+    });
+    setCardChatNonce((m) => ({
+      ...m,
+      [selected.id]: (m[selected.id] ?? 0) + 1,
+    }));
+    setCardChatTurns(0);
+  }, [selected, cardChatRunning, cardChatKeep, chatKeep]);
 
   /* 이 고객에 대해 **이미 담은 것**. 답변 문장·선택지의 `담기` 버튼이 이걸 보고 `✓ 담김`으로
      선다. 메모 상자가 원본이고 이건 파생값이라, ×로 뺀 것이 버튼에도 그 프레임에 반영된다 —
@@ -1185,6 +1275,140 @@ export default function DashboardPage() {
           <div className="hint" style={{ padding: '10px 4px' }}>
             아직 발행된 노트가 없습니다. 검토·심의를 거쳐 발행되면 여기
             쌓입니다.
+          </div>
+        )}
+      </div>
+    </section>
+  );
+
+  /* 만들어 둔 상담 준비 메모 — `발행된 노트`와 **같은 형식**(제목 · 시각 · PDF 버튼)이되
+     고객으로 한 겹 묶는다. 한 고객에게 날짜가 다른 여러 건이 쌓이므로, 평평한 목록이면
+     같은 이름이 줄줄이 반복되고 "이 고객 것이 몇 건인가"를 세어야 알게 된다.
+
+     ⚠️ **줄이 곧 문서다** — 메모에는 노트 같은 상태(검토·심의·발행)가 없다. 승인 흐름을
+        타지 않는 PB 본인용 문서라 만든 것이 전부이고, 그래서 상태 배지도 없다.
+     ⚠️ 묶음 제목에 **고객 이름**을 쓴다(파일명은 번호다 — `notepdf.prep_filename`).
+        여기는 담당 PB만 보는 화면이고 바로 위 표가 이미 이름으로 고객을 가리킨다.
+     ⚠️ **정렬하지 않는다**: 서버가 최신순으로 주고 묶음 순서도 그 안에서 처음 나온 순서다. */
+  const prepGroups: { id: number; name: string; rows: PrepNoteIndex[] }[] = [];
+  {
+    const byId = new Map<number, { id: number; name: string; rows: PrepNoteIndex[] }>();
+    for (const p of data.prepNotes) {
+      const g = byId.get(p.customer_id);
+      if (g) {
+        g.rows.push(p);
+        continue;
+      }
+      const made = { id: p.customer_id, name: p.customer_name, rows: [p] };
+      byId.set(p.customer_id, made);
+      prepGroups.push(made);
+    }
+  }
+  const prepCard = (
+    <section className="card" aria-labelledby="prep-title">
+      <div className="card-head">
+        <h2 id="prep-title">상담 준비 메모</h2>
+        <span className="hint" aria-live="polite">
+          {data.prepNotes.length}건
+        </span>
+      </div>
+      <div className="queue">
+        {prepGroups.map((g) => (
+          <details
+            className="prepgrp"
+            key={g.id}
+            /* **기본은 접힘**이다(2026-08-06). 한동안 지금 고른 고객의 묶음을 펼쳐 뒀는데,
+               메모를 새로 만들면 그 고객이 곧 고른 고객이라 새 줄이 **펼쳐진 채로** 나타나
+               카드 높이가 그때마다 뛰었다. 목록은 훑는 자리이고, 펴는 건 사람이 정한다. */
+            open={prepOpen[g.id] ?? false}
+            /* ⚠️ 열림 여부를 **여기서 읽어 둔다.** `setPrepOpen`의 갱신 함수는 나중에
+               (렌더 중에) 도는데, 그때 `e.currentTarget`은 React가 이미 비운 뒤라
+               null이다 — 그 자리에서 읽으면 화면이 통째로 죽는다(실측). */
+            onToggle={(e) => {
+              const open = e.currentTarget.open;
+              setPrepOpen((m) => ({ ...m, [g.id]: open }));
+            }}
+          >
+            <summary>
+              {/* 번호 → 이름 → 건수 → 최근 시각. 접었을 때 남는 것들이고, 이 순서가
+                  "누구 것 · 얼마나 · 언제까지"를 한 줄로 읽게 한다.
+                  ⚠️ 번호는 **고객 id**다(고객 표의 순번이 아니다) — 표의 `#`는 검색·분류로
+                     바뀌는 자리 번호라, 그걸 쓰면 검색 한 번에 같은 메모의 번호가 달라진다.
+                     id는 PDF 파일명(`상담메모_고객3_0806.pdf`)·감사로그가 쓰는 값과 같다. */}
+              <span className="cno">#{g.id}</span>
+              <strong>{g.name}</strong>
+              <span className="hint">{g.rows.length}건</span>
+              <span className="meta">최근 {fmtDateTime(g.rows[0].created_at)}</span>
+            </summary>
+            {g.rows.map((p) => (
+              <div className="qrow" key={p.id}>
+                {/* 묶음 안에서 건을 가르는 것은 **시각**이다(고객 이름은 제목 줄이 이미
+                    말했다) — 그래서 시각이 발행된 노트의 종목명 자리에 선다. */}
+                <span className="title">{fmtDateTime(p.created_at)}</span>
+                <span className="meta">{p.items}개 항목</span>
+                <span className="spacer" />
+                {/* 노트 PDF와 **같은 방식**으로 연다 — 화면 안 뷰어(모달)에 그대로 싣는다.
+                    저장된 문서를 GET으로 받는 자리라 blob으로 감싸지 않는다(만들 때는
+                    POST라 어쩔 수 없이 blob이었다). */}
+                <button
+                  className="btn"
+                  title={`${g.name} 상담 준비 메모 PDF 열기 (${fmtDateTime(p.created_at)})`}
+                  onClick={() => setModal({ kind: 'prepdf', id: p.id })}
+                >
+                  PDF
+                </button>
+                {/* 삭제 — **되돌릴 수 없어서 두 번 눌러야 실행된다**(브리핑 삭제와 같은
+                    규칙). 첫 누름은 이 줄만 무장시키고, 무장은 라벨이 아니라 **색(적색)과
+                    옆에 선 `취소`**가 말한다. 평소에는 글리프 하나라 설명은 title이 나른다. */}
+                {prepArmed === p.id ? (
+                  <>
+                    <button
+                      className="btn-quiet danger"
+                      disabled={prepDeleting === p.id}
+                      onClick={() => void deletePrepNote(p.id)}
+                    >
+                      {prepDeleting === p.id ? '삭제 중…' : '삭제'}
+                    </button>
+                    <button
+                      className="btn-quiet"
+                      disabled={prepDeleting === p.id}
+                      onClick={() => setPrepArmed(null)}
+                    >
+                      취소
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="iconbtn"
+                    aria-label={`${g.name} ${fmtDateTime(p.created_at)} 메모 삭제`}
+                    title="이 메모를 지웁니다 — 되돌릴 수 없습니다"
+                    onClick={() => setPrepArmed(p.id)}
+                  >
+                    {/* 글꼴에 기대지 않는다(🗑는 기기마다 색·모양이 다르고, 이 줄에서
+                        혼자 컬러 이모지가 된다). 선은 `currentColor`라 테마·상태를
+                        그대로 따라간다. */}
+                    <svg
+                      viewBox="0 0 16 16"
+                      width="14"
+                      height="14"
+                      aria-hidden="true"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.3"
+                      strokeLinecap="round"
+                    >
+                      <path d="M2.5 4h11M6.5 4V2.6h3V4M4 4l.7 9.4h6.6L12 4M6.6 6.4v5M9.4 6.4v5" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            ))}
+          </details>
+        ))}
+        {!data.prepNotes.length && (
+          <div className="hint" style={{ padding: '10px 4px' }}>
+            아직 만든 메모가 없습니다. 위 고객 카드에서 답변·선택지를 담아 PDF로
+            만들면 여기 쌓입니다.
           </div>
         )}
       </div>
@@ -2047,21 +2271,42 @@ export default function DashboardPage() {
                           제자리다 — `↻ 새 대화`·`×`가 모달 머리말에 서는 것과 같은 규칙. */}
                       <div className="cchat-head">
                         <strong>포트폴리오 질문</strong>
-                        <button
-                          type="button"
-                          className="cchat-zoom"
-                          aria-label={
-                            chatBig ? '채팅 창 줄이기' : '채팅 창 크게 보기'
-                          }
-                          title={
-                            chatBig
-                              ? '원래 크기로 (Esc)'
-                              : '크게 보기 — 대시보드 위에 띄웁니다'
-                          }
-                          onClick={() => setChatBig((v) => !v)}
-                        >
-                          <span aria-hidden="true">{chatBig ? '⤢' : '⤢'}</span>
-                        </button>
+                        {/* 조작 둘을 한 상자에 모은다 — 각자 `margin-left: auto`를 달면
+                            남는 자리가 둘로 갈려 사이가 벌어진다(모달 머리말 `.m-acts`와
+                            같은 함정·같은 처방). */}
+                        <div className="cchat-acts">
+                          {/* 대화가 있을 때만 낸다(빈 화면에서 비울 것이 없다 — 모달
+                              머리말의 `↻ 새 대화`와 같은 규칙). 도는 중에는 눌리지 않는다:
+                              지금 끊으면 받는 중인 답을 크레딧만 쓰고 버린다. */}
+                          {cardChatTurns > 0 && (
+                            <button
+                              type="button"
+                              className="cchat-reset"
+                              disabled={cardChatRunning}
+                              title="이 고객과의 대화를 비웁니다. 다음 질문은 이전 종목을 이어받지 않습니다."
+                              onClick={resetCardChat}
+                            >
+                              ↻ 새 대화
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="cchat-zoom"
+                            aria-label={
+                              chatBig ? '채팅 창 줄이기' : '채팅 창 크게 보기'
+                            }
+                            title={
+                              chatBig
+                                ? '원래 크기로 (Esc)'
+                                : '크게 보기 — 대시보드 위에 띄웁니다'
+                            }
+                            onClick={() => setChatBig((v) => !v)}
+                          >
+                            <span aria-hidden="true">
+                              {chatBig ? '⤢' : '⤢'}
+                            </span>
+                          </button>
+                        </div>
                       </div>
                       {/* 이 고객이 남긴 미처리 문의. 질문 칩보다 **위**에 둔다 — 무엇을
                           물어볼지 고르기 전에 "고객이 이미 무엇을 물었는지"가 먼저다.
@@ -2116,13 +2361,22 @@ export default function DashboardPage() {
                           </button>
                         ))}
                       </div>
-                      {/* 고객이 바뀌면 대화를 새로 시작한다(key). 세션을 이어가면 다음
-                          질문이 **앞 고객의 종목을 이어받아**(멀티턴 last_entity) 이
-                          고객이 갖고 있지도 않은 종목을 답해 버린다.
-                          같은 이유로 customerId도 여기서만 넘어간다 — 전역 F1(FAB)에는
-                          고객이 없어 포트폴리오 라우트가 아예 안 켜진다. */}
+                      {/* 고객이 바뀌면 이 컴포넌트는 갈아 끼워지고(key), 앞 고객의 대화는
+                          `chatKeep`에 남아 그 고객으로 돌아오면 되살아난다(2026-08-06).
+                          한동안은 되살리지 않는 것이 결정이었다 — 세션을 이어가면 다음 질문이
+                          **앞 고객의 종목을 이어받아**(멀티턴 last_entity) 이 고객이 갖고
+                          있지도 않은 종목을 답해 버려서다. 그 위험은 **키가 고객별**이라
+                          그대로 막힌다: 보관본에는 세션 id가 같이 들어 있어, 돌아온 대화는
+                          자기 세션을 이어받고 새 고객은 언제나 빈 세션에서 시작한다.
+                          비우는 길은 제목 줄의 `↻ 새 대화`다(key에 붙은 nonce가 그 통로).
+                          customerId는 여전히 여기서만 넘어간다 — 전역 F1(FAB)에는 고객이
+                          없어 포트폴리오 라우트가 아예 안 켜진다. */}
                       <F1Chat
-                        key={selected.id}
+                        key={cardChatKey}
+                        keep={chatKeep}
+                        keepKey={cardChatKeep}
+                        onTurnsChange={setCardChatTurns}
+                        onRunningChange={setCardChatRunning}
                         compact
                         prefill={prefill}
                         customerId={selected.id}
@@ -2347,6 +2601,13 @@ export default function DashboardPage() {
             </>
           </section>
         )}
+
+        {/* 만들어 둔 상담 준비 메모 — **읽을 것**의 목록이고, 위 카드가 만드는 자리다
+            (`발행된 노트`와 `종목 노트` 카드의 관계 그대로: 만드는 곳 다음에 다 된 것).
+            ⚠️ PB 전용이다 — 준법은 고객 카드를 안 보는데 그 고객의 메모만 볼 수는 없다.
+            ⚠️ **다시 정렬하지 않는다.** 서버가 최신순(id DESC)으로 주고, 고객 묶음의 순서도
+               그 안에서 처음 나온 순서다(= 최근에 메모를 만든 고객이 위). */}
+        {cfg.portfolio && prepCard}
       </div>
 
       {/* ══════════ 탭 2 · 종목 노트 (F3) ══════════
@@ -2627,10 +2888,22 @@ export default function DashboardPage() {
           }}
         >
           <div
-            className={`modal${modal.kind === 'notepdf' ? ' pdfmodal' : ''}`}
+            /* PDF를 싣는 모달은 둘 다 넓은 뷰어 판(`pdfmodal`)이다 — 종목 노트와 상담
+               준비 메모는 문서 종류만 다르고 여는 방식이 같다. */
+            className={`modal${
+              modal.kind === 'notepdf' || modal.kind === 'prepdf'
+                ? ' pdfmodal'
+                : ''
+            }`}
             role="dialog"
             aria-modal="true"
-            aria-label={modal.kind === 'notepdf' ? '종목 노트' : '검토 화면'}
+            aria-label={
+              modal.kind === 'notepdf'
+                ? '종목 노트'
+                : modal.kind === 'prepdf'
+                  ? '상담 준비 메모'
+                  : '검토 화면'
+            }
           >
             {/* 발행분 최종본 — **문서를 그대로 띄운다.** 상담 직전에 필요한 건 문장별 판정
                 도구가 아니라 읽을 문서라, 검토 화면(NoteModal)을 열지 않는다.
@@ -2676,6 +2949,50 @@ export default function DashboardPage() {
                 />
               </>
             )}
+            {/* 만들어 둔 상담 준비 메모 — 노트 PDF와 **같은 판**이다(위 뷰어와 같은 이유:
+                문서를 그대로 싣는다). 다른 점은 서버가 저장된 재료로 **그때 인쇄한 그대로**
+                다시 그린다는 것뿐이다(오늘 잔고가 어제 문서에 들어오지 않는다). */}
+            {modal.kind === 'prepdf' &&
+              (() => {
+                const p = data.prepNotes.find((n) => n.id === modal.id);
+                // 번호를 이름 앞에 붙인다 — 목록의 묶음 제목(`#5 신태윤`)·문서 머리말과 같은
+                // 형식이라, 세 자리가 같은 방식으로 고객을 가리킨다(번호는 고객 id다).
+                const who = p
+                  ? `#${p.customer_id} ${p.customer_name} · ${fmtDateTime(p.created_at)}`
+                  : '';
+                return (
+                  <>
+                    <div className="m-head">
+                      <h3>상담 준비 메모</h3>
+                      {/* 어느 고객의 언제 것인가 — 제목이 종류만 말하므로 이 줄이 건을
+                          가른다(노트 모달에서 종목명이 하는 일). */}
+                      {who && <span className="m-id">{who}</span>}
+                      <div className="m-acts">
+                        <a
+                          className="btn-quiet"
+                          href={prepNoteFileUrl(modal.id, ACTOR[role])}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          새 탭에서 열기
+                        </a>
+                        <button
+                          className="m-close"
+                          aria-label="닫기"
+                          onClick={() => setModal(null)}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                    <iframe
+                      className="pdfframe"
+                      src={prepNoteFileUrl(modal.id, ACTOR[role])}
+                      title={`상담 준비 메모 PDF${who ? ` (${who})` : ''}`}
+                    />
+                  </>
+                );
+              })()}
             {modal.kind === 'note' && data.notesById[modal.id] && (
               <NoteModal
                 key={modal.id}

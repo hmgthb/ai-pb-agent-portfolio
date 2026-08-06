@@ -99,9 +99,11 @@ export function prepKey(it: PrepItem): string {
 /** 언마운트를 넘겨 대화를 들고 있는 자리. **부모가 소유한다**(여기서 만들면 같이 사라진다).
  *
  *  전역 F1은 모달을 `hidden`으로만 감춰서 이것이 필요 없다. 이건 **감출 수 없는 자리**를 위한
- *  것이다 — 고객 문의 모달은 큐의 한 건에 딸려 있어, 감춰 두면 어느 문의의 대화인지가 화면에서
- *  사라진다. 그래서 대화를 **문의별로** 들고 있다가 같은 건을 다시 열 때 돌려준다.
- *  ⚠️ 키가 갈리면 대화도 갈린다 — 다른 문의의 대화가 번져 오면 앞 건의 종목을 이어받는다.
+ *  것이다 — 고객 문의 모달은 큐의 한 건에 딸려 있어 감춰 두면 어느 문의의 대화인지가 화면에서
+ *  사라지고, 고객 카드의 채팅은 고객을 바꾸는 순간 그 자리가 다른 고객의 것이 된다.
+ *  그래서 대화를 **문의별·고객별로** 들고 있다가 같은 건을 다시 열 때 돌려준다.
+ *  ⚠️ 키가 갈리면 대화도 갈린다 — 대화마다 세션 id가 따로 보관되므로, 다른 고객으로 갔다
+ *     돌아와도 후속 질문은 **자기 대화의 종목**을 이어받는다(키를 뭉뚱그리면 이 보장이 깨진다).
  *  ⚠️ 새로 고치면 사라진다(전역 F1과 같은 기준) — `sessionStorage`에 담지 않는 이유도 같다. */
 export type ChatKeep = Map<string, { turns: ChatTurn[]; session: string | null; input: string }>;
 export type ChatTurn = Turn;
@@ -117,6 +119,7 @@ export default function F1Chat({
   onRunningChange,
   keep,
   keepKey,
+  onTurnsChange,
   viewMode,
   onPick,
   picked,
@@ -155,10 +158,16 @@ export default function F1Chat({
    *  ×로 뺀 것이 버튼에 바로 반영되어야 한다. 안 넘기면 상태 표시 없이 담기만 된다. */
   picked?: ReadonlySet<string>;
   /** 언마운트를 넘겨 대화를 보관한다(`ChatKeep`). 둘 다 줘야 동작한다.
-   *  ⚠️ 고객 카드에는 붙이지 않는다 — 그쪽은 `key={고객id}`로 **새로 시작하는 것이 결정**이다.
-   *     여기에 보관을 붙이면 앞 고객으로 돌아갈 때 그 대화가 되살아나 결정이 뒤집힌다. */
+   *  고객 카드도 붙인다(2026-08-06) — 한동안은 `key={고객id}`로 **새로 시작하는 것이 결정**
+   *  이었는데, 고객을 오가며 훑는 것이 이 화면의 기본 동작이라 방금 받은 답이 목록 클릭 한
+   *  번에 사라졌다(상담 준비 메모를 고객별로 남긴 것과 같은 이유).
+   *  ⚠️ 새로 시작하게 만든 위험은 그대로 막혀 있다: 키가 고객별이라 **세션 id도 고객별**로
+   *     보관되고, 돌아온 대화의 후속 질문은 앞 고객이 아니라 자기 대화의 종목을 이어받는다. */
   keep?: ChatKeep;
   keepKey?: string;
+  /** 지금 대화에 말풍선이 몇 개인가 — 부모가 `새 대화`를 낼지 정하는 데만 쓴다(비어 있으면
+   *  비울 것이 없다). 대화의 주인은 여전히 이쪽이고, 부모는 개수만 본다. */
+  onTurnsChange?: (n: number) => void;
   /* 대화 로그 오른쪽 위에 조작을 겹치는 `corner` 슬롯이 있었다(2026-08-03~08-06).
      고객 카드의 `크게 보기`가 유일한 사용처였고 지금은 카드 제목 줄로 옮겼다 —
      로그 상자 안에 떠 있는 조작은 대화의 일부처럼 보이고, 첫 답변이 오면 그 위에 겹친다.
@@ -195,8 +204,9 @@ export default function F1Chat({
   useEffect(
     () => () => {
       esRef.current?.close();
-      // 닫는 순간 스트림도 끊긴다. 보관된 마지막 턴이 `running`으로 남으면 다시 열었을 때
-      // **끝나지 않는 `조회 중…`**이 서므로, 끊겼다는 사실을 그 자리에 적어 둔다.
+      // 언마운트되는 순간 스트림도 끊긴다(모달을 닫거나, 고객 목록에서 다른 고객을 고르거나).
+      // 보관된 마지막 턴이 `running`으로 남으면 다시 열었을 때 **끝나지 않는 `조회 중…`**이
+      // 서므로, 끊겼다는 사실을 그 자리에 적어 둔다.
       if (!keep || !keepKey) return;
       const c = keep.get(keepKey);
       const last = c?.turns[c.turns.length - 1];
@@ -205,7 +215,11 @@ export default function F1Chat({
         ...c,
         turns: [
           ...c.turns.slice(0, -1),
-          { ...last, running: false, error: '모달을 닫아 중단됐습니다. 다시 물어보세요.' },
+          {
+            ...last,
+            running: false,
+            error: '다른 화면으로 옮겨 중단됐습니다. 다시 물어보세요.',
+          },
         ],
       });
     },
@@ -222,6 +236,11 @@ export default function F1Chat({
   useEffect(() => {
     onRunningChange?.(running);
   }, [running, onRunningChange]);
+  // 보관된 대화로 다시 마운트될 때도 한 번은 돌아야 한다 — 부모의 `새 대화`는 이 값만 보고
+  // 서고, 고객을 바꾼 직후가 정확히 그 상황이다(말풍선은 있는데 부모는 모르는 프레임).
+  useEffect(() => {
+    onTurnsChange?.(turns.length);
+  }, [turns.length, onTurnsChange]);
   // 칩을 누르면 입력창만 채운다(보내지 않는 건 위와 같은 이유다).
   // effect가 아니라 **렌더 중 조정**이다 — 프리필은 화면에 그려지기 전에 반영돼야 하고,
   // effect로 하면 빈 입력창이 한 번 그려졌다가 채워진다. 신호는 n으로 소비 여부를

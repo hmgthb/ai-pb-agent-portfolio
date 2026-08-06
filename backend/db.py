@@ -129,6 +129,25 @@ CREATE TABLE IF NOT EXISTS pb_sessions (
     started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- 상담 준비 메모(F1). 노트와 달리 **승인 흐름이 없다** — PB가 자기 상담을 위해 인쇄한 것이고
+-- 고객에게 나가는 문서가 아니다(그래서 status·reviewer 같은 칸이 없다).
+-- 한동안은 아예 저장하지 않고 그 자리에서 만들어 돌려주기만 했는데(2026-08-06), 그러면
+-- **어제 만든 메모를 다시 열 방법이 없어서** 인쇄한 것을 남기기로 했다.
+-- ⚠️ `customer_json`은 **인쇄 당시의 고객 사실**(이름·나이·성향·잔고·자산배분·보유)이다.
+--    다시 열 때 지금 값으로 그리면 어제 날짜 문서에 오늘 잔고가 실린다 — 그래서 스냅샷을
+--    같이 담고, `created_at`을 문서 시각으로 되먹여 **그때 인쇄한 것과 같은 PDF**를 만든다.
+--    ⚠️ **계좌번호는 담지 않는다**(PDF도 안 쓴다) — 이 표가 계좌번호의 두 번째 사본이 될
+--       이유가 없다. 필요하면 pb_customers가 원본이다.
+CREATE TABLE IF NOT EXISTS prep_notes (
+    id SERIAL PRIMARY KEY,
+    customer_id INTEGER NOT NULL REFERENCES pb_customers(id),
+    items_json JSONB NOT NULL,
+    customer_json JSONB NOT NULL,
+    created_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS prep_notes_customer_idx ON prep_notes (customer_id, id DESC);
 """
 
 # 상담 세션은 승인/반려로 한 번만 결정된다 — 이미 결정된 건의 재결정은 409로 막는다.
@@ -450,6 +469,67 @@ async def list_sessions(pb: str | None = None) -> list[asyncpg.Record]:
 
 async def get_session(session_id: int) -> asyncpg.Record | None:
     return await pool().fetchrow("SELECT * FROM pb_sessions WHERE id = $1", session_id)
+
+
+async def list_customer_asks(customer_id: int, pb: str | None = None) -> list[asyncpg.Record]:
+    """이 고객이 남긴 **아직 처리하지 않은 문의**(오래된 것부터 — 들어온 순서가 곧 맥락이다).
+
+    `list_sessions`를 걸러 쓰지 않는 이유: 저쪽은 전체를 끌어와 화면 큐를 만드는 자리이고,
+    여기는 한 고객의 문서를 만드는 자리라 필요한 것이 그 사람 것뿐이다.
+    """
+    sql = """SELECT s.id, s.topic, s.question, s.started_at
+             FROM pb_sessions s JOIN pb_customers c ON c.id = s.customer_id
+             WHERE s.customer_id = $1 AND s.status = $2{pb}
+             ORDER BY s.started_at"""
+    if pb is None:
+        return await pool().fetch(sql.format(pb=""), customer_id, SESSION_PENDING)
+    return await pool().fetch(sql.format(pb=" AND c.pb = $3"), customer_id, SESSION_PENDING, pb)
+
+
+# --- 상담 준비 메모 -------------------------------------------------------
+# 스코핑 축은 **고객의 담당 PB**다(`pb_customers.pb`). 메모에 pb를 따로 복사해 두지 않는
+# 이유: 담당이 바뀌면 두 값이 갈리는데, 이 목록이 답해야 하는 건 "지금 내 고객의 메모"다.
+
+
+async def insert_prep_note(
+    customer_id: int, items: list[dict], customer: dict, actor: str
+) -> asyncpg.Record:
+    return await pool().fetchrow(
+        """INSERT INTO prep_notes (customer_id, items_json, customer_json, created_by)
+           VALUES ($1, $2::jsonb, $3::jsonb, $4) RETURNING id, created_at""",
+        customer_id,
+        json.dumps(items, ensure_ascii=False),
+        json.dumps(customer, ensure_ascii=False),
+        actor,
+    )
+
+
+async def list_prep_notes(pb: str | None = None) -> list[asyncpg.Record]:
+    """목록용 — **본문(items_json)은 빼고** 센 것만 준다. 화면이 그리는 건 줄 하나이고,
+    50명 × 여러 건의 문장을 통째로 실어 보낼 이유가 없다(본문은 PDF를 열 때 읽는다)."""
+    sql = """SELECT p.id, p.customer_id, p.created_by, p.created_at,
+                    c.name AS customer_name,
+                    jsonb_array_length(p.items_json) AS items
+             FROM prep_notes p JOIN pb_customers c ON c.id = p.customer_id
+             {where}
+             ORDER BY p.id DESC"""
+    if pb is None:
+        return await pool().fetch(sql.format(where=""))
+    return await pool().fetch(sql.format(where="WHERE c.pb = $1"), pb)
+
+
+async def delete_prep_note(prep_id: int) -> None:
+    """한 건만 지운다. 스코핑(담당 고객인가)은 호출자가 이미 확인한 뒤다 — 여기서 pb를 다시
+    받지 않는 이유는 `get_prep_note`가 그 판정의 단일 출처이기 때문이다."""
+    await pool().execute("DELETE FROM prep_notes WHERE id = $1", prep_id)
+
+
+async def get_prep_note(prep_id: int) -> asyncpg.Record | None:
+    return await pool().fetchrow(
+        """SELECT p.*, c.pb FROM prep_notes p JOIN pb_customers c ON c.id = p.customer_id
+           WHERE p.id = $1""",
+        prep_id,
+    )
 
 
 async def set_session_status(session_id: int, status: str) -> None:

@@ -66,6 +66,12 @@ await page.route('**/api/chat/stream*', async (route) => {
 
 await page.goto('http://localhost:3000/dashboard', { waitUntil: 'networkidle' });
 
+// 첫 화면은 `상담 준비` 탭이고, 거기엔 인라인 채팅이 서 있어서 **고정 버튼이 내려간다**
+// (둘이 같은 일을 하므로 의도된 동작이다 — page.tsx `inlineChatRef` 주석).
+// 이 검사가 보는 것은 전역 F1이므로, 인라인 채팅이 없는 탭으로 옮긴 뒤 연다.
+await page.click('nav.cats button:has-text("작성·검토")');
+await page.locator('button.fab').waitFor({ timeout: 10000 });
+
 const fail = [];
 const check = (ok, label) => {
   console.log(`${ok ? '✓' : '✗'} ${label}`);

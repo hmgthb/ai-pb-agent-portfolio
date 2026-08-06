@@ -35,6 +35,7 @@ from datetime import datetime
 from email.utils import parsedate_to_datetime
 from xml.sax.saxutils import escape
 
+from reportlab.graphics.shapes import Drawing, Line, Polygon
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.pagesizes import A4
@@ -153,11 +154,26 @@ def _styles() -> dict[str, ParagraphStyle]:
         "bullet": ParagraphStyle(
             "bullet", parent=base, spaceAfter=7, leftIndent=10, bulletIndent=0
         ),
+        # 위험 플래그 한 줄(상담 준비 메모). 바로 위 자산배분 줄과 **같은 크기**지만 굵고
+        # 본문색이다 — 회색 곁말 사이에서 이 줄만 눈에 걸려야 한다(화면의 `⚑`가 하는 일).
+        # ⚠️ 색으로 가르지 않는다: 이 문서는 흑백으로 인쇄돼 상담 자리에 놓인다.
+        "flag": ParagraphStyle(
+            "flag", parent=base, fontName=FONT_BOLD, fontSize=8.5, leading=13
+        ),
         "srcnum": ParagraphStyle("srcnum", parent=base, fontSize=9, leading=14),
         "src": ParagraphStyle("src", parent=base, fontSize=9, leading=14),
         # 한 불릿에 딸린 아랫줄(선택지의 근거·`바꾸지 않는 것`). 불릿 본문보다 안쪽에서
         # 시작해야 **어느 항목에 딸린 것인지**가 자리로 드러난다.
         "sub": ParagraphStyle("sub", parent=base, fontSize=9, leading=14, leftIndent=20),
+        # 문의 접수 시각 — **줄 오른쪽 끝**이다(문의 원문과 같은 줄). 회색·작은 글자인 건
+        # 읽을 것이 원문이고 이건 그 원문을 가리키는 값이라서다. 오른쪽 정렬은 여러 건일 때
+        # 시각이 세로로 맞아떨어져 언제 것인지 한눈에 훑히게 한다.
+        # ⚠️ 불릿 본문(10pt)보다 작으므로 `leading`을 본문에 맞춰 **첫 줄이 같은 높이**에
+        #    서게 한다 — 표의 두 칸이 각자 위에서 시작하기 때문이다(VALIGN TOP).
+        "askwhen": ParagraphStyle(
+            "askwhen", parent=base, fontSize=8.5, leading=16, alignment=TA_RIGHT,
+            textColor=_INK2,
+        ),
         "url": ParagraphStyle("url", parent=base, fontSize=8, leading=12, textColor=_INK2),
         # 필수 고지 — **테두리 없이 작은 한 줄**(2026-08-06). 상자를 두르면 문서에서 가장
         # 눈에 띄는 덩어리가 되는데, 이 문장은 강조가 아니라 **문서를 닫는 말**이다
@@ -398,6 +414,41 @@ def _page_furniture(note: dict):
         canvas.restoreState()
 
     return draw
+
+
+def _plain_table(rows: list[list], widths: list[float]) -> Table:
+    """줄 하나를 **좌우로 벌리는** 표. 선도 머리글도 없다 — 표처럼 보이라고 쓰는 게 아니라,
+    한 줄 안에서 왼쪽 글과 오른쪽 값을 각자 끝에 붙이려고 쓴다(문단으로는 못 하는 일이다).
+    ⚠️ `_table`(보유 종목)과 **다른 함수**다: 저쪽은 열이 여럿인 진짜 표라 머리글 밑줄이
+       필요하고, 여기 선을 그으면 문서에 표가 하나 더 있는 것처럼 보인다."""
+    t = Table(rows, colWidths=widths, hAlign="LEFT")
+    t.setStyle(
+        TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ])
+    )
+    return t
+
+
+def _flag_mark(size: float = 8.5) -> Drawing:
+    """위험 플래그 기호(⚑)를 **그린다.**
+
+    ⚠️ 글자로 쓸 수 없어서다 — `⚑`(U+2691)는 나눔고딕에 없고, 없는 글자는 `_renderable`이
+       조용히 지운다(폭만 남기느니 지우는 게 낫다는 그 규칙). 기호 하나를 위해 폰트를 더
+       얹지 않는다는 결정도 그대로다 — 대신 선 세 개로 그린다.
+    화면 배지(`.flag`)와 **같은 뜻·같은 자리**이고, 색이 아니라 형태로 말한다(흑백 인쇄).
+    """
+    d = Drawing(size, size)
+    d.add(Line(0.9, 0, 0.9, size, strokeColor=_INK, strokeWidth=0.9))
+    d.add(Polygon(
+        [0.9, size, 0.9, size * 0.45, size - 0.6, size * 0.72],
+        fillColor=_INK, strokeColor=_INK, strokeWidth=0.4,
+    ))
+    return d
 
 
 def _table(rows: list[list], widths: list[float]) -> Table:
@@ -663,6 +714,40 @@ def _balance_text(balance) -> str:
     return f"₩{round(balance / 10_000):,}만"
 
 
+def prep_flag_line(customer: dict) -> str:
+    """위험 플래그 한 줄(순수). 없으면 **빈 문자열** — 줄 자체를 안 낸다.
+
+    ⚠️ **판정을 여기서 하지 않는다.** 저장된 규칙 결과(`flag_reasons`)를 잇기만 한다 —
+       위험 판정은 코드가 내리고 문서는 인용만 한다(F1 규칙과 같은 선).
+    ⚠️ `위험 플래그`라는 말을 앞에 붙이지 않는다 — 그 자리는 **기호(⚑)**가 대신한다
+       (화면 배지와 같은 어휘). 기호는 글자가 아니라 그림이다(`_flag_mark` 주석).
+    """
+    flags = [str((r or {}).get("text") or "").strip() for r in (customer.get("flagReasons") or [])]
+    return " · ".join(f for f in flags if f)
+
+
+def prep_asks(customer: dict) -> list[tuple[str, str]]:
+    """문서에 실을 **미처리 고객 문의** → `(원문, 접수시각)` 목록(순수).
+
+    ⚠️ 규정 검사에 걸린 건(`withheld`)은 **원문 자리를 바꿔** 싣는다 — 조용히 지우면 문의가
+       없었던 것과 구분되지 않는다. 무엇에 걸렸는지는 문서가 아니라 감사로그에 있다
+       (문서는 상담 자리에 놓이고, 그 자리에서 규정 사유를 읽을 사람은 없다).
+    ⚠️ **주제(`topic`)는 싣지 않는다** — 원문 바로 옆에 요약된 제목이 서면 PB가 원문 대신
+       제목을 읽는다(고객 카드에서 주제를 뺀 것과 같은 이유). 주제는 데이터에 그대로 남아
+       문의 모달이 종목을 찾는 데 쓴다.
+    ⚠️ 원문을 여기서 이스케이프하지 않는다 — 그리는 쪽(`build_prep`)의 몫이다(`_p` 주석).
+    """
+    out: list[tuple[str, str]] = []
+    for a in customer.get("asks") or []:
+        if not a:
+            continue
+        text = str(a.get("question") or "").strip()
+        if a.get("withheld") or not text:
+            text = "[확인 필요] 규정 검사에 걸려 원문을 싣지 않았습니다 — 화면에서 확인하세요."
+        out.append((text, _fmt_ts(a.get("at")) if a.get("at") else ""))
+    return out
+
+
 def build_prep(customer: dict, items: list[dict], now: datetime | None = None) -> bytes:
     """상담 준비 메모 PDF. `customer`는 **서버가 DB에서 읽은 것**이고(스코핑이 걸린 자리),
     `items`는 화면이 조립한 목록이다."""
@@ -714,6 +799,19 @@ def build_prep(customer: dict, items: list[dict], now: datetime | None = None) -
             st["meta"],
         ))
 
+    # 위험 플래그 — **자산배분 줄 바로 아래**다(2026-08-06). 화면에서는 이름 옆 `⚑`가 이걸
+    # 말하는데, 문서에는 그 표시가 없어 "왜 이 고객을 지금 보는가"가 빠져 있었다.
+    # ⚠️ 없으면 줄 자체를 안 낸다 — "플래그 없음"을 적으면 없다는 사실이 있다는 사실만큼
+    #    자리를 차지한다(화면에서 ⚑의 부재가 이미 말하는 것과 같다).
+    flag_line = prep_flag_line(customer)
+    if flag_line:
+        flow.append(Spacer(1, 4))
+        # 기호는 그림이라 문단에 못 넣는다 — 한 칸짜리 열로 세워 글줄 왼쪽에 붙인다.
+        flow.append(_plain_table(
+            [[_flag_mark(), _p(escape(flag_line), st["flag"])]],
+            [5 * mm, 150 * mm],
+        ))
+
     holdings = customer.get("holdings") or []
     if holdings:
         flow.append(Spacer(1, 6))
@@ -732,6 +830,27 @@ def build_prep(customer: dict, items: list[dict], now: datetime | None = None) -
                 _p("—" if pct is None else f"{pct}%", st["cellnum"]),
             ])
         flow.append(_table(rows, [90 * mm, 40 * mm, 25 * mm]))
+
+    # 아직 처리하지 않은 고객 문의 — **보유 표와 `AI 분석` 사이**다(2026-08-06). 고객 카드가
+    # 질문 칩 위에 이 블록을 두는 것과 같은 순서다: 무엇을 확인할지 고르기 전에 "고객이 이미
+    # 무엇을 물었는지"가 먼저다. 담은 항목(AI·PB)보다 앞에 서는 이유이기도 하다 —
+    # 아래 두 구역은 **이 질문에 답하기 위해 모은 것**이라 질문이 그 위에 있어야 읽힌다.
+    # ⚠️ **여기는 회신문을 쓰는 자리가 아니다**(가드레일 4) — 원문을 그대로 옮길 뿐이고,
+    #    답은 PB가 상담에서 직접 한다. 그래서 제목도 `고객 문의`(받은 것)이지 회신이 아니다.
+    # ⚠️ 원문은 신뢰하지 않는 데이터다 — 글자로만 싣는다(라우트가 MNPI·PII·인젝션을 이미
+    #    걸러 `withheld`로 표시해 넘긴다).
+    asks = prep_asks(customer)
+    if asks:
+        flow.append(_p("고객 문의", st["h2"]))
+        for text, when in asks:
+            # 원문과 접수 시각이 **한 줄**이다: 원문은 왼쪽, 시각은 오른쪽 끝. 시각을 아랫줄로
+            # 내리면 문의 하나가 두 줄을 먹어 여러 건일 때 목록이 늘어지고, 시각이 세로로
+            # 정렬되지 않아 언제 것인지 훑기도 어렵다.
+            flow.append(_plain_table(
+                [[_bp(escape(text), st["bullet"]), _p(escape(when), st["askwhen"])]],
+                [125 * mm, 30 * mm],
+            ))
+            flow.append(Spacer(1, 7))
 
     flow.append(Spacer(1, 12))
 

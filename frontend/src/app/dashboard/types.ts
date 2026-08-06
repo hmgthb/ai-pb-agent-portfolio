@@ -190,6 +190,20 @@ export type NoteIndex = {
   updated_at: string;
 };
 
+/** 지금까지 만든 **상담 준비 메모** 한 건(`GET /api/prep-notes`, 최신순).
+ *  본문은 없다 — 목록은 줄 하나만 그리고, 내용은 PDF를 열 때 서버가 읽는다.
+ *  ⚠️ `customer_name`은 서버가 준다(화면이 고객 표에서 다시 찾지 않는다) — 그래야 이 목록이
+ *     고객 목록의 필터·정렬과 무관하게 자기 줄을 설명한다. */
+export type PrepNoteIndex = {
+  id: number;
+  customer_id: number;
+  customer_name: string;
+  /** 담긴 항목 수(문장·선택지·PB 메모의 합). */
+  items: number;
+  created_by: string | null;
+  created_at: string;
+};
+
 /** 미인용 문장 확인 기록 — 준법이 심의 단계에서 사유를 골라 남긴다.
  *  index는 NoteDetail.sentences의 위치, text는 저장 시점 원문(앞 60자)이다. */
 export type NoteAck = {
