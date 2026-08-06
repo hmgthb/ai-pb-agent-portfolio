@@ -151,6 +151,60 @@ def test_filename_is_safe_and_identifies_the_note():
     assert "/" not in notepdf.filename(_note(corp_name="에이/비 홀딩스"))
 
 
+# ── 상담 준비 메모 ──────────────────────────────────
+_PREP = [
+    {"kind": "sentence", "text": "보유 주식 내 삼성전자 비중이 50.9%입니다.",
+     "sentence_kind": "claim",
+     "sources": [{"type": "holdings", "label": "계좌 보유데이터 (내부·공개데이터 아님)", "as_of": None}]},
+    {"kind": "option", "label": "단일 종목 집중", "targets": ["삼성전자"],
+     "basis": [{"text": "삼성전자가 보유주식 내 50.9%", "src": "hold"},
+               {"text": "이 종목들을 반도체로 분류했을 때의 합계다", "src": "none"}],
+     "keeps": "국내주식 자산군 비중 74%는 그대로 남는다"},
+    {"kind": "memo", "text": "고객이 반도체를 더 늘리고 싶다고 했음."},
+]
+
+
+def test_prep_sentences_keep_who_wrote_what():
+    """PB가 쓴 줄도 문장으로 넘어간다 — **규정 검사를 똑같이 받아야** 하기 때문이다.
+    다만 `interpretation`이라 미인용 집계에는 안 들어간다(사람 메모에 각주를 요구하지 않는다)."""
+    ss = notepdf.prep_sentences(_PREP)
+    assert [s["kind"] for s in ss] == [
+        "claim",          # 출처 있는 AI 문장
+        "claim",          # 보유데이터 근거
+        "interpretation",  # 출처 없는 근거(이 저장소의 업종 분류)
+        "interpretation",  # 바꾸지 않는 것
+        "interpretation",  # PB 메모
+    ]
+    assert ss[1]["source"]["type"] == "holdings"
+    assert ss[2]["source"] is None  # `none` 태그에는 각주를 붙이지 않는다
+
+
+def test_prep_markdown_carries_the_pb_memo_into_the_gate():
+    """⚠️ PB가 손으로 쓴 줄이 게이트를 비켜 가면 안 된다 — 본문에 들어가야 잡힌다."""
+    md = notepdf.prep_markdown(_PREP)
+    assert "고객이 반도체를 더 늘리고 싶다고 했음." in md
+
+
+def test_pb_memo_is_checked_like_everything_else():
+    """사람이 썼다고 규정을 비켜 가지 않는다 — 금지 표현은 그대로 막힌다."""
+    bad = [{"kind": "memo", "text": "목표주가 12만원 잡고 매수 추천할 것."}]
+    v = compliance.check_note(
+        compliance.apply_notice(notepdf.prep_markdown(bad), "F1"),
+        notepdf.prep_sentences(bad),
+        "F1",
+    )
+    assert any("투자권유" in x for x in v), v
+
+
+def test_build_prep_and_filename():
+    cust = {"id": 19, "name": "권명희", "age": 53, "risk_label": "안정형", "balance": 570_000_000}
+    pdf = notepdf.build_prep(cust, _PREP, now=datetime(2026, 8, 6, 15, 0, tzinfo=BIZ_TZ))
+    assert pdf[:5] == b"%PDF-" and len(pdf) > 3000
+    # ⚠️ 파일명에 이름을 쓰지 않는다 — 목록·메일 제목처럼 본문을 열지 않고 보이는 자리다.
+    name = notepdf.prep_filename(cust, datetime(2026, 8, 6, 15, 0, tzinfo=BIZ_TZ))
+    assert name == "상담메모_고객19_0806.pdf" and "권명희" not in name
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

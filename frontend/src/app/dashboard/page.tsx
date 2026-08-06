@@ -38,6 +38,7 @@ import {
   hhmm,
   isDown,
   notePdfUrl,
+  prepNotePdfUrl,
 } from './api';
 import {
   ALLOC_COLORS,
@@ -55,7 +56,9 @@ import { ChatModal, NoteModal } from './ReviewModal';
 import {
   ACTOR,
   actorLabel,
+  MY_PB,
   PILL,
+  type PrepItem,
   PORTFOLIO_CHIPS,
   RISK,
   type AgentCalls,
@@ -660,6 +663,54 @@ export default function DashboardPage() {
         주고받은 대화도 그대로다.
      닫는 길은 셋이다: 같은 버튼 · 배경 클릭 · Esc. */
   const [chatBig, setChatBig] = useState(false);
+
+  /* 상담 준비 메모(2026-08-06) — **AI가 낸 것 중 PB가 담은 것**. 채팅이 답을 내면 PB가
+     고르고, 고른 것만 PDF로 나간다. 이 화면에서 PB가 하는 일이 "질문 고르기" 하나뿐이던
+     문제의 답이다(피드백 3).
+     ⚠️ **저장하지 않는다.** 서버에 고객 이야기를 쌓지 않는다는 F1의 규칙 그대로이고,
+        PDF를 받을 때만 서버로 넘어간다(`sessionStorage`도 쓰지 않는다 — 같은 이유).
+     ⚠️ 고객별로 나눠 담는다. 대화는 고객을 바꾸면 새로 시작하지만(key) 메모는 남긴다 —
+        대화를 갈라 놓는 이유(앞 고객 종목을 이어받는 것)가 메모에는 없고, 고객을 오가며
+        훑는 동안 담아 둔 것이 사라지면 담는 일 자체가 손해가 된다. */
+  const [prep, setPrep] = useState<Record<number, PrepItem[]>>({});
+  const [prepMemo, setPrepMemo] = useState('');
+  const [prepBusy, setPrepBusy] = useState(false);
+  const [prepError, setPrepError] = useState('');
+  const pick = useCallback((cid: number, item: PrepItem) => {
+    setPrepError('');
+    setPrep((m) => ({ ...m, [cid]: [...(m[cid] ?? []), item] }));
+  }, []);
+  const unpick = useCallback((cid: number, i: number) => {
+    setPrep((m) => ({ ...m, [cid]: (m[cid] ?? []).filter((_, j) => j !== i) }));
+  }, []);
+  /** 담은 것을 PDF로. **POST라 링크로 못 연다** — 받은 바이트를 blob으로 열어 새 탭에
+   *  띄운다(서버가 `inline`으로 준다). 게이트에 걸리면 그 사유를 그대로 보여준다. */
+  const prepPdf = useCallback(
+    async (cid: number, items: PrepItem[]) => {
+      setPrepBusy(true);
+      setPrepError('');
+      try {
+        const r = await fetch(prepNotePdfUrl(cid, MY_PB), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items }),
+        });
+        if (!r.ok) {
+          setPrepError(errorMessage(await r.json().catch(() => null)));
+          return;
+        }
+        const url = URL.createObjectURL(await r.blob());
+        window.open(url, '_blank', 'noopener');
+        // 새 탭이 읽어 간 뒤에 놓는다 — 바로 revoke하면 빈 탭이 열린다.
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      } catch (e) {
+        setPrepError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setPrepBusy(false);
+      }
+    },
+    [],
+  );
   useEffect(() => {
     if (!chatBig) return;
     const onKey = (e: KeyboardEvent) => {
@@ -2000,6 +2051,9 @@ export default function DashboardPage() {
                            화면이라 "물어보면 뭐가 나가지?"가 질문보다 먼저 오고,
                            고객 문의 모달은 이미 길다(거기서는 물어본 뒤 배지로 본다). */
                         preview={egress}
+                        /* 담기 — AI가 낸 것 중 무엇을 상담에 가져갈지 PB가 고른다.
+                           전역 F1(FAB)에는 안 넘긴다: 거기엔 고객이 없어 담을 메모도 없다. */
+                        onPick={(item) => pick(selected.id, item)}
                         /* 크게 보기 — **대화창 오른쪽 위 모서리**에 겹친다(2026-08-03).
                            제목 줄에 두었더니 칩·미리보기를 건너 한참 위였고, 정작 좁아서
                            답답한 것은 로그 상자다: 조작은 그 상자에 붙어 있어야 한다. */
@@ -2021,6 +2075,91 @@ export default function DashboardPage() {
                           </button>
                         }
                       />
+                      {/* 상담 준비 메모 — **담은 것이 있을 때만 선다.** 빈 상자를 미리 세우면
+                          "여기 뭔가 채워야 한다"가 되고, 이 기능의 요점은 채우기가 아니라
+                          고르기다. 담는 순간 자리가 생기는 편이 순서에 맞는다.
+                          ⚠️ 저장하지 않는다 — 새로고침하면 사라진다(위 `prep` 주석). */}
+                      {(prep[selected.id] ?? []).length > 0 && (
+                        <div className="prepbox">
+                          <div className="prepbox-head">
+                            <strong>상담 준비 메모</strong>
+                            <span className="hint">
+                              {prep[selected.id].length}개 담김 · 저장되지 않습니다
+                            </span>
+                          </div>
+                          <div className="prep-items">
+                            {prep[selected.id].map((it, i) => (
+                              <div className="prep-item" key={i}>
+                                <span className="btag">
+                                  {it.kind === 'option'
+                                    ? '선택지'
+                                    : it.kind === 'memo'
+                                      ? 'PB'
+                                      : 'AI'}
+                                </span>
+                                <span className="prep-item-text">
+                                  {it.kind === 'option' ? it.label : it.text}
+                                </span>
+                                <button
+                                  className="btn-quiet"
+                                  aria-label="메모에서 빼기"
+                                  title="빼기"
+                                  onClick={() => unpick(selected.id, i)}
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                          {/* PB가 손으로 쓰는 줄 — 문서에서 `[PB 메모]`로 갈려 뜬다.
+                              ⚠️ 이 줄도 게이트를 받는다(사람이 썼다고 규정을 비켜 가지 않는다). */}
+                          <div className="prep-add">
+                            <input
+                              className="waive-in"
+                              autoComplete="off"
+                              placeholder="내 메모 한 줄 (상담에서 확인할 것)"
+                              maxLength={400}
+                              value={prepMemo}
+                              onChange={(e) => setPrepMemo(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && prepMemo.trim()) {
+                                  pick(selected.id, {
+                                    kind: 'memo',
+                                    text: prepMemo.trim(),
+                                  });
+                                  setPrepMemo('');
+                                }
+                              }}
+                            />
+                            <button
+                              className="btn"
+                              disabled={!prepMemo.trim()}
+                              onClick={() => {
+                                pick(selected.id, {
+                                  kind: 'memo',
+                                  text: prepMemo.trim(),
+                                });
+                                setPrepMemo('');
+                              }}
+                            >
+                              메모 담기
+                            </button>
+                          </div>
+                          {prepError && <div className="vbox">⛔ {prepError}</div>}
+                          <div className="prep-acts">
+                            <button
+                              className="btn primary"
+                              disabled={prepBusy}
+                              onClick={() =>
+                                void prepPdf(selected.id, prep[selected.id])
+                              }
+                            >
+                              {prepBusy ? 'PDF 만드는 중…' : 'PDF로 받기'}
+                            </button>
+                            <span className="hint">고객 제공용이 아닙니다.</span>
+                          </div>
+                        </div>
+                      )}
                     </>
                   ) : (
                     <div className="hint">

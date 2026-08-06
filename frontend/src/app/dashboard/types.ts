@@ -129,6 +129,35 @@ export type ChatAnswer = {
   violations: string[];
 };
 
+/** 조정 선택지 후보 — 백엔드 `f1.rebalance_options`가 규칙으로 뽑은 것.
+ *  ⚠️ 화면에서 후보를 만들거나 고르지 않는다. 여기 있는 것만 PB가 **담을 수 있다**. */
+export type ChatOption = {
+  kind: string;
+  label: string;
+  targets: { code: string; name: string }[];
+  /** 근거 한 줄과 그 출처 태그(`hold`=보유데이터 · `krx`=지연시세 · `none`=이 저장소의 분류) */
+  basis: { text: string; src: string }[];
+  /** 이 선택지가 바꾸지 않는 것 — 트레이드오프의 사실 부분이라 코드가 적는다. */
+  keeps: string;
+};
+
+/** 상담 준비 메모에 담은 항목. **저장하지 않는다** — 화면이 들고 있다가 PDF를 받을 때만
+ *  서버로 간다(2026-08-06 결정). 백엔드 `main.PrepItem`과 1:1.
+ *
+ *  셋으로 나뉘는 이유는 **누가 만든 문장인가**가 문서에서 갈려 읽혀야 해서다:
+ *    sentence = AI가 쓴 답변 문장(출처 배지째 간다) · option = 코드가 뽑은 선택지 ·
+ *    memo = PB가 손으로 쓴 줄(문서에서 `[PB 메모]`로 뜬다). */
+export type PrepItem =
+  | { kind: 'sentence'; text: string; sentence_kind?: SentenceKind; sources: NoteSource[] }
+  | {
+      kind: 'option';
+      label: string;
+      targets: string[];
+      basis: { text: string; src: string }[];
+      keeps: string;
+    }
+  | { kind: 'memo'; text: string };
+
 /** 백엔드 citations.py의 문장 범주.
  *  heading=소제목 · boilerplate=고지문구·구분선 · claim=사실 주장 · interpretation=해석·전망.
  *  출처 부착률의 분모는 claim뿐이다 — 해석 문장은 규칙상 각주를 붙이지 않는다. */

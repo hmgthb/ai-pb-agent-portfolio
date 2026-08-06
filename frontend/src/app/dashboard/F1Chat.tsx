@@ -24,7 +24,13 @@ import { useEffect, useRef, useState } from 'react';
 import { chatStreamUrl } from './api';
 import { RedactionDetails } from './redaction';
 import { mergeSources, SourceBadge } from './sources';
-import type { ChatAnswer, ChatRedaction, ChatRouting } from './types';
+import type {
+  ChatAnswer,
+  ChatOption,
+  ChatRedaction,
+  ChatRouting,
+  PrepItem,
+} from './types';
 
 /** 라우팅 배지에 적는 이름. **에이전트 식별자(a1·a2·a4)를 적지 않는다** — 이 배지가 답할
  *  것은 "왜 이 답이 나왔나"(어떤 데이터를 봤나)이지 "어느 서브에이전트가 돌았나"가 아니다.
@@ -46,6 +52,9 @@ type Turn = {
   redaction?: ChatRedaction;
   streaming: string;
   answer?: ChatAnswer;
+  /** 코드가 뽑은 조정 선택지 후보(제안형 답변에만 온다). 답변 산문과 **같은 후보**이고,
+   *  여기 있는 것만 PB가 상담 메모에 담을 수 있다. */
+  options?: ChatOption[];
   blocked?: string[];
   /** 어느 문지기에 걸렸나: `input`=들어오는 질문, `egress`=나가는 프롬프트.
    *  둘은 사용자가 할 일이 다르다 — 앞은 질문을 고쳐 쓰고, 뒤는 데이터가 새는 것이라
@@ -103,6 +112,7 @@ export default function F1Chat({
   keep,
   keepKey,
   corner,
+  onPick,
 }: {
   /** 입력창을 채우는 유일한 경로(고객 카드의 보유 종목 칩·분석 칩).
    *  ⚠️ 마운트 시점 prop(`initial`)은 걷어냈다 — 전역 F1은 닫아도 언마운트되지 않으므로
@@ -129,6 +139,10 @@ export default function F1Chat({
   /** 실행 중인지를 밖에 알린다 — 모달을 닫아도 스트림은 계속 도는데, 닫아 둔 동안에는
    *  화면에 그 사실을 말할 자리가 고정 버튼밖에 없다(F3 탭 라벨의 `●`과 같은 처방). */
   onRunningChange?: (running: boolean) => void;
+  /** 답변 문장·선택지를 **상담 준비 메모에 담는다**(2026-08-06). 넘기지 않으면 담기 버튼이
+   *  아예 안 그려진다 — 메모를 들고 있을 자리가 없는 화면(전역 F1)에서는 담을 수도 없다.
+   *  ⚠️ 담는 것은 화면 상태일 뿐이다(서버에 저장하지 않는다). */
+  onPick?: (item: PrepItem) => void;
   /** 언마운트를 넘겨 대화를 보관한다(`ChatKeep`). 둘 다 줘야 동작한다.
    *  ⚠️ 고객 카드에는 붙이지 않는다 — 그쪽은 `key={고객id}`로 **새로 시작하는 것이 결정**이다.
    *     여기에 보관을 붙이면 앞 고객으로 돌아갈 때 그 대화가 되살아나 결정이 뒤집힌다. */
@@ -267,6 +281,11 @@ export default function F1Chat({
     es.addEventListener('answer', (e) =>
       patchLast({ answer: JSON.parse((e as MessageEvent).data) }),
     );
+    // 답변보다 **먼저** 온다(후보를 뽑은 뒤 문장을 쓰므로). 답변이 오기 전에도 카드가 서서
+    // "무엇을 두고 고르는 중인지"가 먼저 보인다.
+    es.addEventListener('options', (e) =>
+      patchLast({ options: JSON.parse((e as MessageEvent).data).options }),
+    );
     es.addEventListener('run_error', (e) =>
       patchLast({ error: JSON.parse((e as MessageEvent).data).message }),
     );
@@ -388,6 +407,31 @@ export default function F1Chat({
                 <div className="chat-answer">
                   {t.answer.sentences.map((s, j) => (
                     <div className="chat-sent" key={j}>
+                      {/* 담기 — **AI가 낸 것 중 무엇을 상담에 가져갈지 고르는 자리**다.
+                          문장 앞에 두는 이유: 뒤에 두면 출처 배지 뒤로 밀려 문장마다
+                          위치가 달라진다(배지 개수가 문장마다 다르다).
+                          ⚠️ 담을 때 **출처를 같이 들고 간다** — 문서에서도 각주가 붙어야
+                             한다(가드레일 3). 화면 배지와 같은 값을 그대로 넘긴다. */}
+                      {onPick && (
+                        <button
+                          className="pickbtn"
+                          title="상담 준비 메모에 담습니다"
+                          onClick={() =>
+                            onPick({
+                              kind: 'sentence',
+                              text: s.text,
+                              sentence_kind: s.kind,
+                              sources: s.sources?.length
+                                ? s.sources
+                                : s.source
+                                  ? [s.source]
+                                  : [],
+                            })
+                          }
+                        >
+                          담기
+                        </button>
+                      )}
                       <span>{s.text}</span>
                       {/* 같은 출처를 두 번 인용하면 배지도 두 개였다 — 하나로 묶고
                           `×2`로 센다. **다른 출처끼리는 합치지 않는다**(합치면 한쪽
@@ -418,6 +462,44 @@ export default function F1Chat({
                   {t.answer.notice && (
                     <div className="chat-notice">{t.answer.notice}</div>
                   )}
+                </div>
+              )}
+
+              {/* 조정 선택지 — **고르는 자리**. 근거는 위 답변이 이미 산문으로 말하므로
+                  카드는 이름과 대상까지만 짧게 둔다(채팅 칸이 좁다). 담으면 근거·"바꾸지
+                  않는 것"까지 함께 메모로 간다.
+                  ⚠️ 여기서 순위를 매기거나 권하지 않는다 — 카드는 순서대로 나열될 뿐이고,
+                     고르는 일이 PB의 몫이라는 게 이 화면의 요점이다. */}
+              {onPick && t.options && t.options.length > 0 && (
+                <div className="chat-opts">
+                  {t.options.map((o, j) => (
+                    <div className="chat-opt" key={j}>
+                      <span className="chat-opt-label">
+                        {o.label}
+                        {o.targets.length > 0 && (
+                          <span className="bcode">
+                            {' '}
+                            {o.targets.map((x) => x.name).join(' · ')}
+                          </span>
+                        )}
+                      </span>
+                      <button
+                        className="pickbtn"
+                        title="근거·바꾸지 않는 것까지 함께 담습니다"
+                        onClick={() =>
+                          onPick({
+                            kind: 'option',
+                            label: o.label,
+                            targets: o.targets.map((x) => x.name),
+                            basis: o.basis,
+                            keeps: o.keeps,
+                          })
+                        }
+                      >
+                        담기
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
 

@@ -5,6 +5,7 @@ import os
 import re
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -773,6 +774,10 @@ async def _collect_advice_data(portfolio: dict, data: dict):
         "progress",
         {"agent": "portfolio", "step": "options", "status": "completed", "count": len(options)},
     )
+    # 후보를 **화면에도** 보낸다(2026-08-06). 그전에는 프롬프트로만 갔고 화면에는 답변 산문만
+    # 남아서, "고르는 건 PB"라고 해 놓고 고를 자리가 없었다 — 채팅에서 담을 수 있게 구조를
+    # 그대로 내려보낸다. ⚠️ 답변 문장과 **같은 후보**다(둘 다 이 목록에서 나온다).
+    yield _sse("options", {"options": options})
 
     # ② 후보 종목 뉴스. 후보에 걸린 순서대로 중복 없이 상한까지.
     #    후보가 없으면 보유 상위 한 종목이라도 본다 — "규칙에 걸린 게 없다"는 답에도
@@ -1114,6 +1119,28 @@ class WaiveBody(BaseModel):
     actor: str
     index: int
     reason: str | None = None
+
+
+# 상담 준비 메모(F1 채팅에서 PB가 담은 것)의 항목. **저장하지 않는다** — 화면이 들고 있다가
+# PDF를 받을 때만 넘어온다(2026-08-06 결정). 그래서 이 목록은 **클라이언트가 만든 값**이고,
+# 서버는 그걸 그대로 인쇄하기 전에 ① 담당 고객인지 ② 게이트를 통과하는지 다시 본다.
+# ⚠️ 고객 정보는 **여기로 받지 않는다.** 이름·나이·잔고는 서버가 DB에서 읽는다 —
+#    클라이언트가 보낸 고객 문구를 인쇄하면 문서가 화면과 다른 말을 할 수 있다.
+class PrepItem(BaseModel):
+    """kind: sentence(AI 문장) · option(조정 선택지) · memo(PB가 쓴 줄)"""
+
+    kind: str
+    text: str | None = None
+    sentence_kind: str | None = None
+    sources: list[dict] = []
+    label: str | None = None
+    targets: list[str] = []
+    basis: list[dict] = []
+    keeps: str | None = None
+
+
+class PrepNoteBody(BaseModel):
+    items: list[PrepItem]
 
 
 class MarkBody(BaseModel):
@@ -1604,6 +1631,76 @@ async def export_note_pdf(
             # `filename`은 ASCII 폴백이라 노트 번호만 적는다 — 깨진 한글보다 낫다.
             "Content-Disposition": (
                 f'{"inline" if inline else "attachment"}; filename="note-{note_id}.pdf"; '
+                f"filename*=UTF-8''{quote(name)}"
+            )
+        },
+    )
+
+
+PREP_MAX_ITEMS = 40
+PREP_MAX_LEN = 400
+
+
+@app.post("/api/customers/{customer_id}/prep-note/pdf")
+async def export_prep_note_pdf(customer_id: int, body: PrepNoteBody, actor: str = Query("PB")):
+    """**상담 준비 메모 PDF** — AI가 낸 것 중 PB가 담은 것만 모아 인쇄한다(2026-08-06).
+
+    종목 노트 PDF와 성격이 다르다: 저건 저장된 산출물을 옮기는 것이고, 이건 **화면이 조립한
+    것**을 인쇄한다. 그래서 두 가지를 여기서 다시 본다.
+
+    - **담당 고객인가** — 아니면 404(존재를 알려주지 않는다, `PB_NAME` 주석).
+    - **게이트를 통과하는가** — 담긴 문장은 F1 답변으로 이미 한 번 통과했지만, PB가 쓴 줄은
+      아무 검사도 안 거친 자유 텍스트다. 금지 표현·MNPI·지연시세를 **똑같이** 받게 한다
+      (사람이 썼다고 규정을 비켜 가지 않는다). 미인용은 F1 기준이라 해석 문장은 안 센다.
+    - 저장은 하지 않는다. 남는 건 **감사로그 한 줄**이다(무엇을 몇 개 인쇄했는가).
+    """
+    row = await db.get_customer(customer_id)
+    if row is None or row["pb"] != PB_NAME:
+        raise HTTPException(404, "고객을 찾을 수 없습니다.")
+
+    items = [it.model_dump() for it in body.items]
+    if not items:
+        raise HTTPException(400, "담은 항목이 없습니다.")
+    if len(items) > PREP_MAX_ITEMS:
+        raise HTTPException(400, f"항목은 {PREP_MAX_ITEMS}개까지 담을 수 있습니다.")
+    for it in items:
+        if it["kind"] not in ("sentence", "option", "memo"):
+            raise HTTPException(400, f"알 수 없는 항목 종류: {it['kind']}")
+        if (it.get("text") or "") and len(it["text"]) > PREP_MAX_LEN:
+            raise HTTPException(400, f"한 줄은 {PREP_MAX_LEN}자 이내로 적어 주세요.")
+
+    content = compliance.apply_notice(notepdf.prep_markdown(items), "F1")
+    violations = compliance.check_note(content, notepdf.prep_sentences(items), "F1")
+    if violations:
+        await db.append_audit("prep_note_blocked", None, actor,
+                              {"customer_id": customer_id, "violations": violations})
+        raise HTTPException(
+            409,
+            detail={"message": "컴플라이언스 게이트를 통과하지 못했습니다.", "violations": violations},
+        )
+
+    cust = _customer_to_dict(row)
+    cust["risk_label"] = f1.RISK_LABELS[cust["risk"]] if 0 <= cust["risk"] < len(f1.RISK_LABELS) else ""
+    now = datetime.now(bizdate.BIZ_TZ)
+    try:
+        pdf = notepdf.build_prep(cust, items, now=now)
+    except RuntimeError as exc:  # 한글 폰트 없음(노트 PDF와 같은 실패)
+        logger.error("상담 메모 PDF 생성 실패: %s", exc)
+        raise HTTPException(503, str(exc)) from exc
+
+    await db.append_audit("prep_note_exported", None, actor, {
+        "customer_id": customer_id,
+        "items": len(items),
+        "kinds": {k: sum(1 for it in items if it["kind"] == k) for k in ("sentence", "option", "memo")},
+        "bytes": len(pdf),
+    })
+    name = notepdf.prep_filename(cust, now)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": (
+                f'inline; filename="prep-{customer_id}.pdf"; '
                 f"filename*=UTF-8''{quote(name)}"
             )
         },

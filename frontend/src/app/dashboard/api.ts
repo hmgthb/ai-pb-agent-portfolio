@@ -62,6 +62,11 @@ export const notePdfUrl = (
   `${BASE}/api/notes/${noteId}/pdf?actor=${encodeURIComponent(actor)}` +
   (inline ? '&inline=1' : '');
 
+/** 상담 준비 메모 PDF. **POST다** — 담은 목록을 몸통으로 보내야 해서 링크로 못 연다
+ *  (노트 PDF는 저장된 것을 GET으로 받는다). 서버는 저장하지 않고 그 자리에서 만든다. */
+export const prepNotePdfUrl = (customerId: number, actor: string) =>
+  `${BASE}/api/customers/${customerId}/prep-note/pdf?actor=${encodeURIComponent(actor)}`;
+
 /** FastAPI의 에러 본문에서 사람이 읽을 메시지를 꺼낸다. 게이트 차단은 violations를 준다. */
 export function errorMessage(body: unknown, fallback = '처리에 실패했습니다.'): string {
   const detail = (body as { detail?: unknown } | null)?.detail;
