@@ -34,7 +34,8 @@ import {
   fmtDate,
   fmtDateTime,
   fmtKRW,
-  fmtPct,
+  fmtLevel,
+  fmtMove,
   hhmm,
   isDown,
   notePdfUrl,
@@ -60,7 +61,7 @@ import {
   MY_PB,
   PILL,
   type PrepItem,
-  PORTFOLIO_CHIPS,
+  NBA_CHIPS,
   RISK,
   type AgentCalls,
   type Brief,
@@ -599,8 +600,11 @@ export default function DashboardPage() {
 
   /* ── 브리핑 삭제 ────────────────────────────────────────────────────
      ⚠️ 위 재생성과 **반대 성질이라 생김새도 반대다.** 재생성은 다시 누르면 되는 조작이라
-        즉시 실행이지만, 이건 **되돌릴 수 없다**(다시 만들려면 크레딧·40~50초를 쓰고 내용도
-        같지 않다) — 그래서 **두 번 누른다**(무장 → 실행). 노트 보류·반려와 같은 급이다.
+        즉시 실행이지만, 이건 **되돌릴 수 없다** — 그래서 **두 번 누른다**(무장 → 실행).
+        노트 보류·반려와 같은 급이다.
+     ⚠️ 재생성이 싸졌다고(2026-08-07 · 크레딧 0·몇 초) 이 두 번 누르기를 풀지 말 것.
+        오히려 대가가 커졌다: 지운 브리프는 **다음 브리프의 "어제 대비" 기준**이라
+        (`db.brief_before`), 어제 것을 지우면 오늘 카드에서 비교가 통째로 사라진다.
      ⚠️ 지우는 범위는 화면이 정하지 않는다 — 서버가 그 브리프의 **날짜에 속한 행 전부**를
         지운다(`db.delete_briefs_on`). 같은 날 재실행 회차가 쌓여 있어서, 보이는 한 행만
         지우면 직전 회차가 올라와 아무 일도 안 일어난 것처럼 보인다.
@@ -609,32 +613,11 @@ export default function DashboardPage() {
   const [briefArmed, setBriefArmed] = useState(false);
   const [briefDeleting, setBriefDeleting] = useState(false);
 
-  /* 브리핑 종목 카드는 **접힌 채로 시작하고, 셋이 함께 움직인다**(2026-08-03).
-     접는 이유: 세 카드가 공시·뉴스를 다 펴면 브리핑 한 덩어리가 화면 한 판을 채워, 먼저
-     읽어야 할 것(몇 명 보유인가·얼마에 얼마나 움직였나)이 링크 더미에 묻힌다.
-     ⚠️ **종목별로 접지 않는다.** 세 카드가 가로로 나란해서 하나만 펴면 나머지 둘은 위만
-        차고 아래가 빈 칸으로 남는다 — 격자에서 높이는 가장 큰 카드가 정하기 때문이고,
-        그 빈 칸이 "이 종목은 공시·뉴스가 없다"로 읽힌다(실제로는 접혀 있을 뿐이다).
-        그래서 상태는 카드마다가 아니라 **브리핑 하나에 하나**다. 아무 카드나 누르면 셋이
-        같이 열리고 같이 닫힌다. */
-  const [briefOpen, setBriefOpen] = useState(false);
-  const toggleBrief = useCallback(() => setBriefOpen((o) => !o), []);
-
-  /* 임원·주요주주 소유상황보고는 카드 안에서 **한 줄로 접힌다**(2026-08-06).
-     대형주는 이런 게 매일 수십 건이라, 뒤로 미는 것만으로는 조용한 날 카드를 그것이 다
-     채운다 — 백엔드가 자리를 갈라 주고(`brief.INSIDER_LIMIT`) 화면은 건수만 적는다.
-     ⚠️ 접는 대상은 **임원 개인의 소액 매매 신고**뿐이다. 5%룰(`주식등의대량보유상황보고서`)은
-        이름만 비슷하고 접히지 않는다 — 판정은 백엔드가 하고(`brief.IMPORTANCE`) 여기서
-        보고서명으로 다시 가르지 않는다.
-     ⚠️ **지우지 않는다.** 접힌 줄이 건수를 말하고 누르면 펴진다 — 브리프에서 무엇이 빠졌는지
-        화면이 스스로 말해야 한다(빈 카드가 "없음"인지 "가려짐"인지 구분되어야 한다).
-     ⚠️ 브리핑 접기(`briefOpen`)와 달리 **종목별**이다. 이건 한 종목을 파고드는 조작이고,
-        가로 3열의 높이를 흔들 만큼 줄이 늘지 않는다(접히기 전에도 최대 5줄). */
-  const [insiderOpen, setInsiderOpen] = useState<Record<string, boolean>>({});
-  const toggleInsider = useCallback(
-    (code: string) => setInsiderOpen((o) => ({ ...o, [code]: !o[code] })),
-    [],
-  );
+  /* ⚠️ 브리핑 종목 카드의 접기 상태(`briefOpen`)와 임원 보고 접기(`insiderOpen`)는
+     **걷어냈다**(2026-08-07 · 브리핑이 거시 전용이 되면서 접을 종목 카드가 없어졌다).
+     되살린다면 상태는 카드마다가 아니라 **브리핑 하나에 하나**여야 했다: 세 카드가 가로로
+     나란해서 하나만 펴면 나머지 둘은 아래가 빈 칸으로 남고, 그 빈 칸이 "이 종목은
+     공시·뉴스가 없다"로 읽혔다(격자에서 높이는 가장 큰 카드가 정한다). */
 
   const deleteBrief = useCallback(
     async (id: number) => {
@@ -975,17 +958,10 @@ export default function DashboardPage() {
   const topRows =
     groupBy === 'ask' ? askRows : groupBy === 'flag' ? flagRows : [];
 
-  /* 종목코드 → 이 종목을 보유한 **내 고객** 수. 브리프가 "왜 이 종목인가"를 화면에서 스스로
-     설명하게 만든다 — 종목 선정 기준이 내 고객 포트폴리오이기 때문이다(backend pb_watchlist).
-     한 벌이면 충분하다: /api/customers가 이미 담당 고객만 주므로 전사 수라는 게 없다.
-     예전엔 선정이 전사 기준이라 "보유 21명 · 내 담당 5명"처럼 두 수를 나란히 적어야 했다. */
-  const holders = useMemo(() => {
-    const m = new Map<string, number>();
-    (data?.customers ?? []).forEach((c) =>
-      c.holdings.forEach((h) => m.set(h.code, (m.get(h.code) ?? 0) + 1)),
-    );
-    return m;
-  }, [data]);
+  /* ⚠️ 종목코드 → 보유 고객 수(`holders`)를 걷어냈다(2026-08-07). 브리프 카드의
+     `N명 보유` 배지 하나가 유일한 쓰임이었는데, 브리핑에서 종목이 빠지면서 배지도 없어졌다.
+     같은 집계가 필요해지면 백엔드에 이미 있다(`main.holdings_index`) — 프론트에서 다시
+     세지 말 것. */
   const selected = useMemo(
     () =>
       visibleCustomers.find((c) => c.id === selectedId) ??
@@ -1143,22 +1119,33 @@ export default function DashboardPage() {
   const briefToday =
     data.brief?.brief_date === days[days.length - 1].key ? data.brief : null;
 
-  /* 지수 기준일. 지수는 같은 거래일 종가로 함께 들어오므로 보통 날짜가 같은데, 그걸
-     지수마다 적으면 같은 날짜가 두 번 나와 정작 지수값·등락률을 덮는다. 같을 때만
-     줄 끝에 한 번 적으려고 여기서 판정한다.
-     **다르면 null이고 그때는 지수마다 적는다** — 한쪽만 갱신이 늦은 날 하나로 합치면
-     한 지수에 없는 날짜를 붙이는 셈이라 없는 사실이 된다. */
+  /* 거시 띠의 **대표 기준일** — 줄 끝에 한 번만 적을 날짜.
+     지표마다 날짜를 적으면 같은 날짜가 다섯 번 나와 정작 값과 등락을 덮는다.
+
+     예전에는 "전부 같을 때만" 적었는데(2026-08-06), 공급자가 둘이 되면서 **거의 항상 갈린다**:
+     환율은 매매기준율이라 당일 아침에 나오고, 지수·국고채는 전 거래일 종가다(실측 2026-08-07 —
+     원/달러 08-07 · 나머지 08-06). 그 규칙이면 다섯 지표가 전부 제 날짜를 달고 선다.
+
+     그래서 **가장 많은 지표가 공유하는 날짜**를 대표로 뽑고, 거기서 벗어나는 지표만 제
+     날짜를 단다(아래 렌더). 합쳐서 뭉개는 게 아니다 — 어느 수가 어느 날짜인지는 여전히
+     화면에서 하나하나 확정된다.
+     ⚠️ 혼자인 날짜는 대표가 될 수 없다(2건 이상). 지표가 하나뿐이면 그 지표가 직접 적는다. */
   const mktAsOf = (() => {
     const ixs = data.brief?.market?.indices ?? [];
-    if (!ixs.length) return null;
-    return ixs.every((x) => x.as_of === ixs[0].as_of) ? ixs[0].as_of : null;
+    const count = new Map<string, number>();
+    ixs.forEach((x) => count.set(x.as_of, (count.get(x.as_of) ?? 0) + 1));
+    const top = [...count.entries()].sort((a, b) => b[1] - a[1])[0];
+    return top && top[1] >= 2 ? top[0] : null;
   })();
   /* 카드 맨 위 요약 불릿 — **백엔드가 완성한 문장을 그대로 꺼내 쓴다.**
      여기서 items를 다시 훑어 문장을 만들면 규칙이 두 벌이 되고, 화면과 저장된 브리프가
      서로 다른 말로 "오늘 무슨 일이 있었나"를 답하게 된다. */
   const briefBullets = data.brief?.lead?.bullets ?? [];
   const aiwork = [
-    briefToday && `상담 전 브리핑 ${briefToday.items.length}종목 수집`,
+    /* 브리핑은 이제 거시 전용이라 셀 종목이 없다(2026-08-07 · 예전엔 `N종목 수집`이었다).
+       ⚠️ **이 줄에 지수 개수를 적지 말 것** — 매일 2로 고정된 수라 "오늘 무엇을 했나"를
+          말하지 못하고, 그런 수를 적으면 아무 일 없는 날도 일한 것처럼 보인다. */
+    briefToday && '브리핑 생성',
     today.tool_calls &&
       `에이전트 도구 호출 ${today.tool_calls}건${today.agents ? ` (에이전트 ${today.agents}종)` : ''}`,
     today.chats && `종목 즉답 ${today.chats}건`,
@@ -1549,14 +1536,16 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* 상담 전 브리핑 (F2) — 오늘 시장 + 내 고객 보유 상위 종목의 밤사이 변화.
-            선정 기준은 내 담당 고객의 보유 수다(backend pb_watchlist) — 배지가 그 근거를 적는다. */}
+        {/* 브리핑 (F2) — **거시 전용**(2026-08-07). 오늘 지수와, 어제 대비 달라진 것. */}
         <section className="card" aria-labelledby="b-title" hidden={!cfg.brief}>
           <div className="card-head">
-            {/* `브리핑`이 아니라 `종목 브리핑`이다(2026-08-03) — 이 카드가 담는 것은
-                시장 지수 한 줄과 **보유 상위 종목**의 밤사이 변화라, 이름이 무엇에 대한
-                브리핑인지까지 말해야 아래 `고객 문의`·`종목 노트` 카드와 나란히 읽힌다. */}
-            <h2 id="b-title">종목 브리핑</h2>
+            {/* `종목 브리핑`이 아니라 `브리핑`이다(2026-08-07 · 2026-08-03 결정을 뒤집음).
+                그때는 이 카드가 담는 게 지수 한 줄 + **보유 상위 종목**이라 이름이 무엇에
+                대한 브리핑인지까지 말해야 했다. 지금은 종목이 없고 담는 것이 거시 하나라,
+                한정어가 가리킬 대상이 사라졌다.
+                ⚠️ `거시 브리핑`으로도 하지 않는다 — PB가 아침에 여는 화면에서 브리핑은
+                   이것 하나이고, 옆에 다른 브리핑이 없으면 한정어는 고르는 데 쓰이지 않는다. */}
+            <h2 id="b-title">브리핑</h2>
             {data.brief && (
               <span className="hint" style={{ color: 'var(--muted)' }}>
                 {data.brief.brief_date} 생성
@@ -1627,69 +1616,60 @@ export default function DashboardPage() {
           )}
           {data.brief ? (
             <>
-              {/* 요약 불릿 — **지수 줄보다 위**다(2026-08-06). 여기 3~4줄이 "오늘 무슨 일이
-                  있었나"를 통째로 답하고, 그 아래(지수·종목 카드)는 근거다. 예전에는 리드
-                  한 줄이 지수 **아래**에 있었는데 그러면 종목 카드의 머리말처럼 읽혀서,
-                  "오늘 전체"를 말하는 자리가 화면에 없었다.
-                  ⚠️ **문장을 여기서 만들지 않는다** — 백엔드가 완성해서 보낸 것을 그대로
-                     찍는다(types.ts `BriefBullet`). 없는 항목은 오지 않으므로 빈 자리를
-                     문구로 채우지도 않는다.
-                  ⚠️ 새 색을 쓰지 않는다. 눈이 여기부터 가야 하지만 그 일은 색이 아니라
-                     **자리**가 한다(카드 맨 위). */}
-              {briefBullets.length > 0 && (
-                <ul className="digest">
-                  {briefBullets.map((b, i) => (
-                    <li className={`digest-${b.kind}`} key={i}>
-                      <DigestText b={b} />
-                      {/* **규칙이 쓴 문장과 구분한다.** 이 불릿들은 본문이 아니라
-                          `lead_json`에 살아 컴플라이언스 게이트를 안 탄다 — 나머지는
-                          "데이터에 없는 말을 못 한다"는 보장이 있고 이것만 없다.
-                          그 사실을 말하는 자리가 화면에서 이 배지뿐이라 **빼지 말 것**.
-                          근거가 되는 공시·뉴스는 바로 아래 카드에 원문 링크로 있다. */}
-                      {b.ai && (
-                        <span
-                          className="digest-ai"
-                          title="이 한 줄은 AI가 공시명·뉴스 제목만 보고 쓴 요약입니다. 근거는 아래 종목 카드의 원문 링크에 있습니다."
-                        >
-                          AI 요약
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {/* 오늘 시장 — PB가 고객에게 가장 먼저 듣는 질문이 개별 종목이 아니라 시장이다.
+              {/* 지수 띠 — **카드 맨 위**다(2026-08-07 · 2026-08-06 결정을 뒤집음).
+                  그때는 요약 불릿이 위였다: 불릿이 "오늘 무슨 일이 있었나"를 통째로 답하고
+                  지수·종목 카드가 그 근거였기 때문이다. 지금은 카드에 담긴 것이 거시 하나라
+                  **숫자 자체가 카드**이고, 불릿은 그 숫자에 붙는 해석이다 — 해석이 숫자보다
+                  위에 서면 무엇에 대한 말인지 모르는 채로 먼저 읽게 된다.
                   못 가져왔으면 빈칸으로 두지 않고 미연결 사유를 그대로 말한다. */}
               {data.brief.market?.indices?.length ? (
                 <div className="mkt">
                   {data.brief.market.indices.map((ix) => {
-                    const down = isDown(ix.change_pct);
+                    /* `move`가 없으면 2026-08-07 이전 브리프다 — 그때는 지수뿐이었고
+                       값이 `change_pct`에 있었다(backend `brief.move_of`와 같은 폴백). */
+                    const move = ix.move ?? ix.change_pct;
+                    const down = move !== undefined && isDown(move);
                     return (
                       <span className="mkt-item" key={ix.index_name}>
                         <span className="mkt-name">{ix.index_name}</span>
-                        <strong>{Number(ix.close).toLocaleString()}</strong>
-                        <span className={`delta ${down ? 'down' : 'up'}`}>
-                          {down ? '▼' : '▲'}
-                          {fmtPct(ix.change_pct)}%
-                        </span>
-                        {/* 지수마다 붙는 날짜는 서로 다를 때만 쓴다(mktAsOf 참조) */}
-                        {!mktAsOf && (
+                        <strong>
+                          {fmtLevel(ix.close)}
+                          {ix.level_unit ?? ''}
+                        </strong>
+                        {/* ⚠️ 움직임을 못 받았으면 **아무것도 그리지 않는다.** `▲0.00%`로
+                            채우면 "오늘 안 움직였다"는 없는 사실이 되고, 수준(왼쪽)은
+                            멀쩡히 있으므로 줄이 비어 보이지도 않는다. */}
+                        {move !== undefined && (
+                          <span className={`delta ${down ? 'down' : 'up'}`}>
+                            {down ? '▼' : '▲'}
+                            {fmtMove(move, ix.move_unit)}
+                            {ix.move_unit ?? '%'}
+                          </span>
+                        )}
+                        {/* 대표 기준일에서 **벗어나는 지표만** 제 날짜를 단다(mktAsOf 참조).
+                            `지연`(지수 종가)과 `공표`(한국은행)를 가려 적는다 — 둘은 성격이
+                            달라서, 환율에 `지연`이라고 쓰면 틀린 말이 된다. */}
+                        {ix.as_of !== mktAsOf && (
                           <span className="bcode">
-                            · {fmtDate(ix.as_of)} 지연
+                            · {fmtDate(ix.as_of)}{' '}
+                            {ix.basis === '공표' ? '공표' : '지연'}
                           </span>
                         )}
                       </span>
                     );
                   })}
-                  {/* 날짜가 같으면 줄 끝에 한 번만. 숫자를 읽는 데 방해가 되지 않게
+                  {/* 대표 기준일은 줄 끝에 한 번만. 숫자를 읽는 데 방해가 되지 않게
                       오른쪽 끝으로 밀고 톤을 낮추되, 지우지는 않는다 — 이 값이 오늘
-                      것이 아니라는 사실은 화면에 남아 있어야 한다. */}
+                      것이 아니라는 사실은 화면에 남아 있어야 한다.
+                      ⚠️ `종가`라고 쓰지 않는다(2026-08-07) — 이 띠에는 종가(지수)와
+                         공표치(환율·금리)가 섞여 있어서, 한 낱말로 둘 다를 부르면 한쪽이
+                         틀린 말이 된다. 성격은 지표마다 위에서 적고, 여기는 날짜만 맡는다. */}
                   {mktAsOf && (
                     <span
                       className="mkt-asof"
-                      title="지수는 일별 종가 기준이라 직전 거래일 값이다(실시간 아님). 주말·휴장일과 당일 장중에는 오늘 날짜가 없다."
+                      title="지수는 일별 종가, 환율·금리는 한국은행 일별 공표치다(둘 다 실시간 아님). 기준일이 다른 지표는 값 옆에 제 날짜를 단다."
                     >
-                      {fmtDate(mktAsOf)} 종가
+                      {fmtDate(mktAsOf)} 기준
                     </span>
                   )}
                 </div>
@@ -1702,189 +1682,55 @@ export default function DashboardPage() {
                   </span>
                 </div>
               )}
-              <div className="brief-grid">
-                {data.brief.items.map((it) => {
-                  const q = it.quote;
-                  const down = q ? isDown(q.change_pct) : false;
-                  /* 공시 줄은 등급으로 두 몫이 된다 — 위(주요사항·정기·기타)는 그대로 펴고,
-                     임원·주요주주 보고는 아래 접힌 한 줄로 모은다. **태그·색·모양은 그대로
-                     `공시` 하나다**: 등급은 무엇을 접을지 정할 뿐 화면에 글자로 나오지 않는다.
-                     ⚠️ 접히는 건 임원 개인의 소액 매매 신고뿐이다 — 5%룰(`주식등의대량보유
-                        상황보고서`)은 이름만 비슷하고 위에 선다(`brief._MATERIAL_KEYWORDS`). */
-                  const insiderRows = it.disclosures.filter(
-                    (d) => d.importance === 'insider',
-                  );
-                  /* `is_new === false`로 좁혀 본다 — **필드가 없는 것과 false는 다르다**.
-                     비교할 어제 브리프가 없으면 백엔드가 필드를 안 붙이는데, falsy로 보면
-                     첫 브리프가 통째로 흐려진다(types.ts `is_new`). */
-                  const seen = (v?: boolean) => (v === false ? ' seen' : '');
-                  const rows = [
-                    ...it.disclosures
-                      .filter((d) => d.importance !== 'insider')
-                      .map((d) => ({
-                        tag: '공시',
-                        text: d.report_nm.trim(),
-                        href: d.viewer_url,
-                        meta: fmtDate(d.rcept_dt),
-                        cls: seen(d.is_new),
-                      })),
-                    ...it.news.map((n) => ({
-                      tag: '뉴스',
-                      text: n.title,
-                      href: n.link,
-                      meta: fmtDate(n.pub_date),
-                      cls: seen(n.is_new),
-                    })),
-                  ];
-                  const open = briefOpen;
-                  return (
-                    <div className="bcard" key={it.stock_code}>
-                      {/* 머리말·시세줄 통째가 여는 버튼이다 — 접힌 카드에서 누를 곳을
-                          찾게 하지 않으려면 보이는 것 전부가 누를 곳이어야 한다.
-                          안에 링크가 없는 구역이라(공시·뉴스는 아래) 버튼으로 감싸도
-                          중첩 대화형 요소가 생기지 않는다.
-                          **어느 카드를 눌러도 셋이 같이 움직인다**(위 briefOpen 주석). */}
-                      <button
-                        type="button"
-                        className="bcard-toggle"
-                        aria-expanded={open}
-                        title={
-                          open
-                            ? '접기 — 종목 카드의 공시·뉴스를 모두 숨깁니다'
-                            : '펴기 — 종목 카드의 공시·뉴스를 모두 봅니다'
-                        }
-                        onClick={toggleBrief}
-                      >
-                        <div className="bh">
-                          <span className="bname">{it.corp_name}</span>
-                          <span className="bcode">{it.stock_code}</span>
-                          {/* 선정 근거를 카드가 스스로 말한다 — 이 종목이 위에 있는 이유가
-                              "내 고객 N명이 들고 있어서"이고, 그 N이 이 카드를 건너뛰어도
-                              되는지를 정한다. 0명이면 배지를 감추지 않고 0명이라고 적는다. */}
-                          <span
-                            className="bhold"
-                            title="브리프 종목 선정 기준 = 내 담당 고객의 보유 수"
-                          >
-                            {holders.get(it.stock_code) ?? 0}명 보유
-                          </span>
-                          {/* 접힘 표시는 **오른쪽 끝 꺾쇠 하나**다. 접힌 카드가 "이게 다"가
-                              아니라 "더 있다"로 읽혀야 하고, 그 말을 글자로 적으면
-                              (`공시·뉴스 5건 보기`) 줄이는 게 목적인 카드에 줄이 늘어난다. */}
-                          <span className="bcaret" aria-hidden="true">
-                            {open ? '⌄' : '›'}
-                          </span>
-                        </div>
-                        {q ? (
-                          <div className="bquote">
-                            <strong>
-                              {Number(q.close).toLocaleString()}원
-                            </strong>
-                            <span className={`delta ${down ? 'down' : 'up'}`}>
-                              {down ? '▼' : '▲'}
-                              {fmtPct(q.change_pct)}%
-                            </span>
-                            {/* ⚠️ 평소 대비 꼬리표(`20거래일 중 가장 큰 상승`·`평소 수준`)는
-                                **화면에서 걷어냈다**(2026-08-06). 시세 줄은 값 하나를 읽는
-                                자리인데 판정 문구가 가격과 기준일 사이에 끼면서, 좁은 카드에서
-                                두 줄로 접히고 정작 가격이 눈에 안 들어왔다.
-                                백엔드 판정(`quote.recent`)과 문구(`recent_text`)는 브리프
-                                기록에 그대로 남는다 — 되살릴 자리는 여기이고, 되살린다면
-                                시세 줄이 아니라 **다른 줄**이어야 한다. */}
-                            {/* 기준일은 **줄 오른쪽 끝**이다(2026-08-06 · `.mkt-asof`와 같은
-                                처방). 값 바로 뒤에 붙어 있으면 가격·등락률을 읽는 눈이 매번
-                                날짜를 지나가는데, 이 값이 오늘 것이 아니라는 사실은 남되
-                                **읽는 순서에서는 뒤로** 밀리는 게 맞다.
-                                앞의 `·`는 뺐다 — 붙어 있을 때 앞뒤를 잇던 기호라, 떨어뜨려
-                                놓고도 남기면 무엇과 무엇을 잇는지가 없어진다. */}
-                            <span className="bcode">
-                              {fmtDate(q.as_of)} 지연시세
-                            </span>
-                          </div>
-                        ) : (
-                          <div className="bempty">시세 조회 결과 없음</div>
-                        )}
-                      </button>
-                      {open && (
-                        <>
-                          {/* 어제도 있던 줄은 톤만 낮춘다(`.seen`) — 지우지 않는다.
-                              고객이 어제 기사를 오늘 물어볼 수 있고, 브리프 기록에서 빠져도
-                              안 된다. 진하게 남는 것이 곧 "밤사이 새로 생긴 것"이다. */}
-                          {rows.map((r, i) => (
-                            <div className={`bline${r.cls}`} key={i}>
-                              <span className="btag">{r.tag}</span>
-                              <span style={{ minWidth: 0 }}>
-                                <a
-                                  href={r.href || '#'}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                >
-                                  {r.text}
-                                </a>
-                                <span className="bcode"> {r.meta}</span>
-                              </span>
-                            </div>
-                          ))}
-                          {/* 임원·주요주주 보고 — **뉴스 아래**, 접힌 한 줄. 가장 안 중요한
-                              것이 맨 아래에 서고, 건수를 적어 "가려져 있다"를 스스로 말한다.
-                              태그는 그대로 `공시`다 — 등급을 글자로 늘리지 않는다.
-                              ⚠️ 이 줄을 `지분공시`라고 부르지 말 것(2026-08-06) — 5%룰
-                                 보고도 지분공시인데 그건 **위에** 선다. 접히는 게 무엇인지
-                                 이름이 정확히 말해야 위아래가 갈린 이유가 읽힌다. */}
-                          {insiderRows.length > 0 && (
-                            <>
-                              <button
-                                type="button"
-                                className="bline bline-fold"
-                                aria-expanded={!!insiderOpen[it.stock_code]}
-                                title={
-                                  insiderOpen[it.stock_code]
-                                    ? '접기 — 임원·주요주주 소유상황보고를 한 줄로 모읍니다'
-                                    : '펴기 — 임원·주요주주 개인의 매매 신고를 봅니다'
-                                }
-                                onClick={() => toggleInsider(it.stock_code)}
-                              >
-                                <span className="btag">공시</span>
-                                <span>
-                                  임원·주요주주 보고 {insiderRows.length}건
-                                  <span className="bcaret" aria-hidden="true">
-                                    {insiderOpen[it.stock_code] ? '⌄' : '›'}
-                                  </span>
-                                </span>
-                              </button>
-                              {insiderOpen[it.stock_code] &&
-                                insiderRows.map((d) => (
-                                  <div
-                                    className="bline insider"
-                                    key={d.viewer_url}
-                                  >
-                                    <span style={{ minWidth: 0 }}>
-                                      <a
-                                        href={d.viewer_url || '#'}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                      >
-                                        {d.report_nm.trim()}
-                                      </a>
-                                      <span className="bcode">
-                                        {' '}
-                                        {fmtDate(d.rcept_dt)}
-                                      </span>
-                                    </span>
-                                  </div>
-                                ))}
-                            </>
-                          )}
-                          {!rows.length && !insiderRows.length && (
-                            <div className="bempty">
-                              전일 공시·밤사이 뉴스 없음
-                            </div>
-                          )}
-                        </>
+              {/* 요약 불릿 — **지수 띠 바로 아래**(2026-08-07 · 위 주석 참조). 바로 위
+                  숫자를 읽고 나서 "그래서 어제와 뭐가 다른가"를 답하는 자리다.
+                  ⚠️ **문장을 여기서 만들지 않는다** — 백엔드가 완성해서 보낸 것을 그대로
+                     찍는다(types.ts `BriefBullet`). 없는 항목은 오지 않으므로 빈 자리를
+                     문구로 채우지도 않는다.
+                  ⚠️ 새 색을 쓰지 않는다. 종류를 가르는 일은 색이 아니라 **문장**이 한다.
+                  ⚠️ 평소 대비 꼬리표(`notable`)를 **지수 띠에 또 적지 말 것** — 같은 사실이
+                     두 줄이 되고, 그때는 어느 쪽이 맞는지가 아니라 왜 두 번 적혔는지를
+                     화면이 설명하지 못한다(backend `brief._notable_bullets` 주석). */}
+              {briefBullets.length > 0 && (
+                <ul className="digest">
+                  {briefBullets.map((b, i) => (
+                    <li className={`digest-${b.kind}`} key={i}>
+                      <DigestText b={b} />
+                      {/* **규칙이 쓴 문장과 구분한다.** 이 불릿들은 본문이 아니라
+                          `lead_json`에 살아 컴플라이언스 게이트를 안 탄다 — 나머지는
+                          "데이터에 없는 말을 못 한다"는 보장이 있고 이것만 없다.
+                          그 사실을 말하는 자리가 화면에서 이 배지뿐이라 **빼지 말 것**.
+                          ⚠️ 켜지는 건 밤사이 헤드라인(`news`) 하나뿐이다. */}
+                      {b.ai && (
+                        <span
+                          className="digest-ai"
+                          title="이 한 줄은 AI가 뉴스 제목만 보고 쓴 요약입니다. 나머지 불릿은 규칙이 씁니다."
+                        >
+                          AI 요약
+                        </span>
                       )}
-                    </div>
-                  );
-                })}
-              </div>
+                      {/* 근거 기사 — **각주 번호로 전부 건다.** 한 링크가 대표하지 못하는
+                          문장이라(여러 제목을 뭉친 것) 대표를 고르지 않는다.
+                          ⚠️ **빼지 말 것.** 종목 카드가 없어지면서 이 문장의 출처를 확인할
+                             자리가 화면에서 여기뿐이다(가드레일 3 · types.ts `sources`).
+                          ⚠️ 제목은 `title`로만 단다 — 여섯 건을 다 펴면 요약 한 줄이
+                             목록보다 길어진다(요약이 목록이 되는 것을 막는 규칙). */}
+                      {(b.sources ?? []).map((s, n) => (
+                        <a
+                          key={s.url}
+                          className="digest-src"
+                          href={s.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={s.title}
+                        >
+                          [{n + 1}]
+                        </a>
+                      ))}
+                    </li>
+                  ))}
+                </ul>
+              )}
               {data.brief.violations.length > 0 && (
                 <div
                   className="hint"
@@ -1903,13 +1749,13 @@ export default function DashboardPage() {
                ⚠️ 진행 표시는 **버튼 라벨이 맡는다**(`생성` → `생성 중…`). 옆에 곁말로
                   두면 버튼과 문구가 두 덩어리로 서고, 비활성 버튼이 "왜 안 눌리지"로 먼저
                   읽힌다 — 라벨이 바뀌면 그 자리에서 답이 된다.
-                  누르기 전 예상 소요는 안 적는다(망설이게만 한다). 다만 **라벨 전환 자체는
-                  지우지 말 것**: 이 라우트는 SSE가 아니라 블로킹 POST라 40~50초 동안 화면이
-                  조용해서, 없으면 멈춘 것으로 읽힌다. */
+                  누르기 전 예상 소요는 안 적는다(망설이게만 한다). **라벨 전환 자체는 남긴다**:
+                  블로킹 POST라 도는 동안 화면이 조용하다. 그 시간은 이제 몇 초다(2026-08-07 —
+                  거시 전용이 되면서 LLM이 빠졌다. 예전엔 40~50초였다). */
             <div className="brief-empty">
               <p className="hint" style={{ margin: 0 }}>
-                아직 오늘 브리핑이 없습니다. 담당 고객 보유 상위 종목의
-                공시·뉴스와 지수를 모아 생성합니다.
+                아직 오늘 브리핑이 없습니다. 오늘 지수와 어제 대비 달라진 것을
+                모아 생성합니다.
               </p>
               <div className="brief-empty-run">
                 <button
@@ -2098,9 +1944,32 @@ export default function DashboardPage() {
                           </span>
                         )}
                       </div>
+                      {/* 등록 성향 옆에 **상황을 반영한 실질 성향**을 붙인다(2026-08-07).
+                          이 카드가 오래 `공격투자형`만 적어 왔는데, 정작 상담에서 먼저 확인할
+                          것은 그 등록값이 지금도 유효한가다 — 반년 뒤 보증금을 치러야 하면
+                          등록이 공격투자형이어도 지금 실질은 그렇지 않다.
+                          ⚠️ **다를 때만 낸다.** 같은데도 `= 실질 …`을 적으면 매 고객 줄에
+                             같은 말이 두 번 서고, 정작 다를 때의 표시가 그 사이에 묻힌다
+                             (브리핑의 `평소 수준`을 걷어낸 것과 같은 판단).
+                          ⚠️ 화면이 판정하지 않는다 — 값도 이유도 백엔드가 저장해 둔 것을
+                             그대로 찍는다(`pb_customers.scenario`). 여기서 다시 계산하면
+                             채팅 답변과 화면이 다른 말을 하게 된다. */}
                       <div className="acct">
                         {selected.acct} · {selected.age}세 ·{' '}
                         {RISK[selected.risk]}
+                        {selected.scenario &&
+                          selected.scenario.effective_risk !==
+                            selected.scenario.registered_risk && (
+                            <span
+                              className="risk-eff"
+                              title={
+                                selected.scenario.effective_risk_why ??
+                                '상황을 반영한 실질 위험성향'
+                              }
+                            >
+                              → 실질 {RISK[selected.scenario.effective_risk]}
+                            </span>
+                          )}
                       </div>
                       {/* 플래그가 없으면 **줄을 안 낸다**(2026-07-29). 한동안 `위험 플래그
                           없음`을 적었는데("규칙에 안 걸렸다"와 "규칙을 안 돌렸다"를 가르려고),
@@ -2226,17 +2095,22 @@ export default function DashboardPage() {
                   )}
                 </div>
 
-                {/* ── 3열: 이 포트폴리오에 묻기 ───────────────────────────────
-                    답할 수 있는 건 둘이다: **보유 종목**(공시·뉴스·지연시세, 에이전트가
-                    조회) + **포트폴리오 구성**(집중도·배분·성향 대비, 코드가 계산).
-                    2026-07-28에 후자를 열면서 근거에 **내부 계좌데이터**가 들어왔다 —
-                    가드레일 1의 명시적 예외이고, 조건은 CLAUDE.md에 적혀 있다(수치는
-                    코드가 계산 · 이름/계좌는 프롬프트에도 답변에도 없음 · 조정 지시 금지).
+                {/* ── 3열: Next Best Action ───────────────────────────────────
+                    **답하기로 한 것은 둘이다**(2026-08-07): ① 이 고객의 상황 요약
+                    (목표·제약·정리 계획) ② 상담 이력을 바탕으로 한 투자성향 점검.
+                    이유는 하나다 — PB가 담당하는 고객이 많아 **각각의 경위를 기억할 수 없다.**
+                    근거는 `pb_customers.scenario`·`history`이고 둘 다 코드가 만든 구조다
+                    (LLM은 문장만 쓴다).
 
-                    ⚠️ **여전히 "고객에 대해 묻는 챗봇"이 아니다.** 주어를 종목에서
-                    포트폴리오까지만 넓혔지 **사람으로 옮기지 않았다** — 제목이 "이 고객에게
-                    묻기"로 읽히는 순간 답할 수 없는 질문(고객 자체)과 해서는 안 되는 질문
-                    (회신문 대필, 가드레일 4)을 부른다.
+                    ⚠️ **자산배분·집중도는 이 자리에서 묻지 않는다.** 칩을 걷어냈고 안내
+                    문구에서도 뺐다. 백엔드 라우트는 남아 있어 손으로 치면 답하지만,
+                    **유도하지 않는 것**이 결정이다(types.ts `NBA_CHIPS`).
+                    ⚠️ 근거에 **내부 계좌데이터·상담 기록**이 들어간다 — 가드레일 1의 명시적
+                    예외이고 조건은 CLAUDE.md에 있다(수치는 코드가 계산 · 이름/계좌는
+                    프롬프트에도 답변에도 없음 · 특정 행동을 권하지 않음).
+                    ⚠️ **이름이 `Next Best Action`이어도 다음 행동을 정해 주는 자리가 아니다.**
+                    고르는 일은 PB의 몫이다(가드레일 4) — 답변 규칙이 그걸 막고 있고
+                    (`f1.ANSWER_SYSTEM_PROMPT`), 그 규칙을 풀면 이 패널이 회신 대필로 미끄러진다.
                     ⚠️ 입력 가드(compliance.PII_PATTERNS)는 주민·계좌번호 '숫자 형식'만
                     잡는다 — 한글 이름은 안 걸린다. 이름을 안 쓰게 만드는 건 지금도
                     이 UI의 몫이다(HANDOFF §7). */}
@@ -2270,7 +2144,7 @@ export default function DashboardPage() {
                           이건 **이 칸 전체를 보는 방식**을 바꾸는 조작이라 칸의 제목 줄이
                           제자리다 — `↻ 새 대화`·`×`가 모달 머리말에 서는 것과 같은 규칙. */}
                       <div className="cchat-head">
-                        <strong>포트폴리오 질문</strong>
+                        <strong>Next Best Action</strong>
                         {/* 조작 둘을 한 상자에 모은다 — 각자 `margin-left: auto`를 달면
                             남는 자리가 둘로 갈려 사이가 벌어진다(모달 머리말 `.m-acts`와
                             같은 함정·같은 처방). */}
@@ -2328,29 +2202,12 @@ export default function DashboardPage() {
                           <p className="ask-body">{q.question}</p>
                         </div>
                       ))}
-                      {/* 종목 칩과 분석 칩은 **줄을 나눈다**(2026-07-29). 한 상자에 담으면
-                          종목이 많은 고객에서 `집중도`가 종목 사이에 끼어 줄바꿈되고, 두
-                          종류가 섞여 보인다. 보유가 없으면 이 줄 자체를 안 낸다(빈 여백). */}
-                      {selected.holdings.length > 0 && (
-                        <div className="cchat-chips">
-                          {selected.holdings.map((h) => (
-                            <button
-                              key={h.code}
-                              className="chip"
-                              onClick={() => askHolding(`${h.name} 최근 실적`)}
-                              title={`${h.name}(${h.code}) 질문 채우기`}
-                            >
-                              {h.name}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      {/* 분석 칩 — 종목 칩과 **다른 종류**라 형태로 가른다(.chip.ana).
-                          보유 종목이 없어도 낸다: 자산배분·성향 대비는 주식이 하나도
-                          없어도 답이 되는 질문이고(현금성 100%도 구성이다), 오히려
-                          그때 물어볼 게 이것뿐이다. */}
+                      {/* 칩은 **둘뿐이다**(2026-08-07 · types.ts `NBA_CHIPS`).
+                          ⚠️ 보유 종목 칩(삼성전자·SK하이닉스)을 여기 되살리지 말 것 —
+                             이 패널이 답하는 건 종목이 아니라 **이 사람의 사정**이다.
+                             종목을 묻는 자리는 우하단 FAB(전역 F1)이고 거기는 그대로다. */}
                       <div className="cchat-chips">
-                        {PORTFOLIO_CHIPS.map((c) => (
+                        {NBA_CHIPS.map((c) => (
                           <button
                             key={c.label}
                             className="chip ana"

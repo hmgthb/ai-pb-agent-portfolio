@@ -120,6 +120,29 @@ CREATE TABLE IF NOT EXISTS pb_customers (
     flag_reasons JSONB NOT NULL DEFAULT '[]'
 );
 
+-- 고객의 **상황**(2026-08-07). 계좌 숫자만으로는 안 보이는 것들이 여기 산다: 계좌 밖 자산,
+-- 제약(정책·예정 지출), 정리 순서, 최종 목표, 그리고 **등록 성향과 다를 수 있는 실질 성향**.
+-- 등록 성향이 공격투자형이어도 반년 뒤 보증금을 치러야 하면 지금 실질은 안정형이다 —
+-- 그 간극이 상담에서 가장 먼저 확인할 것인데 지금까지 화면 어디에도 없었다.
+--
+-- ⚠️ **금액을 원 단위로 담지 않는다.** 계좌 밖 자산도 구간(`redact.BALANCE_BANDS`의 어휘)으로만
+--    적는다. 이 칸은 F1에서 외부 모델로 나갈 후보라, **저장 시점에 이미 비식별화**돼 있는 편이
+--    나중에 가리는 것보다 안전하다(가릴 것이 없으면 못 가려서 새는 일도 없다).
+-- ⚠️ **고객 이름을 문장 안에 넣지 않는다** — `compliance.egress_guard`가 담당 고객명을 대조해
+--    차단한다. 시나리오를 프롬프트에 실으면 그 검사에 걸려 답변이 통째로 막힌다(막히는 게 맞다).
+-- ⚠️ 자유 산문이 아니라 **구조**다(요약 한 줄 + 목록들). 산문으로 두면 규칙이 비식별화할 수
+--    없고, 그건 이 저장소에 아직 없는 것이다(HANDOFF §7 — 자유 텍스트 비식별화기).
+ALTER TABLE pb_customers ADD COLUMN IF NOT EXISTS scenario JSONB NOT NULL DEFAULT '{}';
+
+-- 상담 히스토리 — 지나간 접점의 기록(2026-08-07). `Next Best Action` 채팅이 "히스토리를
+-- 기반으로 투자성향을 분석"하는 근거다. PB가 담당 고객이 많아 각각의 경위를 기억할 수 없다는
+-- 것이 이 칸이 있는 이유이고, 그래서 **분석이 아니라 사실만** 담는다.
+-- ⚠️ `pb_sessions`(고객 문의 큐)와 **다른 것**이다 — 그쪽은 아직 답하지 않은 문의(처리 대상),
+--    이쪽은 지나간 기록(읽을거리)이다. 섞으면 큐가 흐려진다.
+-- ⚠️ `scenario`와 같은 규칙: 금액 없음 · 이름 없음 · 판정 없음. `안정형으로 보임` 같은 결론을
+--    여기 적으면 모델이 그걸 베껴 쓰고 근거는 사라진다.
+ALTER TABLE pb_customers ADD COLUMN IF NOT EXISTS history JSONB NOT NULL DEFAULT '[]';
+
 CREATE TABLE IF NOT EXISTS pb_sessions (
     id SERIAL PRIMARY KEY,
     customer_id INTEGER NOT NULL REFERENCES pb_customers(id),
@@ -382,13 +405,18 @@ async def latest_brief() -> asyncpg.Record | None:
 
 
 async def brief_before(brief_date) -> asyncpg.Record | None:
-    """그 날짜 **이전**의 가장 최근 브리프 — "어제 대비 새로 생긴 것"의 비교 기준.
+    """그 날짜 **이전**의 가장 최근 브리프 — "어제 대비"의 비교 기준.
+
+    지금 견주는 것은 `market_json`의 지수다(`brief.compare_macro`). 2026-08-07 전에는
+    `items_json`의 공시·뉴스였다(`brief.seen_keys`) — **읽는 컬럼이 바뀌었을 뿐 규약은 같다.**
 
     ⚠️ **같은 날 회차는 기준이 될 수 없다.** 브리프는 재실행마다 한 행씩 쌓이는데, 직전
-       행(`latest_brief`)을 기준으로 잡으면 오늘 두 번째 실행부터 **모든 것이 "어제도 있던 것"**이
+       행(`latest_brief`)을 기준으로 잡으면 오늘 두 번째 실행부터 **모든 것이 "어제와 같다"**가
        되어 강조가 통째로 꺼진다. 그래서 id가 아니라 **날짜로** 자른다.
-    ⚠️ 없으면 None이고, 그때 화면은 새것/구것을 **구분하지 않는다** — "비교할 어제가 없다"와
-       "어제와 비교했더니 전부 새것"은 다르다(brief.mark_new 주석).
+    ⚠️ 없으면 None이고, 그때 화면은 **아무 말도 하지 않는다** — "비교할 어제가 없다"와
+       "어제와 비교했더니 달라진 게 없다"는 다르다.
+    ⚠️ 날짜로 잘라도 **기준일이 같을 수 있다**(주말·휴장에는 어제 브리프도 오늘 브리프도 같은
+       종가를 싣는다). 그건 여기서 못 거르고 `compare_macro`가 `stale`로 가른다.
     """
     return await pool().fetchrow(
         """SELECT * FROM briefs WHERE brief_date < $1

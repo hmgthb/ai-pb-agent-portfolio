@@ -93,6 +93,26 @@ export const fmtPct = (v: string | number) => {
   return Number.isFinite(n) ? Math.abs(n).toFixed(2) : String(v);
 };
 
+/** 거시 지표의 오늘 움직임. `fmtPct`와 같은 규칙이되 **단위마다 자릿수가 다르다**:
+ *  퍼센트는 두 자리, bp는 한 자리다(채권에서 `7.30bp`라고 쓰지 않는다).
+ *  ⚠️ 단위 자체는 붙이지 않는다 — 붙이는 쪽이 `move_unit`을 그대로 쓴다(값과 단위가
+ *     한 곳에서 갈리면 안 된다). */
+export const fmtMove = (v: string | number, unit?: string) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.abs(n).toFixed(unit === 'bp' ? 1 : 2) : String(v);
+};
+
+/** 지표의 수준 — 천단위 구분만 넣고 **출처가 준 자릿수를 그대로 지킨다**.
+ *  ⚠️ `Number(v).toLocaleString()`을 쓰지 말 것: 기본 `maximumFractionDigits`가 3이라
+ *     소수 넷째 자리부터 조용히 반올림된다. 금리처럼 끝자리가 정보인 값에서 위험하다.
+ *  백엔드 `brief.fmt_level`과 같은 규칙이다 — 본문과 화면이 다른 수를 적으면 안 된다. */
+export const fmtLevel = (v: string | number) => {
+  const [whole, frac] = String(v).trim().split('.');
+  const head = Number(whole);
+  if (!Number.isFinite(head)) return String(v);
+  return frac ? `${head.toLocaleString()}.${frac}` : head.toLocaleString();
+};
+
 /** 등락률이 음수인가 — 표시(화살표·색)의 단일 판단 지점 */
 export const isDown = (v: string | number) => Number(v) < 0;
 

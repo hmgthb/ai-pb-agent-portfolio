@@ -263,6 +263,21 @@ def egress_guard(
             if extra_h:
                 violations.append(f"보유 종목에 허용되지 않은 항목: {', '.join(sorted(extra_h))}")
                 break
+        # 상황·상담 이력도 **중첩까지** 본다(2026-08-07). 바깥 키만 검사하면 `scenario`를
+        # 통째로 얹은 코드가 그대로 통과한다 — 보유 종목에서 이미 같은 처방을 쓰고 있다.
+        extra_s = set(payload.get("scenario") or {}) - redact.SANITIZED_SCENARIO_KEYS
+        if extra_s:
+            violations.append(f"고객 상황에 허용되지 않은 항목: {', '.join(sorted(extra_s))}")
+        for asset in (payload.get("scenario") or {}).get("assets") or []:
+            extra_a = set(asset) - redact.SANITIZED_ASSET_KEYS
+            if extra_a:
+                violations.append(f"보유 자산에 허용되지 않은 항목: {', '.join(sorted(extra_a))}")
+                break
+        for row in payload.get("history") or []:
+            extra_hi = set(row) - redact.SANITIZED_HISTORY_KEYS
+            if extra_hi:
+                violations.append(f"상담 이력에 허용되지 않은 항목: {', '.join(sorted(extra_hi))}")
+                break
         # 금액이 새는 마지막 그물. 비중(50.9)·수익률(-2.3)·종목코드(005930)는 안 걸린다.
         blob = json.dumps(payload, ensure_ascii=False)
         if _BIG_INT_RE.search(blob):

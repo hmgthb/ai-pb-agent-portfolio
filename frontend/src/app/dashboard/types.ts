@@ -29,6 +29,36 @@ export type Customer = {
   alloc: Record<string, number>;
   flag: boolean;
   flagReasons: FlagReason[];
+  /** 이 고객의 **상황**. 계좌 숫자가 못 보여 주는 것이 여기 있다(2026-08-07). */
+  scenario?: CustomerScenario;
+};
+
+/** 고객의 상황 — 원본은 `pb_customers.scenario`, 만드는 곳은
+ *  `backend/scripts/seed_scenarios.py`(난수 없음 · 다시 돌리면 같은 결과).
+ *
+ *  ⚠️ **AI가 쓴 것이 아니다.** 실제 배치에서는 PB가 상담 기록에서 적어 넣는 칸이라,
+ *     화면에 `AI 요약` 같은 배지를 붙이지 말 것 — 붙이면 출처를 거짓으로 말하는 셈이다.
+ *  ⚠️ **금액은 구간뿐이다.** 계좌 밖 자산도 `1억~5억` 같은 라벨로만 온다(원 단위 값이
+ *     저장돼 있지 않다). 화면에서 구간으로부터 금액을 추정해 적지 말 것.
+ *  ⚠️ 이 값은 F1 프롬프트로 **자동으로 나가지 않는다** — 경계가 화이트리스트라
+ *     (`backend/redact.SANITIZED_KEYS`) 넣는 것이 명시적 결정이어야 한다. */
+export type CustomerScenario = {
+  /** 원형 키(`multi_home`·`retire_income`…). 화면 분기용이 아니라 **같은 상황끼리 묶어 볼 때** 쓴다. */
+  key: string;
+  /** 한 줄 요약 — 카드가 접혀 있을 때 보이는 것. 규칙이 조립한다. */
+  summary: string;
+  goal: string;
+  /** 자금이 필요한 시점(`1~2년`·`상시`). 실질 성향이 등록 성향과 갈리는 주된 이유다. */
+  horizon: string;
+  /** 계좌 **밖** 자산. 증권 잔고(`balance`)는 여기 안 들어간다 — 두 번 세게 된다. */
+  assets: { kind: string; band?: string; where?: string; note?: string }[];
+  constraints: string[];
+  plan: string[];
+  /** 둘 다 `RISK` 배열의 인덱스라 **같은 축에서 견줄 수 있다**. 다르면 그 간극이
+   *  상담에서 가장 먼저 확인할 것이고, 그때만 `effective_risk_why`가 온다. */
+  registered_risk: number;
+  effective_risk: number;
+  effective_risk_why: string | null;
 };
 
 export type QueueNote = {
@@ -95,6 +125,22 @@ export type EgressPortfolio = {
     pct_of_balance: number | null;
   }[];
   flags: FlagReason[];
+  /** 고객 상황·상담 이력(2026-08-07). **`AI가 보는 정보` 패널이 이것도 그려야 한다** —
+   *  실제로 나가는데 화면이 안 보여 주면 그 패널이 나가는 양을 축소해 말하는 셈이다.
+   *  ⚠️ 성향은 라벨로 온다(정수 인덱스가 아니다 · `redact.redact_scenario`).
+   *  ⚠️ 계좌 밖 자산은 **구간뿐**이다 — 구간에서 금액을 역산해 그리지 말 것. */
+  scenario?: {
+    summary?: string;
+    goal?: string;
+    horizon?: string;
+    assets?: { kind: string; band?: string; where?: string; note?: string }[];
+    constraints?: string[];
+    plan?: string[];
+    registered_risk_label?: string;
+    effective_risk_label?: string;
+    effective_risk_why?: string;
+  };
+  history?: { at: string; kind: string; detail: string }[];
 };
 
 export type ChatRedaction = {
@@ -339,6 +385,12 @@ export type Summary = {
 
 export type AgentCalls = { agent: string; calls: number };
 
+/** 브리프의 종목 한 건.
+ *
+ *  ⚠️ **새 브리프에는 오지 않는다**(2026-08-07 · `items`는 항상 빈 배열이다). 브리핑이
+ *     거시 전용이 되면서 종목·고객이 통째로 빠졌다 — 백엔드 `brief.py`의 「배선 해제」 구역.
+ *     타입을 남긴 이유는 **옛 브리프가 DB에 그대로 있어서**다(`/api/briefs/latest`는 저장된
+ *     것을 그대로 준다). 지우면 그 행들을 읽는 코드가 타입 없이 남는다. */
 export type BriefItem = {
   stock_code: string;
   corp_name: string;
@@ -372,50 +424,81 @@ export type BriefItem = {
   news: { title: string; link: string; pub_date: string; is_new?: boolean }[];
 };
 
-/** 지수(코스피·코스닥). 종목 시세와 같은 일별 종가 기준이라 "지연" 표기가 붙는다. */
+/** 거시 지표 한 건 — **지수·환율·금리가 같은 모양을 쓴다**(2026-08-07).
+ *
+ *  공급자가 둘이다: 지수는 공공데이터포털(`backend/market.py`), 환율·국고채금리는 한국은행
+ *  ECOS(`backend/ecos.py`). 화면이 지표마다 다른 키를 보지 않도록 "오늘 얼마나 움직였나"는
+ *  `move` + `move_unit` 하나로 읽는다.
+ *  ⚠️ 타입 이름은 `MarketIndex` 그대로다 — 저장된 브리프의 필드명(`market.indices`)이
+ *     그것이라, 이름만 바꾸면 옛 브리프를 읽는 코드와 어긋난다. */
 export type MarketIndex = {
   index_name: string;
   close: string;
-  change_pct: string;
+  /** 수준에 붙는 단위(`""`·`"%"`). 환율은 이름이 이미 원화 표시라 비어 있다. */
+  level_unit?: string;
+  /** 오늘 움직임. 부호를 포함하고 **자릿수는 백엔드가 이미 정했다** — 화면은 부호만 떼고
+   *  찍는다(`fmtMove`). ⚠️ 2026-08-07 이전 브리프에는 없다 → `change_pct`로 폴백. */
+  move?: string;
+  /** `"%"`(지수·환율) 또는 `"bp"`(금리). 금리를 %로 적으면 -1.95%가 되는데 채권에서
+   *  그렇게 말하지 않는다(-7.3bp다). */
+  move_unit?: '%' | 'bp';
+  /** `"지연시세"`(지수 종가) 또는 `"공표"`(한국은행). 화면·본문 문구가 이 값으로 갈린다 —
+   *  환율에 "지연"이라고 쓰면 틀린 말이다. ⚠️ 옛 브리프에는 없다(전부 지수였다). */
+  basis?: '지연시세' | '공표';
+  /** KRX 원본 등락률. **파생값(`move`)이 원본을 덮지 않게** 그대로 남긴다.
+   *  ECOS 지표에는 없다 — 읽을 때는 `move`를 먼저 본다. */
+  change_pct?: string;
   as_of: string;
   source: string;
+  /** 오늘 등락이 창 안에서 몇 번째 움직임인가(`market.rank_recent_move`).
+   *  `rank`가 null이면 평소 수준이고, 값 자체가 없으면 창이 짧아 판단하지 않은 것이다.
+   *  ⚠️ **화면이 이 값으로 문장을 만들지 말 것.** 문구는 백엔드가 완성해 `notable` 불릿으로
+   *     보낸다(`brief._notable_bullets`) — 여기서 조립하면 카드와 저장된 브리프가 다른
+   *     말로 같은 사실을 적는다. 이 필드는 판정 원본을 남겨 두는 자리다.
+   *  ⚠️ 2026-08-07 이전 브리프에는 없다. */
+  recent?: { of: number; direction: 'up' | 'down'; rank: number | null } | null;
 };
 
 /** 지수를 못 가져왔으면 note에 사유가 온다 — 화면은 "지수 없음"과 "미연결"을 구분해 말한다.
  *  (지수 도입 전에 만들어진 브리프는 빈 객체다.) */
 export type BriefMarket = { indices?: MarketIndex[]; note?: string | null };
 
-/** 카드 맨 위 요약 불릿 한 줄 — 지수 줄 **위**에 3~4개가 선다.
+/** 요약 불릿 한 줄 — 지수 띠 **아래**에 몇 개가 선다.
  *
- *  **문장은 백엔드(`brief.digest`)가 완성해서 보낸다.** LLM은 이 경로에 없고, 화면도 조립하지
- *  않는다 — 여기서 문장을 만들면 저장된 브리프와 화면이 다른 말을 하게 된다.
+ *  **문장은 백엔드(`brief.macro_digest`)가 완성해서 보낸다.** LLM은 이 경로에 없고, 화면도
+ *  조립하지 않는다 — 여기서 문장을 만들면 저장된 브리프와 화면이 다른 말을 하게 된다.
  *  ⚠️ 이 값은 본문(`content_md`·`sentences`)에 없다 — 같은 사실을 두 번 세면 출처 부착률의
- *     분모가 흔들린다(`brief.pick_lead` 주석).
+ *     분모가 흔들린다(`brief.assemble` 주석).
  *  ⚠️ **불릿당 한 문장이고, 없는 항목은 오지 않는다.** 0건을 나열하지 않는 것이 규칙이라
- *     `kind`로 자리를 비워 두거나 빈 문구를 채우지 말 것. */
+ *     `kind`로 자리를 비워 두거나 빈 문구를 채우지 말 것. 예외는 `delta` 하나 —
+ *     거기서는 "어제 이후 방향이 바뀐 지표가 없다"가 그 자체로 답이다. */
 export type BriefBullet = {
-  /** lead=먼저 볼 것 · quiet=조용합니다(lead와 배타적) · delta=어제와 달라진 것 ·
-   *  market=시장 대비 · caution=유의사항(조회 실패·빈 구간) */
-  /** delta=어제와 달라진 것 · caution=유의사항(조회 실패) ·
-   *  stock=종목 한 줄(맨 아래, 브리프에 실린 만큼 전부).
-   *  ⚠️ 걷어낸 것 셋(2026-08-06): `lead`(`먼저 볼 것`)·`quiet`는 종목 줄과 같은 말을 했고,
-   *     `market`(시장 대비)은 **어느 지수와 견줄지를 종목의 시장으로 고르지 않았다**.
-   *     되살리려면 백엔드 `brief.pick_lead`·`digest` 위 주석부터 읽을 것. */
-  kind: 'delta' | 'caution' | 'stock';
+  /** delta=어제 대비 방향 전환 · notable=오늘 움직임이 평소와 다름 ·
+   *  caution=유의사항(조회 실패 · 견주지 못한 이유).
+   *  ⚠️ `stock`은 **옛 브리프에만 있다**(2026-08-07 이전). 새로 생기지 않지만, 남아 있는
+   *     행이 화면에서 클래스 없이 찍히지 않도록 유니온에 남겨 둔다.
+   *  ⚠️ 그전에 걷어낸 것 셋(2026-08-06): `lead`·`quiet`는 종목 줄과 같은 말을 했고,
+   *     `market`(시장 대비)은 어느 지수와 견줄지를 종목의 시장으로 고르지 않았다. */
+  kind: 'delta' | 'notable' | 'caution' | 'stock';
   text: string;
   /** 공시 뷰어 링크. 시세 기반 불릿에는 열어 볼 원문이 없어 null(링크를 지어내지 않는다). */
   href: string | null;
   /** **밑줄이 걸리는 구간** — `text` 안에 그대로, 한 번만 나타난다.
-   *  ⚠️ 불릿 전체를 앵커로 만들지 말 것: `먼저 볼 것:`과 `(21명 보유)`는 공시 원문이 아니다.
-   *     누르면 어디로 가는지가 밑줄 범위와 맞아야 한다.
+   *  ⚠️ 거시 불릿은 이 값을 쓰지 않는다(항상 null) — 열어 볼 원문이 없다.
    *  ⚠️ `text` 안에서 못 찾으면 **링크 없이 문장 전체를 그대로 찍는다** — 문장을 자르거나
    *     버리지 않는다(`page.tsx`의 `DigestText`). */
   link_text?: string | null;
-  /** 이 문장을 **LLM이 썼는가**. F2에서 유일하게 규칙이 아닌 문장이라 화면이 그렇게 표시한다
-   *  (`AI 요약`). 나머지 불릿은 데이터에 없는 말을 할 수 없다는 보장이 있고 이것만 없다.
+  /** 이 문장을 **LLM이 썼는가**. 화면이 그렇게 표시한다(`AI 요약`).
+   *  ⚠️ 켜지는 건 `news`(밤사이 헤드라인) 하나뿐이다 — 나머지는 규칙이 쓴다.
    *  ⚠️ 표시를 빼지 말 것 — 이 불릿은 게이트를 안 타므로(본문이 아니라 `lead_json`),
    *     "규칙이 만든 문장"과 구분되는 자리가 화면의 이 배지뿐이다. */
   ai?: boolean;
+  /** 이 문장의 **근거 기사**. `news` 불릿에만 붙는다.
+   *  ⚠️ `href`(단일 링크)를 쓰지 않는 이유: 이 문장은 여러 제목을 뭉친 것이라 한 링크가
+   *     대표하지 못한다. 화면은 각주 번호로 전부 건다.
+   *  ⚠️ **빼지 말 것.** 종목 카드가 없어지면서 이 문장의 출처를 확인할 자리가 여기뿐이다
+   *     (가드레일 3 — 출처 100% 노출). */
+  sources?: { title: string; url: string; pub_date: string }[];
 };
 
 /** (2026-08-06 이전 브리프는 빈 객체 — 화면은 그때 아무것도 그리지 않는다.) */
@@ -424,6 +507,7 @@ export type BriefLeadPayload = { bullets?: BriefBullet[] };
 export type Brief = {
   id: number;
   brief_date: string;
+  /** ⚠️ 새 브리프에서는 **항상 빈 배열**이다(BriefItem 주석). 옛 브리프에만 값이 있다. */
   items: BriefItem[];
   market?: BriefMarket;
   lead?: BriefLeadPayload;
@@ -473,22 +557,24 @@ export function actorLabel(actor: string): string {
 export const WATERMARK =
   '⚠ AI 초안 · 미검증 — 사람의 검토·심의·승인 없이는 발행되지 않습니다.';
 
-/** 포트폴리오 분석 칩. 종목 칩이 "이 종목"을 채운다면 이쪽은 "이 구성"을 채운다.
+/** `Next Best Action` 칩 — 이 채팅이 답하는 둘(2026-08-07).
  *
- *  ⚠️ 각 질문문은 **백엔드 라우팅 키워드를 반드시 포함해야 한다**(`f1._PORTFOLIO_KEYWORDS`:
- *     집중·배분·성향 …). 칩이 채운 질문이 포트폴리오 라우트로 안 가면 종목을 되묻는
- *     clarify로 떨어져, 누른 사람 입장에서는 버튼이 고장 난 것처럼 보인다.
+ *  **왜 둘뿐인가.** PB가 담당하는 고객이 많아 각각의 경위를 기억할 수 없다는 것이 이 패널이
+ *  있는 이유다. 그래서 묻는 것은 계좌 구성이 아니라 **이 사람의 사정**이다: 지금 어떤 상황인가,
+ *  등록 성향과 지금 실질이 왜 갈리는가.
+ *
+ *  ⚠️ **걷어낸 것들**(2026-08-07): 보유 종목 칩(삼성전자·SK하이닉스)과 구성 칩(집중도·자산배분·
+ *     성향 대비·조정 선택지·최근 흐름). 이 자리에서 자산배분을 묻지 않기로 했다.
+ *     백엔드 라우트(`f1._PORTFOLIO_KEYWORDS`·`_ADVICE_KEYWORDS`)는 **지우지 않고 남겨 뒀다** —
+ *     손으로 치면 여전히 답한다. 없앤 것은 그쪽으로 **유도하는 버튼**이다.
+ *  ⚠️ 각 질문문은 **백엔드 라우팅 키워드를 반드시 포함해야 한다**
+ *     (`f1._SITUATION_KEYWORDS`·`_RISK_KEYWORDS`). 칩이 채운 질문이 그 라우트로 안 가면
+ *     종목을 되묻는 clarify로 떨어져, 누른 사람에겐 버튼이 고장 난 것처럼 보인다.
  *     라벨이 아니라 **q가 계약**이다 — 라벨만 고치는 건 안전하고, q는 키워드를 지켜야 한다.
  *
  *  page.tsx(고객 카드)와 ReviewModal.tsx(고객 문의 모달)가 **같은 칩을 쓴다** — 두 곳의
  *  인라인 채팅이 같은 라우트를 태우므로 목록도 한 곳에서만 정의한다. */
-export const PORTFOLIO_CHIPS: { label: string; q: string }[] = [
-  { label: '집중도', q: '보유 종목 집중도 어때?' },
-  { label: '자산배분', q: '자산배분 구성 어때?' },
-  { label: '성향 대비', q: '등록 위험성향 대비 구성 어때?' },
-  // 아래 둘은 **제안형 라우트**(f1._ADVICE_KEYWORDS)를 태운다 — 위 셋과 달리 후보 종목의
-  // 뉴스를 조회하고 50종목 시세를 배치로 받아서 답이 나오기까지 수십 초 걸린다.
-  // ⚠️ q에서 '리밸런싱'·'편승'을 빼지 말 것. 빼면 조회형으로 떨어져 선택지가 안 나온다.
-  { label: '조정 선택지', q: '리밸런싱 선택지와 근거를 정리해줘' },
-  { label: '최근 흐름', q: '최근 주가 흐름에 편승할 만한 종목이 있어?' },
+export const NBA_CHIPS: { label: string; q: string }[] = [
+  { label: '상황 요약', q: '이 고객 상황 요약해줘' },
+  { label: '성향 점검', q: '히스토리 기반으로 투자성향 분석해줘' },
 ];

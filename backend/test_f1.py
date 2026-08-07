@@ -302,9 +302,14 @@ def test_clarify_text_differs_by_kind():
 
     entity_r = f1.route("오늘 점심 뭐 먹지?", has_portfolio=True)
     assert entity_r["clarify"] == "entity"
-    assert "구성" in f1.clarify_text(entity_r, has_portfolio=True)
-    # 고객이 없는 전역 F1에서는 포트폴리오를 권하면 안 된다(답할 데이터가 없다)
-    assert "구성" not in f1.clarify_text(entity_r, has_portfolio=False)
+    # 고객이 붙어 있으면 **이 패널이 답할 수 있는 것**을 말해 준다. 2026-08-07에 그 목록이
+    # `집중도·자산배분·성향 대비`에서 **상황·성향 점검**으로 바뀌었다 — 안내가 걷어낸 기능을
+    # 계속 권하면 누른 사람이 없는 버튼을 찾게 된다.
+    with_cust = f1.clarify_text(entity_r, has_portfolio=True)
+    assert "상황" in with_cust and "성향" in with_cust
+    assert "자산배분" not in with_cust and "조정 선택지" not in with_cust
+    # 고객이 없는 전역 F1에서는 그것을 권하면 안 된다(답할 데이터가 없다)
+    assert "상황" not in f1.clarify_text(entity_r, has_portfolio=False)
     # 화면이 이 문자열을 그대로 렌더한다 — 마크다운을 넣으면 별표가 글자로 보인다
     for r in (intent_r, entity_r):
         for hp in (True, False):
@@ -492,6 +497,86 @@ def test_corp_names_and_sectors_cover_each_other():
     universe = ["005930", "000660", "012450", "207940", "373220", "105560",
                 "005380", "329180", "034020", "000270", "035420", "267260"]
     assert not [c for c in universe if c not in f1.CORP_NAMES]
+
+
+
+# ── Next Best Action — 상황·성향 라우트 (2026-08-07) ────────────────────────────
+#
+# 이 채팅이 답하기로 한 둘: ① 고객 상황 요약 ② 상담 이력 기반 성향 점검.
+# 자산배분·조정 선택지 라우트는 **지우지 않고 남겼다**(손으로 치면 답한다) — 없앤 것은
+# 그쪽으로 유도하는 칩이다. 그래서 아래는 "새 라우트가 옛 라우트를 뺏는가"를 지킨다.
+
+NBA_QUESTIONS = [
+    ("이 고객 상황 요약해줘", "situation"),
+    ("시나리오 정리해줘", "situation"),
+    ("계획이 뭐였지?", "situation"),
+    ("히스토리 기반으로 투자성향 분석해줘", "risk_review"),
+    ("투자성향 점검해줘", "risk_review"),
+    ("그동안 뭐가 바뀌었어?", "risk_review"),
+]
+
+
+def test_nba_chips_route_where_they_say():
+    """칩이 채운 질문이 엉뚱한 라우트로 가면 누른 사람에겐 버튼이 고장 난 것으로 보인다.
+    **라벨이 아니라 q가 계약**이다(types.ts `NBA_CHIPS`)."""
+    for q, expected in NBA_QUESTIONS:
+        r = f1.route(q, has_portfolio=True)
+        assert r["intent"] == expected, (q, r["intent"], r["reason"])
+        assert not r["need_clarify"], q
+
+
+def test_risk_review_wins_over_allocation_route():
+    """`성향`은 자산배분 키워드에도 있다 — 뒤에 두면 성향 점검이 그쪽으로 샌다."""
+    r = f1.route("투자성향 분석해줘", has_portfolio=True)
+    assert r["intent"] == "risk_review"
+
+
+def test_allocation_route_still_answers_when_typed():
+    """칩은 걷어냈지만 **라우트는 남겼다** — 손으로 치면 여전히 답한다.
+    ⚠️ 이게 깨지면 '유도하지 않는다'가 '못 쓴다'로 바뀐 것이다(다른 결정이다)."""
+    assert f1.route("자산배분 구성 어때?", has_portfolio=True)["intent"] == "portfolio"
+    assert f1.route("리밸런싱 선택지와 근거를 정리해줘", has_portfolio=True)["intent"] == "portfolio_advice"
+
+
+def test_situation_route_needs_a_customer():
+    """전역 F1(FAB)에는 고객이 없다 — 켜면 답할 데이터가 없는 라우트로 보내는 꼴이다."""
+    r = f1.route("이 고객 상황 요약해줘", has_portfolio=False)
+    assert r["intent"] != "situation" and r["need_clarify"]
+
+
+def test_stock_questions_are_not_stolen():
+    """새 키워드가 종목 질문을 뺏으면 안 된다 — 부분매칭이라 짧은 말일수록 위험하다."""
+    assert f1.route("삼성전자 최근 실적", has_portfolio=True)["entity_code"] == "005930"
+    assert f1.route("SK하이닉스 공시 있어?", has_portfolio=True)["intent"] == "disclosure"
+
+
+def test_scenario_block_carries_the_risk_gap():
+    """등록 성향과 실질이 다르면 **그 사실과 이유가 프롬프트에 들어가야** 한다 — 이 답의 핵심이다."""
+    block = f1._scenario_block({
+        "summary": "다주택 정리 후 상급지 이동 — 서초 주택 마련",
+        "goal": "서초 주택 마련", "horizon": "1~2년",
+        "assets": [{"kind": "현금", "band": "5억~10억"}, {"kind": "주택", "where": "수원"}],
+        "constraints": ["다주택 정책으로 1주택 정리 필요"],
+        "plan": ["수원 주택 우선 정리"],
+        "registered_risk_label": "공격투자형", "effective_risk_label": "위험중립형",
+        "effective_risk_why": "정리 일정과 보증금 지출이 겹쳐 단기 현금이 묶여 있음",
+    })
+    assert "공격투자형" in block and "위험중립형" in block
+    assert "둘이 갈리는 이유" in block
+    # 계좌 밖 자산은 구간으로만 — 금액을 역산하지 말라는 지시가 함께 나간다.
+    assert "5억~10억" in block and "역산" in block
+    assert "[^hold]" in block
+
+
+def test_history_block_is_oldest_first_and_carries_no_verdict():
+    """변화를 읽는 축이 시간이라 오래된 것부터다. **판정은 담기지 않는다** —
+    데이터에 결론이 적혀 있으면 모델이 그걸 베껴 쓰고 근거는 사라진다."""
+    block = f1._history_block([
+        {"at": "2024-02", "kind": "성향 등록", "detail": "공격투자형으로 등록"},
+        {"at": "2026-06", "kind": "문의", "detail": "현금 확보 방법 문의"},
+    ])
+    assert block.index("2024-02") < block.index("2026-06")
+    assert "판정이 아니다" in block and "[^hold]" in block
 
 
 if __name__ == "__main__":

@@ -28,11 +28,17 @@ ENDPOINT = (
     "https://apis.data.go.kr/1160100/service/GetMarketIndexInfoService/getStockMarketIndex"
 )
 
-# 상담 전 시장 한 줄에 필요한 최소 구성. 환율·금리는 이 서비스에 없어 별도 소스가 필요하다
-# (로드맵 — 지금 없는 걸 있는 것처럼 채우지 않는다).
+# 거시 띠에서 **이 서비스가 대는 몫**. 환율·금리는 여기 없어 별도 소스를 쓴다 —
+# 한국은행 ECOS(`backend/ecos.py`, 2026-08-07 연결). 두 모듈은 서로를 모르고
+# 반환 규약만 같으며, 합치는 곳은 `main.build_brief` 하나다.
 INDEX_NAMES = ("코스피", "코스닥")
 
-LOOKBACK_DAYS = 10
+# 조회 창. **`rank_recent_move`의 창이기도 하다**(2026-08-07 확대) — 10일이던 값을 30일로
+# 늘렸다. 달력일이라 10일이면 영업일이 7개 안팎이고, 그러면 `MIN_WINDOW = 8`을 못 넘겨
+# 판정이 **항상 None**이었다(브리핑이 거시 전용이 되면서 이 판정이 카드의 주력이 됐다).
+# ⚠️ `numOfRows`(30)와 함께 봐야 한다 — 30일 창의 영업일은 20개 남짓이라 한 페이지에 들어온다.
+#    창을 더 늘리려면 numOfRows도 같이 올릴 것: 안 올리면 조용히 앞부분만 세게 된다.
+LOOKBACK_DAYS = 30
 
 UNAVAILABLE_HINT = (
     "KRX 지수시세정보 미연결 — 공공데이터포털에서 '금융위원회_지수시세정보' 활용신청 후 켜집니다."
@@ -93,8 +99,25 @@ def fetch_index(index_name: str) -> dict:
         "index_name": latest["idxNm"],
         "as_of": latest["basDt"],  # 기준일자 = 출처 시점
         "close": latest["clpr"],
+        "level_unit": "",  # 지수는 수준에 단위가 없다(포인트를 적지 않는다)
         "change": latest.get("vs"),
         "change_pct": latest["fltRt"],
+        # ── 거시 지표 공통 계약(2026-08-07) ──────────────────────────────────
+        # 지수·환율(ecos)·금리(ecos)가 **한 띠에 나란히** 서면서, 판정과 표시가 지표마다
+        # 다른 키를 보면 안 되게 됐다. 그래서 "오늘 얼마나 움직였나"는 어느 지표든
+        # `move` + `move_unit` 하나로 읽는다(`brief.direction_of`·`_index_line`·화면).
+        # ⚠️ 위 `change_pct`는 **KRX가 준 원본**이라 그대로 남긴다 — 파생값(`move`)이
+        #    원본을 덮어쓰지 않게 한다. 둘이 갈릴 일은 없다(여기서 복사한다).
+        # ⚠️ `basis`가 문구를 가른다: 지수는 지연시세, ECOS는 공표치다. 게이트의 지연시세
+        #    규칙이 문장 단위라 이 값이 곧 그 문장의 표기가 된다.
+        "move": latest["fltRt"],
+        "move_unit": "%",
+        "basis": "지연시세",
+        # 오늘 등락이 평소와 견줘 어느 정도인가 — **추가 조회가 없다**(2026-08-07). 위 요청이
+        # 이미 창 전체를 받아 놓고 마지막 한 줄만 쓰고 버리고 있었다. 종목 시세(`krx_quote`)가
+        # 하던 것과 같은 판정을 같은 함수로 지수에도 붙인다 — 규칙이 두 벌이 되면 안 된다.
+        # 평범하거나 창이 짧으면 None이고, 그때 화면은 아무 말도 하지 않는다.
+        "recent": rank_recent_move(daily_pcts(rows), as_pct(latest["fltRt"])),
         "is_delayed": True,
         "source": "공공데이터포털 금융위원회 지수시세정보 (일별 종가 기준, 실시간 아님)",
     }

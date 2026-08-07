@@ -35,8 +35,23 @@ BALANCE_BANDS: list[tuple[float, str]] = [
 SANITIZED_KEYS = frozenset({
     "customer_ref", "age_band",
     "risk_label", "balance_band", "return_pct", "alloc", "holdings", "flags",
+    # 2026-08-07 — `Next Best Action` 채팅이 답할 둘의 근거. **넓히는 것이 명시적 결정**이라
+    # 여기 적어 둔다: 상황과 상담 이력이 없으면 그 채팅은 아무것도 답할 수 없고, 대신
+    # 경계를 지나는 것이 늘었다. 늘어난 만큼 아래 두 함수가 **필드 단위로 다시 고른다.**
+    "scenario", "history",
 })
 SANITIZED_HOLDING_KEYS = frozenset({"code", "name", "pct_of_equity", "pct_of_balance"})
+# 시나리오·히스토리도 **중첩 화이트리스트**를 갖는다(보유 종목과 같은 처방). 원본 dict를
+# 통째로 얹는 코드가 생기면 `egress_guard`가 여기 없는 키를 보고 막는다.
+# ⚠️ `registered_risk`·`effective_risk`(정수 인덱스)는 **여기 없다** — 라벨로 바꿔 내보낸다.
+#    facts에서 `risk_index`를 빼던 것과 같은 이유다: 라벨이 이미 같은 말을 하고, 사본이 둘이면
+#    언젠가 한쪽만 가려진다.
+SANITIZED_SCENARIO_KEYS = frozenset({
+    "key", "summary", "goal", "horizon", "assets", "constraints", "plan",
+    "registered_risk_label", "effective_risk_label", "effective_risk_why",
+})
+SANITIZED_ASSET_KEYS = frozenset({"kind", "band", "where", "note"})
+SANITIZED_HISTORY_KEYS = frozenset({"at", "kind", "detail"})
 
 
 def balance_band(balance: float | int | None) -> str | None:
@@ -71,8 +86,59 @@ def customer_ref(customer_id: int | None) -> str | None:
     return None if customer_id is None else f"고객 #{customer_id}"
 
 
+def redact_scenario(scenario: dict | None, risk_labels: list[str]) -> dict | None:
+    """고객 상황 → 경계를 넘을 모양. 없으면 None(빈 dict를 지어내지 않는다).
+
+    **저장 시점에 이미 비식별화돼 있다** — 금액은 구간뿐이고 이름은 안 들어간다
+    (`scripts/seed_scenarios.py`). 그래도 여기서 **다시 고르는** 이유는, 나중에 그 스크립트가
+    필드를 늘렸을 때 경계가 자동으로 넓어지면 안 되기 때문이다(모르는 것은 못 나간다).
+
+    ⚠️ 성향은 **정수 인덱스가 아니라 라벨로** 내보낸다. 모델이 `4`를 보고 무엇인지 맞히게
+       하지 않는다 — 맞히게 하면 틀릴 수 있고, 라벨은 이미 있다.
+    """
+    if not scenario:
+        return None
+
+    def _label(i):
+        return risk_labels[i] if isinstance(i, int) and 0 <= i < len(risk_labels) else None
+
+    out = {
+        "key": scenario.get("key"),
+        "summary": scenario.get("summary"),
+        "goal": scenario.get("goal"),
+        "horizon": scenario.get("horizon"),
+        "assets": [
+            {k: v for k, v in (a or {}).items() if k in SANITIZED_ASSET_KEYS}
+            for a in scenario.get("assets") or []
+        ],
+        "constraints": list(scenario.get("constraints") or []),
+        "plan": list(scenario.get("plan") or []),
+        "registered_risk_label": _label(scenario.get("registered_risk")),
+        "effective_risk_label": _label(scenario.get("effective_risk")),
+        "effective_risk_why": scenario.get("effective_risk_why"),
+    }
+    return {k: v for k, v in out.items() if v not in (None, [], "")}
+
+
+def redact_history(history: list[dict] | None) -> list[dict]:
+    """상담 이력 → 경계를 넘을 모양. 필드 셋(`at`·`kind`·`detail`)만 남긴다.
+
+    ⚠️ 이 목록에는 **판정이 없다**(`안정형으로 보임` 같은 결론). 그건 답변이 할 일이고,
+       데이터에 미리 적혀 있으면 모델이 그걸 베껴 쓰면서 근거는 사라진다.
+    """
+    return [
+        {k: v for k, v in (h or {}).items() if k in SANITIZED_HISTORY_KEYS}
+        for h in history or []
+    ]
+
+
 def redact_portfolio(
-    facts: dict, customer_id: int | None = None, age: int | None = None
+    facts: dict,
+    customer_id: int | None = None,
+    age: int | None = None,
+    scenario: dict | None = None,
+    history: list[dict] | None = None,
+    risk_labels: list[str] | None = None,
 ) -> tuple[dict, dict]:
     """`f1.portfolio_facts()` 결과 → (경계 밖으로 보낼 dict, 무엇을 했는지 보고).
 
@@ -132,5 +198,17 @@ def redact_portfolio(
         # 섞이면 `egress_guard`의 큰 정수 규칙에 걸려 답변이 통째로 막힌다(막히는 게 맞다).
         "flags": facts.get("flags") or [],
     }
+
+    # 상황·상담 이력 — 있을 때만 싣는다(빈 값을 자리만 채워 넣지 않는다).
+    # ⚠️ 이건 `drop`도 `mask`도 아니다. 가린 것이 아니라 **더 나가는 것**이라, 화면 배지의
+    #    "가린 개수"에 세지 않는다(가명을 안 세는 것과 같은 규칙). 대신 무엇이 더 나가는지는
+    #    `/egress-preview`가 payload를 통째로 보여 주므로 화면에서 그대로 읽힌다.
+    scen = redact_scenario(scenario, risk_labels or [])
+    if scen:
+        sanitized["scenario"] = scen
+    hist = redact_history(history)
+    if hist:
+        sanitized["history"] = hist
+
     report = {"mode": "rule", "removed": removed}
     return sanitized, report

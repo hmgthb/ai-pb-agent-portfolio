@@ -21,7 +21,7 @@ import {
   MY_PB,
   PB_MARK_LABEL,
   PILL,
-  PORTFOLIO_CHIPS,
+  NBA_CHIPS,
   REJECT_REASONS,
   RISK,
   WATERMARK,
@@ -938,32 +938,15 @@ export function ChatModal({
             <div className="sess-chat">
               {/* 근거 줄(`.cchat-src`)은 고객 카드와 **같이** 뺐다 — 두 화면의 제목이
                   글자까지 같아야 한다는 위 규칙 그대로다. 이유는 page.tsx의 같은 자리 참조. */}
-              <div className="blabel">포트폴리오 질문</div>
-              {/* 종목 칩과 분석 칩은 **줄을 나눈다** — 고객 카드와 같은 규칙이다(한 상자면
-                  종목이 많을 때 분석 칩이 종목 사이에 끼어 두 종류가 섞여 보인다).
-                  문의 종목을 맨 앞에 세운다 — 순서만 바꿀 뿐 목록은 고객 카드와 같다.
-                  질문문도 카드와 같은 `최근 실적`이다: 주제어(실적·비중·공시·급락)로
-                  의도를 추측해 채우면 틀렸을 때 크레딧을 헛쓴다. 칩은 입력창을 채울
-                  뿐이고 실제로 무엇을 물을지는 PB가 고쳐 쓴다. */}
-              {customer.holdings.length > 0 && (
-                <div className="cchat-chips">
-                  {[
-                    ...(asked ? [asked] : []),
-                    ...customer.holdings.filter((h) => h.code !== asked?.code),
-                  ].map((h) => (
-                    <button
-                      key={h.code}
-                      className="chip"
-                      onClick={() => ask(`${h.name} 최근 실적`)}
-                      title={`${h.name}(${h.code}) 질문 채우기`}
-                    >
-                      {h.name}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <div className="blabel">Next Best Action</div>
+              {/* ⚠️ 여기 있던 **보유 종목 칩을 걷어냈다**(2026-08-07 · 고객 카드와 같은 결정).
+                  문의 종목을 맨 앞에 세워 순서까지 맞춰 두었는데, 이 패널이 답하는 것이
+                  종목이 아니라 **이 사람의 사정**으로 바뀌면서 그 줄의 근거가 사라졌다.
+                  종목을 묻는 자리는 우하단 FAB(전역 F1)이고 거기는 그대로다.
+                  ⚠️ 되살린다면 고객 카드의 같은 자리와 **함께** — 두 화면은 글자까지 같아야
+                     한다(이 파일 위쪽의 같은 규칙). */}
               <div className="cchat-chips">
-                {PORTFOLIO_CHIPS.map((c) => (
+                {NBA_CHIPS.map((c) => (
                   <button
                     key={c.label}
                     className="chip ana"

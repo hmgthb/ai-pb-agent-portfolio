@@ -145,6 +145,61 @@ function EgressTwin({ p }: { p: EgressPortfolio }) {
           </tbody>
         </table>
       </div>
+      {/* 상황·상담 이력 — **2026-08-07에 나가는 것이 늘었고, 이 패널이 그것을 말해야 한다.**
+          `Next Best Action` 채팅이 답하는 근거라 실제로 프롬프트에 실린다. 화면이 안 그리면
+          "AI가 보는 정보"가 나가는 양을 축소해 말하는 셈이다(이 패널의 존재 이유가 무너진다).
+          ⚠️ 왼쪽 상세(`.detail`)에는 이 블록이 없다 — 거기는 계좌를 읽는 자리이고 상황은
+             머리줄의 `→ 실질 …` 한 조각으로만 나온다. 형식을 맞추는 규칙에서 벗어나는
+             두 번째 자리이고, 이유는 **여기서만 보이는 값이라서**다(보유 표의 `잔고 대비`
+             열과 같은 판단).
+          ⚠️ 금액을 그리지 않는다 — 계좌 밖 자산도 구간 라벨뿐이다. */}
+      {(p.scenario || (p.history?.length ?? 0) > 0) && (
+        <div className="egress-extra">
+          {p.scenario && (
+            <>
+              <div className="k">상황 (상담 기록 기반)</div>
+              <div className="v">{p.scenario.summary ?? '—'}</div>
+              <ul>
+                {p.scenario.horizon && <li>자금 시점: {p.scenario.horizon}</li>}
+                {(p.scenario.assets ?? []).map((a, i) => (
+                  <li key={i}>
+                    계좌 밖 자산: {a.kind}
+                    {a.where ? ` (${a.where})` : ''}
+                    {a.band ? ` — ${a.band}` : ''}
+                  </li>
+                ))}
+                {(p.scenario.constraints ?? []).map((c, i) => (
+                  <li key={`c${i}`}>제약: {c}</li>
+                ))}
+                {(p.scenario.plan ?? []).map((q, i) => (
+                  <li key={`p${i}`}>계획 {i + 1}: {q}</li>
+                ))}
+                {p.scenario.effective_risk_label && (
+                  <li>
+                    성향: {p.scenario.registered_risk_label} → 실질{' '}
+                    {p.scenario.effective_risk_label}
+                    {p.scenario.effective_risk_why
+                      ? ` (${p.scenario.effective_risk_why})`
+                      : ''}
+                  </li>
+                )}
+              </ul>
+            </>
+          )}
+          {(p.history?.length ?? 0) > 0 && (
+            <>
+              <div className="k">상담 이력</div>
+              <ul>
+                {p.history!.map((h, i) => (
+                  <li key={i}>
+                    {h.at} [{h.kind}] {h.detail}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
