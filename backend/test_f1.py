@@ -151,6 +151,35 @@ def _sanitized() -> dict:
     )[0]
 
 
+def test_every_route_has_a_label():
+    """라우팅 배지 이름표가 빠지면 화면이 `—`나 빈 상자를 그린다 — 실제로 두 번 그랬다
+    (2026-08-06 `portfolio_advice` 빈칸 · 2026-08-09 `situation`·`risk_review` `—`).
+    두 번 다 "라우트를 늘리면 표도 같이 늘릴 것"이라는 **주석**만 있었다.
+
+    ⚠️ `f1.ROUTE_LABEL`을 훑지 않고 **라우트 정의에서 에이전트를 모아** 대조한다 — 표끼리
+       비교하면 둘 다 안 고친 경우를 못 잡는다."""
+    agents = {a for _, a, _ in f1._INTENTS}
+    agents |= {
+        f1._PORTFOLIO_INTENT[1], f1._ADVICE_INTENT[1],
+        f1._SITUATION_INTENT[1], f1._RISK_INTENT[1], f1._DEFAULT_INTENT[1],
+    }
+    missing = sorted(a for a in agents if not f1.ROUTE_LABEL.get(a))
+    assert not missing, f"라우팅 배지 이름표가 없는 라우트: {missing}"
+
+
+def test_situation_and_risk_routes_carry_their_label():
+    """화면이 표를 다시 들지 않도록 결정에 이름표가 실려 나간다(2026-08-09)."""
+    r = f1.route("이 고객 상황 요약해줘", has_portfolio=True)
+    assert r["agent"] == "situation" and r["label"] == "상황·보유"
+    r = f1.route("성향 점검 좀", has_portfolio=True)
+    assert r["agent"] == "risk_review" and r["label"] == "성향·상담이력"
+
+
+def test_clarify_carries_no_label():
+    """되묻기에는 라우트가 없다 — 이름표도 없어야 화면이 배지를 안 그린다."""
+    assert f1.route("오늘 점심 뭐 먹지?")["label"] is None
+
+
 def test_portfolio_route_needs_no_entity():
     """'분산 어때?'에는 종목이 없다 — 예전에는 clarify로 떨어져 답이 안 나갔다."""
     r = f1.route("분산 어때?", has_portfolio=True)

@@ -216,6 +216,36 @@ _RISK_INTENT = ("risk_review", "risk_review")
 # 엔티티는 있으나 의도가 불명확할 때의 기본값 — 재무가 가장 흔한 질문이다.
 _DEFAULT_INTENT = ("financials", "a2")
 
+# ── 라우팅 배지에 적는 이름 (2026-08-09에 **프론트에서 옮겨 왔다**) ──────────────────
+#
+# **왜 백엔드인가.** 이 표가 `F1Chat.tsx`에만 있어서, 라우트를 늘릴 때마다 조용히 빠졌다:
+#   · 2026-08-06 `portfolio_advice` — 배지가 **빈 상자**로 떴다.
+#   · 2026-08-09 `situation`·`risk_review`(2026-08-07 추가) — 배지가 **`—`**로 떴다.
+# 그때마다 "라우트를 늘리면 저기도 같이 늘릴 것"이라고 주석을 달았는데 두 번 다 안 지켜졌다.
+# 규칙이 두 벌이면 반드시 갈린다 — 라우트를 정하는 곳이 여기이므로 이름도 여기서 정한다.
+# 빠뜨리면 아래 `test_f1.test_every_route_has_a_label`이 잡는다(주석이 아니라 테스트가 막는다).
+#
+# ⚠️ **에이전트 식별자(a1·a2·a4)를 적지 않는다.** 이 배지가 답할 것은 "왜 이 답이 나왔나"
+#    (어떤 데이터를 봤나)이지 "어느 서브에이전트가 돌았나"가 아니다 — 읽는 사람은 PB다.
+#    `KRX`·`계산`은 코드명이 아니라 출처·방법이라 남긴다.
+# ⚠️ 여기 적는 것은 **그 라우트가 답의 근거로 삼는 것**이다. 프롬프트에 실제로 실려 나가는
+#    것 전부를 나열하는 자리가 아니다 — 그건 `AI가 보는 정보` 패널이 통째로 그린다.
+#    (상황·상담 이력은 포트폴리오가 붙은 라우트라면 어디에나 실린다 · `answer_input`.)
+ROUTE_LABEL = {
+    "krx": "시세(KRX)",
+    "a2": "재무",
+    "a1": "공시",
+    "a4": "뉴스",
+    # 에이전트가 아니라 **코드 계산**이다 — 집중도·배분은 순수 함수가 내고 LLM은 문장만 쓴다.
+    # 배지에 그대로 적는 이유: 여기서만 도구 호출이 0건이라 진행 타임라인에 아무것도 안 뜬다.
+    "portfolio": "보유·배분",
+    # 제안형. 보유·배분에 더해 50종목 시세를 배치로 받고 후보 종목 뉴스까지 본다.
+    "portfolio_advice": "보유·배분·시세·뉴스",
+    # 고객 사정(2026-08-07). 둘 다 에이전트를 안 돌리고 저장된 내부 기록만 본다.
+    "situation": "상황·보유",
+    "risk_review": "성향·상담이력",
+}
+
 
 def route(question: str, prev_entity: dict | None = None, has_portfolio: bool = False) -> dict:
     """질문 → 라우팅 결정(순수). 반환:
@@ -304,7 +334,8 @@ def _clarify(kind: str, reason: str, entity_code=None, entity_name=None) -> dict
     무엇을 확인할까요?"처럼 아는 것을 말해 줄 수 있어야 한다."""
     return {
         "entity_code": entity_code, "entity_name": entity_name,
-        "agent": None, "intent": None, "need_clarify": True, "inherited": False,
+        "agent": None, "intent": None, "label": None,
+        "need_clarify": True, "inherited": False,
         "clarify": kind, "reason": reason,
     }
 
@@ -345,8 +376,12 @@ def clarify_text(routing: dict, has_portfolio: bool = False) -> str:
 
 
 def _decision(code, name, agent, intent, inherited, reason) -> dict:
+    # `label`은 화면 배지가 그대로 찍는 값이다 — 프론트가 다시 표를 들고 판단하지 않는다
+    # (`ROUTE_LABEL` 주석). 표에 없으면 `None`으로 나가고 화면은 배지를 아예 안 그린다:
+    # `—`나 빈 상자로 자리를 채우면 "분류는 됐는데 이름만 없다"가 "분류가 안 됐다"처럼 읽힌다.
     return {
         "entity_code": code, "entity_name": name, "agent": agent, "intent": intent,
+        "label": ROUTE_LABEL.get(agent),
         "need_clarify": False, "inherited": inherited, "clarify": None, "reason": reason,
     }
 

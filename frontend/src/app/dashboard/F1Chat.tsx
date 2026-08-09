@@ -26,25 +26,11 @@ import { RedactionDetails } from './redaction';
 import { mergeSources, SourceBadge } from './sources';
 import type { ChatAnswer, ChatRedaction, ChatRouting, PrepItem } from './types';
 
-/** 라우팅 배지에 적는 이름. **에이전트 식별자(a1·a2·a4)를 적지 않는다** — 이 배지가 답할
- *  것은 "왜 이 답이 나왔나"(어떤 데이터를 봤나)이지 "어느 서브에이전트가 돌았나"가 아니다.
- *  읽는 사람은 PB다. `KRX`·`계산`은 코드명이 아니라 출처·방법이라 남긴다. */
-const AGENT_LABEL: Record<string, string> = {
-  a1: '공시',
-  a2: '재무',
-  a4: '뉴스',
-  krx: '시세(KRX)',
-  // 에이전트가 아니라 **코드 계산**이다 — 집중도·배분은 순수 함수가 내고 LLM은 문장만 쓴다.
-  // 배지에 그대로 적는 이유: "왜 이 답이 나왔나"를 화면이 말해야 하는데(감사 가능한 라우팅),
-  // 여기서만 도구 호출이 0건이라 진행 타임라인에 아무것도 안 뜬다.
-  portfolio: '보유·배분',
-  // 제안형(`조정 선택지`·`최근 흐름` 칩). 조회형과 **다른 라우트**라 배지도 달라야 한다 —
-  // 보유·배분에 더해 50종목 시세를 배치로 받고 후보 종목 뉴스까지 본다.
-  // ⚠️ 이 줄이 없어서 배지가 **빈칸으로 떴다**(2026-08-06). `AGENT_LABEL[agent]`가 undefined면
-  //    아무것도 안 그려지는데, 포트폴리오 라우트는 종목이 없어 옆의 `entity_name`도 비어
-  //    배지 전체가 빈 상자가 된다. **라우트를 늘리면 여기도 같이 늘릴 것.**
-  portfolio_advice: '보유·배분·시세·뉴스',
-};
+/* 라우팅 배지 이름표는 **여기 없다**(2026-08-09에 `backend/f1.ROUTE_LABEL`로 옮겼다).
+ *
+ * 화면에 표를 두었더니 라우트를 늘릴 때마다 조용히 빠졌다 — `portfolio_advice`는 빈 상자로
+ * (2026-08-06), `situation`·`risk_review`는 `—`로 떴다(2026-08-09). 라우트를 정하는 곳이
+ * 백엔드이므로 이름도 거기서 정해 `routing.label`에 실려 온다. **여기서 표를 다시 만들지 말 것.** */
 
 type Turn = {
   q: string;
@@ -105,7 +91,10 @@ export function prepKey(it: PrepItem): string {
  *  ⚠️ 키가 갈리면 대화도 갈린다 — 대화마다 세션 id가 따로 보관되므로, 다른 고객으로 갔다
  *     돌아와도 후속 질문은 **자기 대화의 종목**을 이어받는다(키를 뭉뚱그리면 이 보장이 깨진다).
  *  ⚠️ 새로 고치면 사라진다(전역 F1과 같은 기준) — `sessionStorage`에 담지 않는 이유도 같다. */
-export type ChatKeep = Map<string, { turns: ChatTurn[]; session: string | null; input: string }>;
+export type ChatKeep = Map<
+  string,
+  { turns: ChatTurn[]; session: string | null; input: string }
+>;
 export type ChatTurn = Turn;
 
 export default function F1Chat({
@@ -198,7 +187,8 @@ export default function F1Chat({
   // 세션 id는 ref라 여기서 읽는 값이 곧 현재값이다 — `session` 이벤트 뒤에는 반드시 turns가
   // 한 번 더 바뀌므로(답변·done) 마지막 기록에는 세션이 들어 있다.
   useEffect(() => {
-    if (keep && keepKey) keep.set(keepKey, { turns, session: sessionRef.current, input });
+    if (keep && keepKey)
+      keep.set(keepKey, { turns, session: sessionRef.current, input });
   }, [turns, input, keep, keepKey]);
 
   useEffect(
@@ -390,35 +380,42 @@ export default function F1Chat({
 
       <div className="chat-logwrap">
         <div className="chat-log" ref={scrollRef}>
-        {turns.length === 0 && (
-          <div className="chat-empty">질문을 입력하면 대화가 시작됩니다.</div>
-        )}
-        {turns.map((t, i) => (
-          <div key={i} className="chat-turn">
-            <div className="bubble me">{t.q}</div>
+          {turns.length === 0 && (
+            <div className="chat-empty">질문을 입력하면 대화가 시작됩니다.</div>
+          )}
+          {turns.map((t, i) => (
+            <div key={i} className="chat-turn">
+              <div className="bubble me">{t.q}</div>
 
-            <div className="bubble ai">
-              {t.routing && !t.routing.need_clarify && (
-                <div className="route-badge" title={t.routing.reason}>
-                  {/* 모르는 라우트도 **빈칸으로 두지 않는다** — 표를 못 찾으면 `undefined`가
-                      아무것도 안 그려서 배지가 빈 상자로 뜬다(2026-08-06에 실제로 그랬다).
-                      식별자를 그대로 적지는 않는다: 읽는 사람은 PB다(위 `AGENT_LABEL` 주석). */}
-                  <b>{(t.routing.agent && AGENT_LABEL[t.routing.agent]) || '—'}</b>
-                  <span className="route-entity">
-                    {t.routing.entity_name ?? t.routing.entity_code}
-                  </span>
-                  {t.routing.inherited && (
-                    <span
-                      className="route-carry"
-                      title="이전 질문의 종목을 이어받았습니다"
-                    >
-                      ↩ 이어받음
-                    </span>
+              <div className="bubble ai">
+                {/* 라우트 이름표(`상황·보유`·`뉴스` …)는 **그리지 않는다**(2026-08-09).
+                  분류 자체는 그대로 돌고 `routing.label`로 실려 오지만(`f1.ROUTE_LABEL`),
+                  화면에는 내지 않는다 — 답이 무엇에 근거하는지는 문장마다 붙는 출처와 아래
+                  고지가 이미 말하고, 그 위에 라우트 이름이 하나 더 서면 같은 말이 두 번이다.
+                  ⚠️ 그래서 이 상자는 **종목이나 이어받음이 있을 때만** 선다. 라우트만 있고
+                     둘 다 없는 질문(고객 상황·성향 점검)에서는 아무것도 그리지 않는다 —
+                     빈 상자가 뜨던 자리다. */}
+                {t.routing &&
+                  !t.routing.need_clarify &&
+                  (t.routing.entity_name ||
+                    t.routing.entity_code ||
+                    t.routing.inherited) && (
+                    <div className="route-badge" title={t.routing.reason}>
+                      <span className="route-entity">
+                        {t.routing.entity_name ?? t.routing.entity_code}
+                      </span>
+                      {t.routing.inherited && (
+                        <span
+                          className="route-carry"
+                          title="이전 질문의 종목을 이어받았습니다"
+                        >
+                          ↩ 이어받음
+                        </span>
+                      )}
+                    </div>
                   )}
-                </div>
-              )}
 
-              {/* `AI가 보는 정보` — 이 답을 만들 때 모델이 실제로 받은 것.
+                {/* `AI가 보는 정보` — 이 답을 만들 때 모델이 실제로 받은 것.
                   라우팅 배지 바로 아래인 건 둘이 같은 종류의 정보여서다: "왜 이 답이
                   나왔나"(어떤 데이터를 봤나) 옆에 "그 데이터가 어떤 꼴이었나"가 선다.
                   ⚠️ **미리보기가 있는 화면에서는 내지 않는다**(2026-08-06). 고객 카드는
@@ -426,32 +423,34 @@ export default function F1Chat({
                      같은 라벨이 한 화면에 둘이 되어 어느 쪽을 읽어야 하는지가 흐려진다.
                      여기 남는 건 미리보기가 없는 자리뿐이다(고객 문의 모달 — 거기서는
                      물어본 뒤 이 상자로 본다). */}
-              {!preview && t.redaction && <RedactionDetails r={t.redaction} />}
+                {!preview && t.redaction && (
+                  <RedactionDetails r={t.redaction} />
+                )}
 
-              {t.blocked && (
-                <div className="chat-blocked">
-                  {t.blockedStage === 'egress'
-                    ? '⛔ 외부 모델로 보내기 전에 차단됐습니다. (에이전트를 실행하지 않았습니다)'
-                    : '⛔ 입력이 차단됐습니다. (에이전트를 실행하지 않았습니다)'}
-                  <ul>
-                    {t.blocked.map((v, j) => (
-                      <li key={j}>{v}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+                {t.blocked && (
+                  <div className="chat-blocked">
+                    {t.blockedStage === 'egress'
+                      ? '⛔ 외부 모델로 보내기 전에 차단됐습니다. (에이전트를 실행하지 않았습니다)'
+                      : '⛔ 입력이 차단됐습니다. (에이전트를 실행하지 않았습니다)'}
+                    <ul>
+                      {t.blocked.map((v, j) => (
+                        <li key={j}>{v}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
-              {/* 최종 답변: 문장별 출처 배지 */}
-              {t.answer && !t.answer.clarify && (
-                <div className="chat-answer">
-                  {t.answer.sentences.map((s, j) => {
-                    const on = picked?.has(`sentence:${s.text}`) ?? false;
-                    return (
-                    <div
-                      className={`chat-sent${on ? ' is-picked' : ''}${onPick ? ' has-pick' : ''}`}
-                      key={j}
-                    >
-                      {/* 담기 — **AI가 낸 것 중 무엇을 상담에 가져갈지 고르는 자리**다.
+                {/* 최종 답변: 문장별 출처 배지 */}
+                {t.answer && !t.answer.clarify && (
+                  <div className="chat-answer">
+                    {t.answer.sentences.map((s, j) => {
+                      const on = picked?.has(`sentence:${s.text}`) ?? false;
+                      return (
+                        <div
+                          className={`chat-sent${on ? ' is-picked' : ''}${onPick ? ' has-pick' : ''}`}
+                          key={j}
+                        >
+                          {/* 담기 — **AI가 낸 것 중 무엇을 상담에 가져갈지 고르는 자리**다.
                           문장 **왼쪽 거터**에 선다(2026-08-06). 본문과 같은 줄의 형제였을
                           때는 문장 길이가 배치를 정해, 긴 문장에서는 첫 줄만 버튼 옆에서
                           시작하고 둘째 줄부터 왼쪽 끝으로 돌아왔다 — 조작이 글줄 밖으로
@@ -466,73 +465,91 @@ export default function F1Chat({
                           ⚠️ 거터에 글자를 넣지 말 것 — 폭은 본문에서 나온다. `담기`라는 말은
                              `aria-label`과 tooltip이 나른다(아이콘만으로는 스크린리더에
                              아무것도 안 읽힌다). */}
-                      {onPick && (
-                        <button
-                          className={`pickbtn${on ? ' is-picked' : ''}`}
-                          aria-pressed={on}
-                          aria-label={on ? '상담 준비 메모에서 빼기' : '상담 준비 메모에 담기'}
-                          title={
-                            on
-                              ? '상담 준비 메모에서 뺍니다'
-                              : '상담 준비 메모에 담습니다'
-                          }
-                          onClick={() =>
-                            onPick({
-                              kind: 'sentence',
-                              text: s.text,
-                              sentence_kind: s.kind,
-                              sources: s.sources?.length
+                          {onPick && (
+                            <button
+                              className={`pickbtn${on ? ' is-picked' : ''}`}
+                              aria-pressed={on}
+                              aria-label={
+                                on
+                                  ? '상담 준비 메모에서 빼기'
+                                  : '상담 준비 메모에 담기'
+                              }
+                              title={
+                                on
+                                  ? '상담 준비 메모에서 뺍니다'
+                                  : '상담 준비 메모에 담습니다'
+                              }
+                              onClick={() =>
+                                onPick({
+                                  kind: 'sentence',
+                                  text: s.text,
+                                  sentence_kind: s.kind,
+                                  sources: s.sources?.length
+                                    ? s.sources
+                                    : s.source
+                                      ? [s.source]
+                                      : [],
+                                })
+                              }
+                            >
+                              <span className="pick-ico" aria-hidden="true">
+                                {on ? '✓' : '＋'}
+                              </span>
+                            </button>
+                          )}
+                          {/* 문장과 배지가 **한 덩어리**다 — 배지를 본문 밖 형제로 두면 남는
+                          자리에 따라 자기 줄로 떨어져 어느 문장 것인지 흐려진다. */}
+                          <span className="sent-text">
+                            {s.text}
+                            {/* 같은 출처를 두 번 인용하면 배지도 두 개였다 — 하나로 묶고
+                            `×2`로 센다. **다른 출처끼리는 합치지 않는다**(합치면 한쪽
+                            링크가 사라져 가드레일 3 위반).
+
+                            ⚠️ `보유`(holdings)만 **화면에서 뺀다**(2026-08-09). 나머지
+                               출처와 달리 이 배지는 열어 볼 원문이 없어(`sourceHref`가 null)
+                               누를 수도 없고, 고객 패널에서는 모든 문장이 같은 값을 달아
+                               문장마다 같은 말이 반복됐다. 그 사실을 나르는 것은 원래 배지가
+                               아니라 **아래 F1 고지**다("보유·배분 수치는 내부 계좌데이터로
+                               공개데이터가 아니며…" · CLAUDE.md 가드레일 1의 F1 예외).
+                            ⚠️ **데이터에서 지우는 것이 아니라 표시만 뺀다.** `s.sources`는
+                               그대로라 담기(→ 상담 준비 메모·PDF)에는 각주가 따라간다 —
+                               거기서 빠지면 가드레일 3 위반이다.
+                            ⚠️ 공시·뉴스·시세 배지는 **남긴다.** 그쪽은 원문 링크가 달려 있고,
+                               한 답변에 여러 출처가 섞이면 어느 문장이 무엇에 근거하는지를
+                               이 배지 말고는 말할 것이 없다. */}
+                            {mergeSources(
+                              (s.sources?.length
                                 ? s.sources
                                 : s.source
                                   ? [s.source]
-                                  : [],
-                            })
-                          }
-                        >
-                          <span className="pick-ico" aria-hidden="true">
-                            {on ? '✓' : '＋'}
+                                  : []
+                              ).filter((src) => src.type !== 'holdings'),
+                            ).map(({ src, count }, k) => (
+                              <SourceBadge key={k} src={src} count={count} />
+                            ))}
+                            {!s.source &&
+                              !s.sources?.length &&
+                              (s.kind === 'interpretation' ? (
+                                <span
+                                  className="sbadge itp"
+                                  title="해석·전망 문장은 각주 대상이 아닙니다"
+                                >
+                                  해석
+                                </span>
+                              ) : (
+                                <SourceBadge src={null} />
+                              ))}
                           </span>
-                        </button>
-                      )}
-                      {/* 문장과 배지가 **한 덩어리**다 — 배지를 본문 밖 형제로 두면 남는
-                          자리에 따라 자기 줄로 떨어져 어느 문장 것인지 흐려진다. */}
-                      <span className="sent-text">
-                        {s.text}
-                        {/* 같은 출처를 두 번 인용하면 배지도 두 개였다 — 하나로 묶고
-                            `×2`로 센다. **다른 출처끼리는 합치지 않는다**(합치면 한쪽
-                            링크가 사라져 가드레일 3 위반). */}
-                        {mergeSources(
-                          s.sources?.length
-                            ? s.sources
-                            : s.source
-                              ? [s.source]
-                              : [],
-                        ).map(({ src, count }, k) => (
-                          <SourceBadge key={k} src={src} count={count} />
-                        ))}
-                        {!s.source &&
-                          !s.sources?.length &&
-                          (s.kind === 'interpretation' ? (
-                            <span
-                              className="sbadge itp"
-                              title="해석·전망 문장은 각주 대상이 아닙니다"
-                            >
-                              해석
-                            </span>
-                          ) : (
-                            <SourceBadge src={null} />
-                          ))}
-                      </span>
-                    </div>
-                    );
-                  })}
-                  {t.answer.notice && (
-                    <div className="chat-notice">{t.answer.notice}</div>
-                  )}
-                </div>
-              )}
+                        </div>
+                      );
+                    })}
+                    {t.answer.notice && (
+                      <div className="chat-notice">{t.answer.notice}</div>
+                    )}
+                  </div>
+                )}
 
-              {/* 조정 선택지 카드가 여기 있었다(2026-08-06 추가 → 같은 날 제거).
+                {/* 조정 선택지 카드가 여기 있었다(2026-08-06 추가 → 같은 날 제거).
                   `options` SSE로 받은 후보를 `＋ 담기`가 달린 카드로 그렸는데, **답변을 닫는
                   고지문 아래**에 머리말 없이 서서 답변의 일부인지 별개인지가 화면에서
                   갈리지 않았다. 말풍선은 고지문으로 닫히는 것이 맞다.
@@ -542,24 +559,24 @@ export default function F1Chat({
                   ⚠️ 되살린다면 고지문 **위**, 머리말과 함께 둘 것. `PrepItem`의 `option`
                      종류와 PDF의 `선택지:` 항목은 백엔드에 그대로 있다(테스트도 있다). */}
 
-              {/* clarify: 종목 되묻기 */}
-              {t.answer?.clarify && (
-                <div className="chat-clarify">{t.answer.text}</div>
-              )}
+                {/* clarify: 종목 되묻기 */}
+                {t.answer?.clarify && (
+                  <div className="chat-clarify">{t.answer.text}</div>
+                )}
 
-              {/* 스트리밍 중(최종 answer 도착 전) */}
-              {!t.answer && !t.blocked && t.streaming && (
-                <div className="chat-streaming">
-                  {t.streaming}
-                  {t.running && <span className="gen-caret">▌</span>}
-                </div>
-              )}
-              {!t.answer && !t.blocked && !t.streaming && t.running && (
-                <div className="chat-thinking">조회 중…</div>
-              )}
-              {t.error && <div className="chat-blocked">⛔ {t.error}</div>}
+                {/* 스트리밍 중(최종 answer 도착 전) */}
+                {!t.answer && !t.blocked && t.streaming && (
+                  <div className="chat-streaming">
+                    {t.streaming}
+                    {t.running && <span className="gen-caret">▌</span>}
+                  </div>
+                )}
+                {!t.answer && !t.blocked && !t.streaming && t.running && (
+                  <div className="chat-thinking">조회 중…</div>
+                )}
+                {t.error && <div className="chat-blocked">⛔ {t.error}</div>}
+              </div>
             </div>
-          </div>
           ))}
         </div>
       </div>
@@ -580,7 +597,7 @@ export default function F1Chat({
           placeholder={
             compact
               ? customerId != null
-                ? '이 고객의 상황·성향을 물어보세요.'
+                ? '질문을 입력하세요.'
                 : '질문을 입력하세요.'
               : '최근 이 회사 실적 어때?'
           }

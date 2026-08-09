@@ -158,8 +158,17 @@ export type ChatRedaction = {
 export type ChatRouting = {
   entity_code: string | null;
   entity_name: string | null;
-  agent: 'a1' | 'a2' | 'a4' | 'krx' | 'portfolio' | null;
+  /** ⚠️ 화면에서 이 값으로 **이름표를 찾지 말 것** — 그러다 라우트가 늘 때마다 빠졌다.
+   *  배지에 적을 말은 아래 `label`로 온다. 이 필드는 라우트 자체를 가리키는 식별자다. */
+  agent:
+    | 'a1' | 'a2' | 'a4' | 'krx'
+    | 'portfolio' | 'portfolio_advice'
+    | 'situation' | 'risk_review'
+    | null;
   intent: string | null;
+  /** 라우팅 배지에 적는 이름 — **백엔드가 정한다**(`f1.ROUTE_LABEL`). 되묻기이거나 표에
+   *  없는 라우트면 null이고, 그때 화면은 배지를 **아예 안 그린다**(F1Chat 같은 자리 주석). */
+  label: string | null;
   need_clarify: boolean;
   /** 되묻는 사유. 'entity'=종목을 모른다 / 'intent'=종목은 아는데 무엇을 물었는지 모른다.
    *  되물을 **문구는 백엔드가 만든다**(f1.clarify_text) — 여기서 다시 판단하면 갈라진다. */
@@ -426,9 +435,11 @@ export type BriefItem = {
 
 /** 거시 지표 한 건 — **지수·환율·금리가 같은 모양을 쓴다**(2026-08-07).
  *
- *  공급자가 둘이다: 지수는 공공데이터포털(`backend/market.py`), 환율·국고채금리는 한국은행
- *  ECOS(`backend/ecos.py`). 화면이 지표마다 다른 키를 보지 않도록 "오늘 얼마나 움직였나"는
- *  `move` + `move_unit` 하나로 읽는다.
+ *  공급자가 둘이다(2026-08-09): 나스닥·S&P500·미국채30년은 FRED(`backend/fred.py`),
+ *  원/달러·국고채10년은 한국은행 ECOS(`backend/ecos.py`). 화면이 지표마다 다른 키를 보지
+ *  않도록 "오늘 얼마나 움직였나"는 `move` + `move_unit` 하나로 읽는다.
+ *  (KRX 지수 경로 `backend/market.py`는 남아 있지만 이 띠에는 더 이상 들어오지 않는다 —
+ *   에이전트 도구 `krx_index`가 쓴다. 옛 브리프에는 코스피·코스닥이 그대로 저장돼 있다.)
  *  ⚠️ 타입 이름은 `MarketIndex` 그대로다 — 저장된 브리프의 필드명(`market.indices`)이
  *     그것이라, 이름만 바꾸면 옛 브리프를 읽는 코드와 어긋난다. */
 export type MarketIndex = {

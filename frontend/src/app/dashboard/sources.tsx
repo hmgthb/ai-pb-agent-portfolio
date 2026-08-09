@@ -81,6 +81,10 @@ export function SourceBadge({
 
   // 보유데이터만 다른 배지다 — 공개데이터가 아닌 유일한 출처(가드레일 1의 예외)라
   // 공시·뉴스와 같은 색으로 두면 같은 급으로 읽힌다.
+  // ⚠️ 지금은 **여기까지 오지 않는다**(2026-08-09): 유일한 사용처인 F1 대화가 holdings를
+  //    걸러서 넘긴다(F1Chat 같은 자리 주석 — 열어 볼 원문이 없고, 그 사실은 F1 고지가 나른다).
+  //    분기를 지우지 않는 이유는 아래 각주 목록(`FootnoteList`)이 같은 종류를 여전히 `보유`로
+  //    적기 때문이다 — 배지만 안 그리는 것이지 출처 종류가 없어진 게 아니다.
   const cls = src.type === 'holdings' ? 'sbadge hold' : 'sbadge src';
   const href = sourceHref(src);
   const label =
