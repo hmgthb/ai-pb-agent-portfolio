@@ -13,6 +13,7 @@
 |---|---|---|---|---|
 | 원/달러 | `731Y001` | `0000001` | D | 원/미국달러(매매기준율) |
 | 국고채3년 | `817Y002` | `010200000` | D | 국고채(3년) · 단위 `연%` |
+| 국고채10년 | `817Y002` | `010210000` | D | 국고채(10년) · 단위 `연%` (2026-08-09 `StatisticItemList`로 확인, 관측 20001218~) |
 
 - 응답: `{"StatisticSearch": {"list_total_count": N, "row": [{TIME, DATA_VALUE, UNIT_NAME, …}]}}`
 - 오류: `{"RESULT": {"CODE": "ERROR-…"|"INFO-…", "MESSAGE": "…"}}` — **HTTP는 200이다.**
@@ -43,7 +44,11 @@ import requests
 from dotenv import load_dotenv
 
 from backend.bizdate import biz_today
-from backend.market import MarketDataUnavailable, rank_recent_move
+from backend.market import MarketDataUnavailable, daily_moves, rank_recent_move
+
+# `daily_moves`는 여기서 정의하지 않고 `market`에서 가져온다(2026-08-09에 옮겼다) —
+# 같은 계산을 `fred.py`도 쓰기 때문이다. `ecos.daily_moves`로 부르던 곳은 그대로 동작한다.
+__all__ = ["daily_moves", "fetch_series", "fetch_series_snapshot"]
 
 load_dotenv()
 
@@ -67,9 +72,13 @@ SERIES = (
         "level_unit": "",
     },
     {
-        "name": "국고채3년",
+        # 2026-08-09: 3년(`010200000`) → 10년. 띠가 미국 위주로 바뀌면서(나스닥·S&P500·
+        # 미국채30년) 한국 금리도 **장기물**이어야 미국채30년과 같은 축에서 읽힌다 —
+        # 3년물과 30년물을 나란히 놓으면 만기가 다른 둘을 같은 줄에서 견주게 된다.
+        # 3년 항목코드는 지우지 않고 여기 적어 둔다(되돌릴 때 다시 확인하지 않도록).
+        "name": "국고채10년",
         "stat": "817Y002",
-        "item": "010200000",
+        "item": "010210000",
         "move_unit": "bp",
         "move_decimals": 1,
         "level_unit": "%",
@@ -114,21 +123,6 @@ def _values(rows: list[dict]) -> list[tuple[str, float]]:
         except (KeyError, TypeError, ValueError):
             continue
     return sorted(out, key=lambda p: p[0])
-
-
-def daily_moves(values: list[tuple[str, float]], move_unit: str) -> list[float]:
-    """연속한 두 관측의 차 → 일별 움직임. 단위는 `move_unit`이 정한다(순수 함수).
-
-    `%`는 비율 변화, `bp`는 절대 차이 ×100(=0.01%p 단위). 관측이 2개 미만이면 빈 리스트다.
-    ⚠️ 직전 값이 0이면 비율을 만들 수 없다 — 그 구간만 건너뛴다(0으로 나누지 않는다).
-    """
-    moves = []
-    for (_, before), (_, now) in zip(values, values[1:]):
-        if move_unit == "bp":
-            moves.append((now - before) * 100)
-        elif before:
-            moves.append((now - before) / before * 100)
-    return moves
 
 
 def fetch_series(spec: dict, *, rows_limit: int = MAX_ROWS) -> dict:

@@ -293,6 +293,28 @@ def daily_pcts(rows: list[dict]) -> list[float]:
     return [p for p in (as_pct(r.get("fltRt")) for r in rows) if p is not None]
 
 
+def daily_moves(values: list[tuple[str, float]], move_unit: str) -> list[float]:
+    """연속한 두 관측의 차 → 일별 움직임. 단위는 `move_unit`이 정한다(순수 함수).
+
+    `%`는 비율 변화, `bp`는 절대 차이 ×100(=0.01%p 단위). 관측이 2개 미만이면 빈 리스트다.
+    ⚠️ 직전 값이 0이면 비율을 만들 수 없다 — 그 구간만 건너뛴다(0으로 나누지 않는다).
+
+    ⚠️ **여기 있는 이유**(2026-08-09): 원래 `ecos.py` 안에 있었는데, 거시 띠 공급자가 셋이
+       되면서(`market`·`ecos`·`fred`) 같은 계산이 두 벌 이상 생길 자리가 됐다. `rank_recent_move`
+       를 이 파일에 둔 것과 같은 판단이다 — 판정 규칙은 한 곳이고, 부르는 쪽이 여럿이다.
+       `ecos.daily_moves`는 여기서 재수출된 같은 함수다(사본이 아니다).
+    ⚠️ 위 `daily_pcts`와 헷갈리지 말 것: 그쪽은 공급자가 **등락률을 이미 준** 경우(KRX)이고,
+       이쪽은 **수준만 주는** 경우(ECOS·FRED)라 차를 직접 낸다.
+    """
+    moves = []
+    for (_, before), (_, now) in zip(values, values[1:]):
+        if move_unit == "bp":
+            moves.append((now - before) * 100)
+        elif before:
+            moves.append((now - before) / before * 100)
+    return moves
+
+
 def rank_recent_move(pcts: list[float], latest: float | None) -> dict | None:
     """오늘 등락률이 최근 창에서 몇 번째로 큰 움직임인가 (순수·결정론적).
 

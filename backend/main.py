@@ -36,6 +36,7 @@ from backend import (
     db,
     ecos,
     f1,
+    fred,
     market,
     notepdf,
     redact,
@@ -2474,17 +2475,33 @@ async def build_brief() -> dict:
     """
     # 거시 지표는 에이전트에 위임하지 않고 backend가 직접 부른다 — 고정된 조회라 판단이 필요 없다.
     #
-    # **공급자가 둘이고 여기가 유일한 합류 지점이다**(2026-08-07): 지수는 공공데이터포털
-    # (`market`), 환율·금리는 한국은행 ECOS(`ecos`). 두 모듈은 서로를 모르고, 반환 규약만
+    # **공급자가 둘이고 여기가 유일한 합류 지점이다**(2026-08-07): 해외 지수·미국채는 FRED
+    # (`fred`), 환율·국내 금리는 한국은행 ECOS(`ecos`). 두 모듈은 서로를 모르고, 반환 규약만
     # 같다 — `(지표 목록, 미연결 사유)`.
-    # ⚠️ **순서가 곧 화면 순서다** — 지수 → 환율 → 금리. 시장 전체에서 가격의 기준(환율·금리)
-    #    으로 좁혀 가는 순서이고, 지표를 늘릴 때도 이 자리에서 정한다.
     # ⚠️ 한쪽이 통째로 실패해도 나머지는 그대로 실린다. 사유는 **둘 다 모아** 한 줄로 남기고
     #    화면이 유의사항으로 말한다 — "없다"와 "못 가져왔다"를 가르는 자리다.
-    indices, market_note = await asyncio.to_thread(market.fetch_market_snapshot)
-    series, ecos_note = await asyncio.to_thread(ecos.fetch_series_snapshot)
-    indices = indices + series
-    market_note = "; ".join(n for n in (market_note, ecos_note) if n) or None
+    #
+    # 2026-08-09: 띠에서 **코스피·코스닥이 빠지고** 나스닥·S&P500·미국채30년이 들어왔다.
+    # 국내 금리도 3년 → 10년(`ecos.SERIES` 주석). 국내 지수 조회 경로(`market.fetch_index`)는
+    # 지우지 않았다 — 에이전트 도구 `krx_index`가 그대로 쓴다(`mcp_servers/krx_server.py`).
+    us, fred_note = await asyncio.to_thread(fred.fetch_series_snapshot)
+    kr, ecos_note = await asyncio.to_thread(ecos.fetch_series_snapshot)
+    market_note = "; ".join(n for n in (fred_note, ecos_note) if n) or None
+
+    # ⚠️ **순서가 곧 화면 순서다.** 공급자별로 이어 붙이면 순서가 "어느 API가 먼저인가"로
+    #    정해지는데, 그건 PB가 읽는 순서와 아무 상관이 없다 — 지표를 늘릴 때도 이 목록이
+    #    정한다. 위험자산(주가) → 환율 → 금리(단기 축인 국내, 장기 축인 미국) 순이다.
+    # ⚠️ 이름으로 정렬하므로 **여기 없는 이름은 뒤로 밀린다**(사라지지 않는다). 지표를 더할
+    #    때 이 목록에 넣는 걸 잊어도 화면에서 조용히 빠지지는 않게 한 것이다.
+    band_order = ["나스닥", "S&P500", "원/달러", "국고채10년", "미국채30년"]
+    indices = sorted(
+        us + kr,
+        key=lambda ix: (
+            band_order.index(ix["index_name"])
+            if ix["index_name"] in band_order
+            else len(band_order)
+        ),
+    )
 
     # 어제 대비 — 비교 기준은 **오늘 이전 날짜의** 가장 최근 브리프다(같은 날 재실행분을
     # 기준으로 잡으면 두 번째 실행부터 전부 "어제와 같다"가 된다 · `db.brief_before`).

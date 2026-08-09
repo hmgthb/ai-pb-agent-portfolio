@@ -3236,6 +3236,66 @@ a.fn-title:hover {
   white-space: nowrap;
   cursor: help;
 }
+/* 대표 기준일에서 벗어난 지표의 표시 — 날짜를 글자로 적던 자리(`· 2026-08-06 공표`)를
+   `i` 하나로 줄였다(2026-08-09 · page.tsx 같은 자리 주석). 미국 지표가 들어오면서 어긋나는
+   지표가 날마다 바뀌어, 띠가 매일 다른 자리에서 늘었다 줄었다 했다.
+   ⚠️ 숫자 옆에 서므로 **폭이 고정이어야 한다** — 글자 폭에 맡기면 지표 간격이 흔들린다.
+   ⚠️ `align-self: center`가 필요하다. `.mkt-item`이 baseline 정렬이라 그대로 두면 원이
+      숫자 밑선에 걸려 반쯤 내려앉는다. */
+.mkt .mkt-odd {
+  position: relative; /* 아래 ::after 말풍선의 기준 */
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 700;
+  font-style: normal;
+  line-height: 1;
+  color: var(--muted);
+  cursor: help;
+}
+/* 초점 표시를 지우지 않는다 — 이 표시는 키보드로도 닿아야 날짜가 사라지지 않는다. */
+.mkt .mkt-odd:hover,
+.mkt .mkt-odd:focus-visible {
+  color: var(--ink-2);
+  border-color: var(--ink-2);
+}
+/* 말풍선 — **브라우저 기본 `title`을 쓰지 않는 이유**(2026-08-09): 기본 툴팁은 1초쯤 머물러야
+   뜨고 몇 초 뒤 저절로 사라진다. 그래서 커서만 `?`로 바뀌고 글자는 안 뜨는 것처럼 보였다.
+   여기서 직접 그리면 바로 뜨고, 커서를 올려 둔 동안 머문다.
+   ⚠️ `.mkt`·`.bcard` 어디에도 `overflow: hidden`이 없어서 띠 밖으로 나가도 잘리지 않는다 —
+      둘 중 하나에 그걸 붙이면 이 말풍선이 반쯤 잘린다.
+   ⚠️ `pointer-events: none`이 필요하다. 없으면 말풍선이 커서 아래로 들어와 hover가 깜빡인다. */
+.mkt .mkt-odd::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--elevated);
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+  z-index: 5;
+}
+.mkt .mkt-odd:hover::after,
+.mkt .mkt-odd:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+}
 .mkt.off .hint {
   font-size: 12px;
 }
