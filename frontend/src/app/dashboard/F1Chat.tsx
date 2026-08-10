@@ -395,7 +395,16 @@ export default function F1Chat({
    *  ⚠️ 컴포넌트가 아니라 함수다 — 컴포넌트로 두면 부모가 그려질 때마다 새 타입이 되어
    *     이 줄이 통째로 다시 마운트된다(여기 상태는 없지만, 그 차이를 모르고 상태를
    *     들이면 조용히 초기화된다). */
-  const sentenceRow = (s: NoteSentence, on: boolean) => (
+  const sentenceRow = (s: NoteSentence, on: boolean) =>
+    /* 소제목(`## 다음 행동`) — **문장이 아니라 절을 여는 줄**이다(2026-08-10).
+       ⚠️ 여기서 갈라내지 않으면 아래 배지 규칙에 걸려 `UNSOURCED`가 붙는다. 출처가
+          없는 게 맞고(제목은 사실 주장이 아니다) 백엔드도 미인용 집계에서 뺀다
+          (`citations._kind` → `heading`) — 화면만 그걸 모르고 있었다.
+       ⚠️ **담기 버튼을 내지 않는다.** 제목만 상담 준비 메모에 담기면 문서에 빈 절이
+          생긴다 — 담을 것은 그 아래 행동 문장이다. */
+    s.kind === 'heading' ? (
+      <div className="chat-head">{s.text}</div>
+    ) : (
     <div
       className={`chat-sent${on ? ' is-picked' : ''}${onPick ? ' has-pick' : ''}`}
     >
@@ -490,7 +499,7 @@ export default function F1Chat({
           ))}
       </span>
     </div>
-  );
+    );
 
   return (
     <>

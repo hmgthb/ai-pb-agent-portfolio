@@ -53,6 +53,15 @@ SANITIZED_SCENARIO_KEYS = frozenset({
 SANITIZED_ASSET_KEYS = frozenset({"kind", "band", "where", "note"})
 SANITIZED_HISTORY_KEYS = frozenset({"at", "kind", "detail"})
 
+# F2 브리핑이 종목마다 내보내는 보유 맥락(`redact_watch`). **고객 식별자가 없다** —
+# 가명(`고객 #1`)조차 목록에 없는 것이 이 키셋의 요점이다(그 함수 주석 참조).
+SANITIZED_WATCH_KEYS = frozenset({
+    "stock_name", "holders", "horizons", "constraints", "risk_notes",
+})
+# 한 종목 맥락에 실을 사정 문장 수의 상한. 넘기면 프롬프트가 제목보다 사정으로 차고,
+# 그때 모델은 기사가 아니라 사정을 요약하기 시작한다(실측 아님 — 보수적 상한).
+WATCH_CONTEXT_LIMIT = 3
+
 
 def balance_band(balance: float | int | None) -> str | None:
     """잔고 → 구간 이름. 값이 없으면 None(구간을 지어내지 않는다)."""
@@ -68,7 +77,7 @@ def age_band(age: int | None) -> str | None:
     """나이 → 나이대(`38` → `30대`). 실나이는 경계를 넘지 않는다.
 
     **일반화**는 비식별화의 기본 수단이다 — 값을 지우는 대신 해상도를 낮춘다. 나이대는
-    등록 위험성향 대비 구성을 읽을 때 실제로 쓰이는 맥락이라, 통째로 지우면 답변이 얕아진다.
+    투자성향 대비 구성을 읽을 때 실제로 쓰이는 맥락이라, 통째로 지우면 답변이 얕아진다.
     ⚠️ 10년 폭을 좁히지 말 것(5년 단위 등) — 좁힐수록 재식별이 쉬워진다(잔고 밴드와 같은 규칙).
     """
     if age is None:
@@ -116,6 +125,46 @@ def redact_scenario(scenario: dict | None, risk_labels: list[str]) -> dict | Non
         "registered_risk_label": _label(scenario.get("registered_risk")),
         "effective_risk_label": _label(scenario.get("effective_risk")),
         "effective_risk_why": scenario.get("effective_risk_why"),
+    }
+    return {k: v for k, v in out.items() if v not in (None, [], "")}
+
+
+def redact_watch(stock_name: str | None, holders: list[dict]) -> dict:
+    """종목 하나의 **보유 고객 맥락** → 경계를 넘을 모양 (F2 브리핑, 2026-08-10).
+
+    F1의 `redact_portfolio`와 대상이 다르다. 저쪽은 **고객 한 명**을 내보내므로 가명이
+    필요하지만(답변이 "이 포트폴리오"를 가리켜야 한다), 이쪽은 **종목 하나를 여러 고객이
+    들고 있는 상태**를 내보낸다 — 브리핑은 고객을 고르지 않고 종목을 고르는 카드다.
+
+    ⚠️ 그래서 **가명조차 담지 않는다.** `고객 #1`을 넣으면 브리핑 한 줄이 특정 고객을
+       가리키게 되고, 그건 이 카드가 답할 질문("오늘 무엇을 먼저 볼까")이 아니다.
+       나가는 것은 **집계와 라벨뿐**이고, 어느 고객인지는 화면에서도 프롬프트에서도 없다.
+    ⚠️ 사정 문장(`constraints`·`effective_risk_why`)은 **저장 시점에 이미 비식별**이다
+       (`scripts/seed_scenarios.py` — 금액은 구간, 이름 없음). 그래도 여기서 다시 고르는
+       이유는 `redact_scenario`와 같다: 저장 쪽이 필드를 늘려도 경계가 저절로 넓어지면 안 된다.
+    ⚠️ 중복을 지우고 상한을 둔다. 같은 사정을 세 명이 공유하면 세 번 나가야 할 이유가 없고,
+       프롬프트가 길수록 모델이 제목 대신 사정을 베껴 쓴다.
+    """
+    horizons, constraints, risk_notes = [], [], []
+    for h in holders or []:
+        sc = (h.get("scenario") or {}) if isinstance(h.get("scenario"), dict) else {}
+        for value, bucket in (
+            (sc.get("horizon"), horizons),
+            (sc.get("effective_risk_why"), risk_notes),
+        ):
+            if value and value not in bucket:
+                bucket.append(value)
+        for c in sc.get("constraints") or []:
+            if c and c not in constraints:
+                constraints.append(c)
+
+    out = {
+        "stock_name": stock_name,
+        # 집계 수치까지가 가드레일 1이 허용하는 선이다("보유 고객 N명").
+        "holders": len(holders or []),
+        "horizons": horizons[:WATCH_CONTEXT_LIMIT],
+        "constraints": constraints[:WATCH_CONTEXT_LIMIT],
+        "risk_notes": risk_notes[:WATCH_CONTEXT_LIMIT],
     }
     return {k: v for k, v in out.items() if v not in (None, [], "")}
 

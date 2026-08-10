@@ -44,7 +44,12 @@ import requests
 from dotenv import load_dotenv
 
 from backend.bizdate import biz_today
-from backend.market import MarketDataUnavailable, daily_moves, rank_recent_move
+from backend.market import (
+    MarketDataUnavailable,
+    daily_moves,
+    rank_recent_move,
+    trend_of,
+)
 
 # `daily_moves`는 여기서 정의하지 않고 `market`에서 가져온다(2026-08-09에 옮겼다) —
 # 같은 계산을 `fred.py`도 쓰기 때문이다. `ecos.daily_moves`로 부르던 곳은 그대로 동작한다.
@@ -91,6 +96,10 @@ SOURCE = "한국은행 ECOS 오픈API (일별 공표치, 실시간 아님)"
 # 달력 40일이라야 영업일 관측이 25~28개쯤 잡힌다 — `rank_recent_move`의 `MIN_WINDOW=8`을
 # 여유 있게 넘겨야 판정이 켜진다(창이 짧으면 그 함수는 아무 말도 하지 않는다).
 LOOKBACK_DAYS = 40
+# 3개월 추세(`market.trend_of`)의 창 — `fred.TREND_DAYS`와 **같은 값이어야 한다**(다르면
+# 두 지표의 "석 달"이 다른 길이가 된다). 조회는 이 넓은 창으로 한 번만 하고, 평소 대비
+# 판정에는 뒤 `LOOKBACK_DAYS`만 잘라 쓴다.
+TREND_DAYS = 92
 # 한 번에 받을 행 수. 창보다 넉넉해야 하고, **줄이지 말 것** — 모자라면 창 앞부분만
 # 세면서도 오류가 안 난다(조용히 틀리는 방향이다).
 MAX_ROWS = 200
@@ -138,7 +147,7 @@ def fetch_series(spec: dict, *, rows_limit: int = MAX_ROWS) -> dict:
         raise MarketDataUnavailable(UNAVAILABLE_HINT)
 
     today = biz_today()
-    begin = (today - timedelta(days=LOOKBACK_DAYS)).strftime("%Y%m%d")
+    begin = (today - timedelta(days=TREND_DAYS)).strftime("%Y%m%d")
     end = today.strftime("%Y%m%d")
 
     def get(first: int, last: int) -> dict:
@@ -182,7 +191,14 @@ def fetch_series(spec: dict, *, rows_limit: int = MAX_ROWS) -> dict:
             f"최근 {LOOKBACK_DAYS}일 관측이 2건 미만입니다(휴장·공표 지연 확인)."
         )
 
-    moves = daily_moves(values, spec["move_unit"])
+    # 평소 대비 판정은 **뒤 LOOKBACK_DAYS 구간만** 본다(위 TREND_DAYS 주석).
+    cutoff = (today - timedelta(days=LOOKBACK_DAYS)).strftime("%Y%m%d")
+    recent_values = [v for v in values if v[0] >= cutoff] or values
+    moves = daily_moves(recent_values, spec["move_unit"])
+    if not moves:
+        raise MarketDataUnavailable(
+            f"최근 {LOOKBACK_DAYS}일 관측이 2건 미만입니다(휴장·공표 지연 확인)."
+        )
     as_of, level = values[-1]
     latest = moves[-1]
     return {
@@ -196,6 +212,8 @@ def fetch_series(spec: dict, *, rows_limit: int = MAX_ROWS) -> dict:
         # 지연 데이터가 아니라 **공표치**다 — 화면·본문 문구가 이 값으로 갈린다(brief._index_line).
         "basis": "공표",
         "recent": rank_recent_move(moves, latest),
+        # 창 전체(TREND_DAYS)로 낸 3개월 추세 — `fred.fetch_series`와 같은 규약이다.
+        "trend": trend_of(values, spec["move_unit"]),
         "source": SOURCE,
     }
 

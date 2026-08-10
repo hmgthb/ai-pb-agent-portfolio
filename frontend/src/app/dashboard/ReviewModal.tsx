@@ -238,9 +238,9 @@ function SentenceRows({
                 ) : (
                   <span
                     className="sbadge un inline"
-                    title="투자권유·광고성 표현으로 발행이 막힙니다"
+                    title="단정적 표현으로 발행이 막힙니다"
                   >
-                    투자권유 표현 · {phraseOf.get(i)}
+                    단정 표현 · {phraseOf.get(i)}
                   </span>
                 ))}
             </span>
@@ -688,7 +688,7 @@ export function NoteModal({
                   ? ` 그중 ${lockedBlocking}개는 PB 판정이 없어 잠겨 있습니다 — PB가 검토 단계에서 판정해야 풀립니다.`
                   : '')
               : phraseBlocking
-                ? `투자권유·광고성 표현 ${phraseBlocking}개가 남아 있습니다. 인용이라면 사유를 적어 예외로 통과시키고, 아니면 그 문장을 빼세요.`
+                ? `단정적 표현 ${phraseBlocking}개가 남아 있습니다. 인용이라면 사유를 적어 예외로 통과시키고, 아니면 그 문장을 빼세요.`
                 : '미인용 문장을 모두 확인했습니다. 이제 발행할 수 있습니다.'}
             {current.acks.length > 0 &&
               ` (확인 ${current.acks.length}개, 감사로그에 기록됨)`}

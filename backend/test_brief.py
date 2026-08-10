@@ -450,7 +450,7 @@ def test_summary_with_a_number_not_in_the_input_is_dropped():
 def test_summary_rejects_forbidden_phrases_and_bad_shape():
     items = [_stock("000660", "SK하이닉스", "5.77", disclosures=[MAJOR], news=[NEWS])]
     p = lambda raw: brief.parse_summaries(raw, items)  # noqa: E731
-    assert p("000660|지금 사세요 라는 분위기입니다") == {}  # 금지 표현
+    assert p("000660|수익을 보장한다는 분위기입니다") == {}  # 남은 금지 표현(단정)
     assert p("000999|남의 종목입니다") == {}  # 모르는 종목코드
     assert p("주주환원 보도가 이어졌습니다") == {}  # 형식 불일치(구분자 없음)
     assert p("000660|" + "가" * 100) == {}  # 길이 초과
@@ -546,24 +546,20 @@ def test_direction_of_does_not_fill_unreadable_with_zero():
     assert brief.direction_of(None) is None and brief.direction_of("") is None
 
 
+# ⚠️ **어제 대비 줄(`_delta_bullets`)은 2026-08-10에 걷어냈다** — 첫 줄이 3개월 추세로
+#    바뀌었다. `compare_macro`는 감사로그가 그대로 쓰므로 **판정은 계속 검증한다.**
 def test_turn_is_reported_when_the_sign_flips():
-    """어제 하락하던 것이 오늘 상승으로 돌면 어제 성립하던 이야기가 오늘 성립하지 않는다 —
-    브리핑이 답해야 하는 질문이 그것이다."""
+    """어제 하락하던 것이 오늘 상승으로 돌았다는 **판정**은 감사로그에 남는다."""
     cmp = brief.compare_macro([_ix("코스피", "0.42")], [_ix("코스피", "-0.31", as_of="20260806")])
     assert cmp["turns"] == [{"index_name": "코스피", "from": "down", "to": "up"}]
-    text = brief._delta_bullets(cmp)[0]["text"]
-    assert text == "코스피가 어제 하락에서 오늘 상승으로 방향이 바뀌었습니다."
 
 
-def test_no_turn_still_says_so_but_only_after_comparing():
-    """0건에도 내는 건 여기 하나다 — "어제 이후 방향이 바뀐 지표가 없다"가 그 자체로 답이다.
-    다만 **견주지 않았으면 그 말도 하지 않는다.**"""
+def test_no_turn_is_distinguishable_from_no_comparison():
+    """"안 바뀌었다"와 "견주지 않았다"는 다른 상태다 — 감사로그가 둘을 가를 수 있어야 한다."""
     same = brief.compare_macro([_ix("코스피", "0.42")], [_ix("코스피", "0.31", as_of="20260806")])
-    assert [b["text"] for b in brief._delta_bullets(same)] == [
-        "어제 브리프 이후 방향이 바뀐 지표가 없습니다."
-    ]
+    assert same["compared"] == ["코스피"] and same["turns"] == []
     first = brief.compare_macro([_ix("코스피", "0.42")], None)
-    assert brief._delta_bullets(first) == [] and first["has_prev"] is False
+    assert first["has_prev"] is False and first["compared"] == []
 
 
 def test_same_basis_date_is_not_a_comparison():
@@ -571,11 +567,9 @@ def test_same_basis_date_is_not_a_comparison():
     "방향이 안 바뀌었다"고 적으면 견주지 않은 것을 견줬다고 말하는 것이다."""
     cmp = brief.compare_macro([_ix("코스피", "0.42")], [_ix("코스피", "0.42")])
     assert cmp["compared"] == [] and cmp["stale"] == ["코스피"]
-    assert brief._delta_bullets(cmp) == []
-    # 대신 유의사항이 **왜 비교하지 않았는지**를 말한다 — 화면에서 이 줄이 없으면
-    # "변화 없음"인지 "비교 안 함"인지 PB가 알 수 없다.
-    texts = [b["text"] for b in brief._macro_cautions(None, cmp)]
-    assert texts == ["어제 대비 비교를 하지 않았습니다. 직전 브리프와 기준일이 같습니다."]
+    # ⚠️ 이 상태에 대한 **유의사항 줄도 함께 걷어냈다** — 화면에 없는 것("어제 대비")을
+    #    못 했다고 말하는 문장이 되기 때문이다.
+    assert brief._macro_cautions(None, cmp) == []
 
 
 def test_indices_are_matched_by_name_not_by_order():
@@ -613,14 +607,15 @@ def test_particle_follows_the_final_consonant():
 
 
 def test_macro_digest_order_and_one_sentence_each():
-    """읽는 순서 = 어제 대비 → 평소 대비 → 유의사항. 불릿당 한 문장."""
+    """읽는 순서 = 3개월 추세 → 평소 대비 → 고객 관련 종목 → 유의사항. 불릿당 한 문장."""
     today = [_ix("코스피", "-2.10", recent={"of": 20, "direction": "down", "rank": 1}),
              _ix("코스닥", "0.30")]
     prev = [_ix("코스피", "0.50", as_of="20260806"), _ix("코스닥", "0.10", as_of="20260806")]
+    trend = {"kind": "trend", "text": "코스피가 석 달 동안 내렸습니다.", "href": None}
     bullets = brief.macro_digest(
-        today, compare=brief.compare_macro(today, prev), market_note=None
+        today, compare=brief.compare_macro(today, prev), market_note=None, trends=[trend]
     )
-    assert [b["kind"] for b in bullets] == ["delta", "notable"]
+    assert [b["kind"] for b in bullets] == ["trend", "notable"]
     for b in bullets:
         assert b["text"].count(".") == 1 and b["text"].endswith(".")
         # 거시 불릿에는 열어 볼 원문이 없다 — 링크를 지어내지 않는다.
@@ -727,10 +722,11 @@ def test_macro_bullets_stay_out_of_the_gated_body():
         assert b["text"] not in md
 
 
-# ── 밤사이 헤드라인 (2026-08-07) — **F2에서 유일하게 LLM이 문장을 쓰는 자리** ────────
+# ── 뉴스 후보 고르기 (신선도·중복 제거) ──────────────────────────────────────
 #
-# 이 불릿은 `lead_json`에 살아 **게이트를 타지 않는다.** 그래서 검증이 게이트가 아니라
-# `parse_headline`에 있고, 그 함수가 느슨해지면 검사하는 곳이 사라진다 — 아래가 그 자물쇠다.
+# 2026-08-10에 밤사이 거시 헤드라인 줄을 걷어내면서 그 줄의 프롬프트·검증 테스트도 같이
+# 지웠다. **아래 셋은 남는다** — `pick_headlines`는 고객 관련 종목 줄이 그대로 쓰고
+# (`main._watch_bullet`), 이 규칙이 느슨해지면 종목 줄에 지난주 기사가 섞인다.
 
 from datetime import datetime, timedelta, timezone  # noqa: E402
 
@@ -765,135 +761,6 @@ def test_same_event_from_many_outlets_counts_once():
             _art("뉴욕증시 호르무즈 변수에 하락", 2, "b"),
             _art("국제유가 급등", 3, "c")]
     assert len(brief.pick_headlines(rows, NOW)) == 2
-
-
-def test_headline_input_carries_only_titles():
-    """입력은 **제목뿐**이다 — 기사 본문도 링크도 나가지 않는다(가드레일 5)."""
-    rows = [{**_art("뉴욕증시 하락"), "description": "본문에 있는 문장", "link": "https://x"}]
-    text = brief.headline_input(rows)
-    assert "뉴욕증시 하락" in text
-    assert "본문에 있는 문장" not in text and "https://x" not in text
-
-
-def test_headline_with_a_number_not_in_the_input_is_dropped():
-    """**입력에 없는 수치를 만들면 버린다.** 근거가 화면에 없는 숫자가 카드에 뜨면 안 된다."""
-    rows = [_art("뉴욕증시, 호르무즈 변수에 하락")]
-    assert brief.parse_headline("다우가 0.9% 하락했다는 보도가 이어졌습니다.", rows) is None
-    # 제목에 있던 수치는 통과한다.
-    rows2 = [_art("뉴욕증시 하락…다우 0.9%↓")]
-    assert brief.parse_headline("다우 0.9% 하락 보도가 이어졌습니다.", rows2)
-
-
-def test_headline_rejects_forbidden_phrases_and_bad_shape():
-    """금지 표현·여러 문장·길이 초과는 버린다 — 그때는 불릿 자체가 안 선다."""
-    rows = [_art("뉴욕증시 하락")]
-    assert brief.parse_headline("지금 사세요 라는 보도가 이어졌습니다.", rows) is None
-    assert brief.parse_headline("하락했습니다. 그리고 또 있습니다.", rows) is None
-    assert brief.parse_headline("가" * 200 + " 보도가 이어졌습니다.", rows) is None
-    assert brief.parse_headline("", rows) is None and brief.parse_headline("   ", rows) is None
-
-
-def test_headline_bullet_carries_its_sources():
-    """종목 카드가 없어지면서 **근거를 확인할 자리가 이 불릿뿐**이다 — 링크를 빼면
-    출처가 화면에서 사라진다(가드레일 3)."""
-    rows = brief.pick_headlines([_art("뉴욕증시 하락", 2, "https://n.example/a")], NOW)
-    b = brief._headline_bullet("하락 보도가 이어졌습니다.", rows)
-    assert b["ai"] is True and b["kind"] == "news"
-    # 한 링크가 대표하지 못하므로 href가 아니라 sources다.
-    assert b["href"] is None
-    assert [s["url"] for s in b["sources"]] == ["https://n.example/a"]
-
-
-def test_headline_stands_after_the_rule_written_bullets():
-    """규칙이 보증하는 문장을 먼저 읽고, 보증이 없는 문장을 그다음에 읽어야 한다 —
-    순서가 곧 신뢰도 표시다."""
-    today = [_ix("코스피", "-2.10", recent={"of": 20, "direction": "down", "rank": 1})]
-    prev = [_ix("코스피", "0.50", as_of="20260806")]
-    bullets = brief.macro_digest(
-        today,
-        compare=brief.compare_macro(today, prev),
-        market_note="ECOS 미연결",
-        headlines=[brief._headline_bullet("하락 보도가 이어졌습니다.", [])],
-    )
-    assert [b["kind"] for b in bullets] == ["delta", "notable", "news", "caution"]
-
-
-def test_no_headline_means_no_bullet():
-    """통과 못 하면 **불릿을 안 낸다** — 지표 불릿과 달리 대신할 규칙 문장이 없다."""
-    bullets = brief.macro_digest([_ix("코스피", "0.42")], compare={}, headlines=None)
-    assert not [b for b in bullets if b["kind"] == "news"]
-
-
-def test_every_headline_keeps_its_own_sources():
-    """줄이 여럿이면 **각주도 줄마다 다르다.** 후보를 다 넘겨 한 문장에 뭉치던 시절에는
-    무관한 기사가 남의 문장 각주로 붙었다(CPI 문장에 태양광 관세 기사)."""
-    cpi = brief.pick_headlines([_art("뉴욕증시, 7월 CPI 주목", 1, "https://n/cpi")], NOW)
-    oil = brief.pick_headlines([_art("이란 호르무즈 통항 제한", 2, "https://n/oil")], NOW)
-    bullets = brief.macro_digest(
-        [],
-        compare={},
-        headlines=[brief._headline_bullet("물가 보도가 이어졌습니다.", cpi),
-                   brief._headline_bullet("중동 소식이 전해졌습니다.", oil)],
-    )
-    news = [b for b in bullets if b["kind"] == "news"]
-    assert [[s["url"] for s in b["sources"]] for b in news] == [
-        ["https://n/cpi"], ["https://n/oil"]
-    ]
-
-
-# ── 사건 가르기(`cluster_headlines`) ───────────────────────────────────────────
-
-
-def test_synonyms_land_in_one_event():
-    """같은 사건을 매체가 다른 말로 적는다 — `CPI`와 `물가지수`는 겹치는 낱말이 없다.
-    낱말 겹침으로 묶던 시제품이 실제로 이 둘을 갈라놨다(2026-08-10 실측)."""
-    rows = [_art("뉴욕증시, 7월 CPI·이란 협상 주목", 1, "a"),
-            _art("[뉴욕증시] 7월 고용지표 부진…물가지수에 쏠린 눈", 2, "b")]
-    groups = brief.cluster_headlines(brief.pick_headlines(rows, NOW))
-    assert len(groups) == 1 and len(groups[0]) == 2
-
-
-def test_a_shared_side_word_does_not_merge_two_events():
-    """`이란`이 곁가지로 나왔다고 CPI 기사와 호르무즈 기사가 한 줄이 되면 안 된다."""
-    rows = [_art("뉴욕증시, 7월 CPI·이란 협상 주목", 1, "a"),
-            _art("이란 호르무즈 통항 제한 검토…브렌트유 급등", 2, "b")]
-    groups = brief.cluster_headlines(brief.pick_headlines(rows, NOW))
-    assert [brief.topic_of(g[0]["title"]) for g in groups] == ["물가", "중동·유가"]
-
-
-def test_unknown_topics_stand_alone_instead_of_joining_a_group():
-    """표에 없는 제목을 남의 묶음에 넣느니 한 줄로 세운다 — 묶기를 못 하는 것과
-    사건이 하나인 것은 다르다."""
-    rows = [_art("연준 5연속 동결", 1, "a"),
-            _art("KB국민은행 예금토큰 검증 성공", 2, "b"),
-            _art("애플 中반도체 시험적용", 3, "c")]
-    groups = brief.cluster_headlines(brief.pick_headlines(rows, NOW))
-    assert [len(g) for g in groups] == [1, 1, 1]
-
-
-def test_the_most_covered_event_leads():
-    """여러 매체가 함께 다룬 사건이 밤사이 시장을 움직인 사건이라, 그것이 첫 줄이어야 한다
-    (예전 프롬프트의 "가장 많이 겹치는 사건 하나"를 규칙으로 옮긴 것)."""
-    rows = [_art("애플 中반도체 시험적용", 1, "a"),
-            _art("연준 5연속 동결", 2, "b"),
-            _art("정부, 美 정책금리 동결에 시장 점검", 3, "c"),
-            _art("한은, 통화정책 불확실성 확대 경계", 4, "d")]
-    groups = brief.cluster_headlines(brief.pick_headlines(rows, NOW))
-    assert len(groups[0]) == 3 and brief.topic_of(groups[0][0]["title"]) == "통화정책"
-
-
-def test_clusters_are_capped_so_the_summary_stays_a_summary():
-    """상한을 넘긴 묶음은 조용히 사라진다 — 요약이 목록이 되는 것을 막는 자리다."""
-    rows = [_art("연준 동결", 1, "a"), _art("7월 CPI 주목", 2, "b"),
-            _art("고용지표 부진", 3, "c"), _art("호르무즈 통항 제한", 4, "d")]
-    picked = brief.pick_headlines(rows, NOW)
-    assert len(brief.cluster_headlines(picked)) == brief.HEADLINE_BULLETS == 3
-    assert len(brief.cluster_headlines(picked, limit=99)) == 4
-
-
-def test_no_articles_means_no_clusters():
-    """사건이 없으면 한 줄도 없다 — 자리를 채우려고 늘리지 않는다."""
-    assert brief.cluster_headlines([]) == []
 
 
 if __name__ == "__main__":

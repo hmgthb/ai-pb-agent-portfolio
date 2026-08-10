@@ -150,7 +150,8 @@ def _styles() -> dict[str, ParagraphStyle]:
         # 글이 아니다 — 문단으로 흘려 두면 어디서 한 항목이 끝나는지 문서가 말하지 않는다.
         # `leftIndent`가 둘째 줄까지 글머리표 오른쪽에 맞춰 세운다(항목 경계가 유지된다).
         # ⚠️ AI 문장과 PB 메모가 **같은 스타일**을 쓴다 — 둘을 가르는 건 크기가 아니라
-        #    제목(`AI 분석`·`PB 메모`)이다. PB가 쓴 줄이 각주보다 작게 앉으면 무게가 뒤집힌다.
+        #    **각주 유무**다(2026-08-10에 구역 제목을 하나로 합쳤다 · `prep_order`).
+        #    PB가 쓴 줄이 각주보다 작게 앉으면 무게가 뒤집힌다.
         "bullet": ParagraphStyle(
             "bullet", parent=base, spaceAfter=7, leftIndent=10, bulletIndent=0
         ),
@@ -489,7 +490,7 @@ def build(note: dict, removed: set[int] | None = None, now: datetime | None = No
         leftMargin=20 * mm, rightMargin=20 * mm, topMargin=18 * mm, bottomMargin=20 * mm,
         title=f"{note.get('corp_name', '')}({note.get('stock_code', '')}) 종목 노트 #{note['id']}",
         author="AI PB 어시스턴트",
-        subject="내부 참고용 · 투자권유 아님",
+        subject="내부 참고용",
     )
 
     flow: list = []
@@ -681,21 +682,21 @@ def prep_sentences(items: list[dict]) -> list[dict]:
 
 
 def prep_order(items: list[dict]) -> list[dict]:
-    """문서에 실리는 순서 — **AI가 낸 것 먼저, PB가 쓴 줄 나중**(2026-08-06).
+    """문서에 실리는 순서 — **담은 순서 그대로**(2026-08-10).
 
-    담은 순서를 그대로 두던 때는 `AI 분석`·`PB 메모`·`AI 분석`처럼 구역이 번갈아 서서,
-    같은 종류의 줄을 읽으려면 문서를 오르내려야 했다(제목은 저자가 바뀔 때 서므로 순서를
-    그대로 두면 그렇게 되는 것이 맞다). 문서에서는 **누가 썼는지가 큰 갈래**이므로 그쪽으로
-    먼저 묶는다.
-    ⚠️ **묶음 안에서는 담은 순서를 지킨다** — 무엇을 먼저 꺼낼지가 이미 PB의 판단이다.
-    ⚠️ 화면(상담 준비 메모 상자)은 **담은 순서 그대로** 둔다. 거기는 방금 무엇을 담았는지
-       확인하는 자리라 마지막에 담은 것이 마지막 줄에 서야 한다.
-    ⚠️ `build_prep`은 이 순서로 **문장 목록과 각주 번호까지** 만든다 — 렌더 직전에 순서만
-       바꾸면 각주가 1,3,2로 붙는다(번호는 첫 등장 순서로 매겨진다).
+    2026-08-06부터 `AI가 낸 것 먼저, PB가 쓴 줄 나중`으로 갈라 놓았고 문서도 `AI 분석`·
+    `PB 메모` 두 구역으로 섰다. 그걸 되돌린다: 문서가 답할 질문은 "누가 썼나"가 아니라
+    **"상담에서 무엇을 이 순서로 꺼낼까"**이고, 그 순서는 PB가 ＋를 누르며 이미 정했다.
+    구역이 갈려 있으면 그 판단이 문서에서 다시 흩어진다.
+
+    ⚠️ 이제 항등 함수다. **자리를 남겨 두는 이유**는 `build_prep`이 여기서 한 번만 순서를
+       정하고 문장 목록·각주 번호·본문 루프가 그 결과를 함께 쓰기 때문이다 — 되돌리거나
+       다른 규칙을 넣을 때 고칠 곳이 여기 하나여야 한다.
+    ⚠️ 렌더 직전에 순서만 바꾸지 말 것 — 각주 번호는 **첫 등장 순서**로 매겨져서 1,3,2가 된다.
+    ⚠️ AI 문장과 PB 메모가 문서에서 갈려 읽혀야 한다는 요구는 사라지지 않았다. 그 일은 이제
+       구역이 아니라 **각주**가 한다(AI 문장에는 출처가 붙고 사람이 쓴 줄에는 안 붙는다).
     """
-    return [it for it in items if it.get("kind") != "memo"] + [
-        it for it in items if it.get("kind") == "memo"
-    ]
+    return list(items)
 
 
 def prep_markdown(items: list[dict]) -> str:
@@ -831,7 +832,7 @@ def build_prep(customer: dict, items: list[dict], now: datetime | None = None) -
             ])
         flow.append(_table(rows, [90 * mm, 40 * mm, 25 * mm]))
 
-    # 아직 처리하지 않은 고객 문의 — **보유 표와 `AI 분석` 사이**다(2026-08-06). 고객 카드가
+    # 아직 처리하지 않은 고객 문의 — **보유 표와 `메모` 구역 사이**다(2026-08-06). 고객 카드가
     # 질문 칩 위에 이 블록을 두는 것과 같은 순서다: 무엇을 확인할지 고르기 전에 "고객이 이미
     # 무엇을 물었는지"가 먼저다. 담은 항목(AI·PB)보다 앞에 서는 이유이기도 하다 —
     # 아래 두 구역은 **이 질문에 답하기 위해 모은 것**이라 질문이 그 위에 있어야 읽힌다.
@@ -854,35 +855,28 @@ def build_prep(customer: dict, items: list[dict], now: datetime | None = None) -
 
     flow.append(Spacer(1, 12))
 
-    # 항목은 **묶음 안에서 담은 순서 그대로** 간다(묶음은 위 `prep_order`가 갈랐다).
-    # 그 안을 다시 정렬하지 않는 이유: 무엇을 먼저 꺼낼지가 이미 그 사람의 판단이다.
+    # 항목은 **담은 순서 그대로** 간다(`prep_order`). 다시 정렬하지 않는 이유: 무엇을 먼저
+    # 꺼낼지가 이미 그 사람의 판단이다.
     #
-    # 제목(`AI 분석`·`PB 메모`)은 **누가 쓴 줄인지가 바뀔 때** 선다(2026-08-06). 순서가 이미
-    # 묶여 있으므로 실제로는 각각 한 번씩 서지만, 조건을 "앞에 한 번씩 박기"로 바꾸지는
-    # 않는다 — 제목이 서는 근거는 위치가 아니라 **저자가 바뀌었다는 사실**이고, 이렇게 두면
-    # 순서 규칙이 바뀌어도 제목이 저자와 어긋나지 않는다.
-    # ⚠️ 이 구분은 규정 문제다 — AI 초안과 사람이 쓴 말이 문서에서 갈려 읽혀야 한다(가드레일 4).
+    # 구역은 **`메모` 하나**다(2026-08-10). 그전에는 `AI 분석`·`PB 메모`로 갈렸는데, 그러면
+    # 담은 순서가 저자별로 흩어져 PB가 정한 순서가 문서에서 사라졌다.
+    # ⚠️ AI 초안과 사람이 쓴 말이 문서에서 갈려 읽혀야 한다는 요구(가드레일 4)는 그대로다 —
+    #    그 일은 이제 제목이 아니라 **각주**가 한다(AI 문장에는 출처가 붙고 메모에는 안 붙는다).
+    #    각주까지 없애면 둘을 가를 것이 문서에 남지 않는다.
     i = 0
-    section: str | None = None
-
-    def _section(name: str) -> None:
-        nonlocal section
-        if section != name:
-            flow.append(_p(name, st["h2"]))
-            section = name
+    if items:
+        flow.append(_p("메모", st["h2"]))
 
     for it in items:
         kind = it.get("kind")
         if kind == "sentence":
-            _section("AI 분석")
             flow.append(_bp(escape(sentences[i]["text"]) + _refs(sentences[i], number_of), st["bullet"]))
             i += 1
         elif kind == "option":
-            _section("AI 분석")
             targets = " · ".join(escape(t) for t in (it.get("targets") or []))
             head = f"선택지: {escape(it.get('label', ''))}"
             # ⚠️ 제목(h2)이 아니라 **불릿**이다 — 선택지도 PB가 담은 한 항목이라 문장들과
-            #    같은 급이고, h2로 두면 `AI 분석`과 같은 크기가 되어 구역처럼 읽힌다.
+            #    같은 급이고, h2로 두면 `메모` 제목과 같은 크기가 되어 구역처럼 읽힌다.
             flow.append(_bp(head + (f" ({targets})" if targets else ""), st["bullet"]))
             for _ in it.get("basis") or []:
                 # 글머리표를 두 번 찍지 않는다 — 위 선택지 줄이 이미 불릿이고, 이 줄들은
@@ -893,11 +887,10 @@ def build_prep(customer: dict, items: list[dict], now: datetime | None = None) -
                 flow.append(_p("바꾸지 않는 것: " + escape(sentences[i]["text"]), st["sub"]))
                 i += 1
         elif kind == "memo":
-            # PB가 쓴 줄 — AI 문장과 **한눈에 갈려야** 한다. 그 일을 이제 **제목**이 한다
-            # (2026-08-06). 그전에는 줄마다 `[PB 메모]` 라벨을 앞에 달고 8pt 회색으로 앉혔는데,
-            # 문서에서 사람이 직접 쓴 유일한 줄이 각주보다 작은 것은 무게가 뒤집힌 것이었다.
-            # 라벨은 구역이 대신하므로 뺀다 — 흑백으로 나가도 제목은 남는다.
-            _section("PB 메모")
+            # PB가 쓴 줄. **라벨도 구역도 붙이지 않는다** — 문장들과 같은 급의 항목이고,
+            # AI 문장과 갈리는 표시는 각주 유무다(위 루프 머리말).
+            # ⚠️ 줄마다 `[PB 메모]`를 8pt 회색으로 달던 시절로 되돌리지 말 것(2026-08-06에
+            #    걷어냈다) — 문서에서 사람이 직접 쓴 유일한 줄이 각주보다 작으면 무게가 뒤집힌다.
             flow.append(_bp(escape(sentences[i]["text"]), st["bullet"]))
             i += 1
 
@@ -913,7 +906,7 @@ def build_prep(customer: dict, items: list[dict], now: datetime | None = None) -
             flow.append(KeepTogether(parts))
 
     # 규정 고지 — `compliance.NOTICES["F1"]` 그대로다. 위 `PREP_PURPOSE`와 역할이 다르다:
-    # 저건 문서 성격, 이건 규정이 요구하는 문구(지연시세·투자권유 아님·내부 계좌데이터).
+    # 저건 문서 성격, 이건 규정이 요구하는 문구(지연시세·내부 계좌데이터).
     flow.append(Spacer(1, 12))
     flow.append(_p(escape(compliance.NOTICES["F1"]), st["notice"]))
     flow.append(Spacer(1, 10))

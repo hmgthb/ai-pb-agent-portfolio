@@ -179,6 +179,30 @@ def test_prep_sentences_keep_who_wrote_what():
     assert ss[2]["source"] is None  # `none` 태그에는 각주를 붙이지 않는다
 
 
+def test_prep_keeps_the_order_the_pb_picked():
+    """**담은 순서 그대로**(2026-08-10). 그전에는 `AI가 낸 것 먼저, PB 메모 나중`으로 갈라
+    문서가 두 구역(`AI 분석`·`PB 메모`)으로 섰는데, 그러면 PB가 ＋를 누르며 정한 순서가
+    문서에서 흩어졌다 — 문서가 답할 질문은 "누가 썼나"가 아니라 "무엇을 이 순서로 꺼낼까"다.
+
+    ⚠️ 각주 번호는 **첫 등장 순서**로 매겨지므로, 렌더 직전에 순서를 바꾸면 1,3,2가 된다.
+       순서를 정하는 곳이 `prep_order` 하나여야 하는 이유다."""
+    picked = [
+        {"kind": "memo", "text": "먼저 담은 메모."},
+        {"kind": "sentence", "text": "그다음 담은 AI 문장.", "sources": []},
+        {"kind": "memo", "text": "마지막에 담은 메모."},
+    ]
+    assert notepdf.prep_order(picked) == picked
+    assert [s["text"] for s in notepdf.prep_sentences(picked)] == [
+        "먼저 담은 메모.", "그다음 담은 AI 문장.", "마지막에 담은 메모.",
+    ]
+
+
+def test_prep_pdf_has_one_memo_section():
+    """구역은 `메모` 하나다 — AI 문장과 PB 메모를 가르는 일은 이제 **각주**가 한다."""
+    pdf = notepdf.build_prep({"id": 1, "name": "홍길동"}, _PREP)
+    assert pdf.startswith(b"%PDF")  # 렌더가 실제로 돈다(구역 합치기가 루프를 깨지 않았다)
+
+
 def test_prep_markdown_carries_the_pb_memo_into_the_gate():
     """⚠️ PB가 손으로 쓴 줄이 게이트를 비켜 가면 안 된다 — 본문에 들어가야 잡힌다."""
     md = notepdf.prep_markdown(_PREP)
@@ -186,14 +210,15 @@ def test_prep_markdown_carries_the_pb_memo_into_the_gate():
 
 
 def test_pb_memo_is_checked_like_everything_else():
-    """사람이 썼다고 규정을 비켜 가지 않는다 — 금지 표현은 그대로 막힌다."""
-    bad = [{"kind": "memo", "text": "목표주가 12만원 잡고 매수 추천할 것."}]
+    """사람이 썼다고 규정을 비켜 가지 않는다 — 남은 금지 표현(단정)은 그대로 막힌다.
+    ⚠️ `목표주가`·`매수 추천`은 2026-08-10에 허용됐다 — 여기서 막히는 건 없는 확실성이다."""
+    bad = [{"kind": "memo", "text": "이 종목은 수익을 보장한다."}]
     v = compliance.check_note(
         compliance.apply_notice(notepdf.prep_markdown(bad), "F1"),
         notepdf.prep_sentences(bad),
         "F1",
     )
-    assert any("투자권유" in x for x in v), v
+    assert any("단정" in x for x in v), v
 
 
 def test_prep_flag_line_quotes_the_saved_rule_result():

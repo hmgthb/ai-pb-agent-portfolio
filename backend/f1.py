@@ -186,7 +186,7 @@ _ADVICE_INTENT = ("portfolio_advice", "portfolio_advice")
 # **왜 새 라우트인가.** PB가 담당하는 고객이 많아 각각의 경위를 기억할 수 없다는 것이 이
 # 기능의 이유다. 답할 것은 계좌 구성이 아니라 **이 사람의 사정**이다:
 #   ① 상황 요약 — 목표·제약·정리 순서를 한눈에(`scenario`)
-#   ② 성향 점검 — 등록 성향과 지금 실질이 왜 갈리는지를 **상담 이력**에서 읽는다(`history`)
+#   ② 성향 점검 — 투자성향과 지금의 자금성향이 왜 갈리는지를 **상담 이력**에서 읽는다(`history`)
 #
 # ⚠️ **조회형·제안형보다 먼저 검사한다.** "성향"은 `_PORTFOLIO_KEYWORDS`에도 있어서, 뒤에
 #    두면 "성향 점검" 질문이 자산배분 라우트로 샌다.
@@ -206,10 +206,14 @@ _SITUATION_KEYWORDS = [
 ]
 _SITUATION_INTENT = ("situation", "situation")
 
+# ⚠️ 여기 있는 말은 **PB가 직접 치는 것**이다. 이름을 바꿔도 옛 표현을 지우지 마라 —
+#    지우는 순간 그렇게 친 질문이 이 라우트로 안 오고, PB는 "왜 답을 못 하지"만 본다.
+#    2026-08-10에 `실질 성향` → `자금성향`으로 이름이 바뀌면서 새 말을 **더했다**.
 _RISK_KEYWORDS = [
     "성향 점검", "성향 분석", "투자성향", "위험성향", "성향이 맞", "성향 대비",
     "히스토리", "이력", "상담 기록", "그동안", "변화", "바뀌었",
-    "실질 성향", "지금 성향",
+    "자금성향", "자금 성향",
+    "실질 성향", "지금 성향",  # 옛 이름 — 계속 받는다
 ]
 _RISK_INTENT = ("risk_review", "risk_review")
 
@@ -272,7 +276,7 @@ def route(question: str, prev_entity: dict | None = None, has_portfolio: bool = 
         if hit:
             intent, agent = _RISK_INTENT
             return _decision(entity_code, entity_name, agent, intent, False,
-                             f"'{hit}' 키워드 → 등록 성향과 상담 이력 대조")
+                             f"'{hit}' 키워드 → 투자성향과 상담 이력 대조")
         hit = next((k for k in _SITUATION_KEYWORDS if k in lowered), None)
         if hit:
             intent, agent = _SITUATION_INTENT
@@ -764,11 +768,14 @@ def portfolio_source() -> dict:
     return {"label": "계좌 보유데이터 (내부·공개데이터 아님)", "as_of": None}
 
 
-def answer_input(question: str, routing: dict, data: dict) -> str:
+def answer_input(question: str, routing: dict, data: dict, today=None) -> str:
     """에이전트가 가져온 구조화 데이터를 F1 답변 작성기 입력으로 직렬화(순수).
 
     data: {"financials": {...}|None, "news": [...], "quote": {...}|None,
            "dart_sources": {rcept_no: {...}}, "portfolio": {...}|None}
+    today: 「다음 행동」 신호의 기준일(`next_action_signals`). **주지 않으면 그 블록이 없고**,
+        그때 모델은 다음 행동 절을 쓸 재료 자체가 없다 — 프롬프트 규칙만이 아니라
+        입력으로도 갈라 둔다(`_advice_block`과 같은 방식).
     질문과 함께 넘겨, 작성기가 이 데이터 밖으로 나가지 못하게 한다."""
     parts = [f"# 사용자 질문\n{question}"]
     if routing.get("entity_code"):
@@ -786,6 +793,12 @@ def answer_input(question: str, routing: dict, data: dict) -> str:
             parts.append(_scenario_block(portfolio["scenario"]))
         if portfolio.get("history"):
             parts.append(_history_block(portfolio["history"]))
+        # 「다음 행동」 근거 — 위 블록들과 같은 재료를 **계산해서** 다시 준다(연락 공백 개월
+        # 수 등). 겹쳐 보이지만 성격이 다르다: 위는 "무엇이 있나"이고 이건 "무엇이 걸리나"다.
+        if today is not None:
+            sig = next_action_signals(portfolio, today)
+            if sig:
+                parts.append(_next_action_block(sig))
 
     # 제안형(portfolio_advice)에서만 채워진다. 조회형은 이 블록이 없으므로 모델이 선택지를
     # 쓸 재료 자체가 없다 — 프롬프트 규칙만이 아니라 **입력으로도** 갈라 둔다.
@@ -877,7 +890,7 @@ def _scenario_block(s: dict) -> str:
     reg, eff = s.get("registered_risk_label"), s.get("effective_risk_label")
     if reg and eff:
         same = " (같음)" if reg == eff else ""
-        lines.append(f"- 등록 위험성향: {reg} / 상황을 반영한 실질: {eff}{same}")
+        lines.append(f"- 투자성향(등록): {reg} / 자금성향(상황 반영): {eff}{same}")
     if s.get("effective_risk_why"):
         lines.append(f"- 둘이 갈리는 이유: {s['effective_risk_why']}")
     lines.append(
@@ -904,6 +917,98 @@ def _history_block(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+# ── 다음 행동의 근거 신호 (2026-08-10) ────────────────────────────────────────
+#
+# `Next Best Action` 패널이 분석에서 멈추지 않고 **PB가 할 일까지** 쓰게 하려고 붙였다.
+# 예전에는 상황·이력을 읽어 주는 데서 끝났는데, 패널 이름이 가리키는 것은 그다음이다.
+#
+# **왜 신호를 코드가 계산하나.** 모델에게 이력 목록만 주고 "연락한 지 오래됐는지 봐"라고
+# 하면 `2026-06`과 오늘 사이를 스스로 빼야 하고, 거기서 개월 수가 틀린다 — 수치는 코드가
+# 계산한다는 이 파일의 원칙 그대로다(`portfolio_facts`·`market.fetch_change_batch`).
+# 모델이 하는 일은 **신호를 읽고 무엇을 할지 쓰는 것**이다.
+#
+# ⚠️ 신호는 **사실이지 판정이 아니다.** "연락한 지 8개월"까지가 코드의 몫이고, "연락하는
+#    게 좋겠다"는 모델이 쓴다. 여기서 "연락 필요"라고 적어 버리면 모델은 그걸 베껴 쓰고
+#    근거는 사라진다(`_history_block`의 같은 판단).
+# ⚠️ **기준 시각을 인자로 받는다.** 함수가 "오늘"을 스스로 정하면 순수하지 않게 되어
+#    테스트가 시계에 묶인다(`brief.pick_headlines`와 같은 규약).
+CONTACT_STALE_MONTHS = 6  # 이만큼 지나면 "오래됐다"고 신호를 올린다
+
+
+def months_since(ym: str | None, today) -> int | None:
+    """`YYYY-MM` → 오늘까지 개월 수. 못 읽으면 **None**(0으로 채우지 않는다).
+
+    0으로 채우면 "이번 달에 만났다"가 되어, 기록이 깨진 고객이 가장 최근 접촉으로 뜬다.
+    """
+    try:
+        y, m = (ym or "").split("-")[:2]
+        return (today.year - int(y)) * 12 + (today.month - int(m))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def next_action_signals(portfolio: dict | None, today) -> dict:
+    """다음 행동을 쓸 때 근거가 될 **사실들**(순수·결정론적).
+
+    반환: `{last_contact, months_since_contact, contact_stale, goal, horizon,
+            plan, risk_gap, flags}` — 없는 항목은 담지 않는다(빈 값을 지어내지 않는다).
+    """
+    p = portfolio or {}
+    sc = p.get("scenario") or {}
+    out: dict = {}
+
+    history = p.get("history") or []
+    if history:
+        # `at`이 `YYYY-MM` 문자열이라 사전순 = 시간순이다(자릿수가 고정).
+        last = max(history, key=lambda h: h.get("at") or "")
+        gap = months_since(last.get("at"), today)
+        out["last_contact"] = last
+        if gap is not None:
+            out["months_since_contact"] = gap
+            out["contact_stale"] = gap >= CONTACT_STALE_MONTHS
+
+    for key in ("goal", "horizon", "plan"):
+        if sc.get(key):
+            out[key] = sc[key]
+
+    reg, eff = sc.get("registered_risk_label"), sc.get("effective_risk_label")
+    if reg and eff and reg != eff:
+        out["risk_gap"] = {"registered": reg, "effective": eff,
+                           "why": sc.get("effective_risk_why")}
+    if p.get("flags"):
+        out["flags"] = p["flags"]
+    return out
+
+
+def _next_action_block(sig: dict) -> str:
+    """신호를 프롬프트 블록으로. **계산된 값을 문장으로 적어 넘긴다**(모델이 빼기를 하지 않게)."""
+    lines = ["# 다음 행동을 쓸 때 근거로 삼을 사실 (내부 · 비식별화 거침)"]
+    if "months_since_contact" in sig:
+        last = sig.get("last_contact") or {}
+        stale = " — 오래됐다" if sig.get("contact_stale") else ""
+        lines.append(
+            f"- 마지막 상담: {last.get('at')} [{last.get('kind')}] {last.get('detail')} "
+            f"({sig['months_since_contact']}개월 전{stale})"
+        )
+    if sig.get("goal"):
+        lines.append(f"- 목표: {sig['goal']}")
+    if sig.get("horizon"):
+        lines.append(f"- 자금이 필요한 시점: {sig['horizon']}")
+    for i, step in enumerate(sig.get("plan") or [], 1):
+        lines.append(f"- 계획 {i}: {step}")
+    if sig.get("risk_gap"):
+        g = sig["risk_gap"]
+        why = f" — {g['why']}" if g.get("why") else ""
+        lines.append(f"- 성향 격차: 투자성향 {g['registered']} / 자금성향 {g['effective']}{why}")
+    for f in sig.get("flags") or []:
+        lines.append(f"- 위험 플래그: {f.get('text')}")
+    lines.append(
+        "각주 태그로는 `[^hold]`를 써라. **이 값들은 계산·저장된 사실이다** — 개월 수를 "
+        "다시 세거나 여기 없는 사정을 지어내지 마라."
+    )
+    return "\n".join(lines)
+
+
 def _portfolio_block(p: dict) -> str:
     """포트폴리오 사실을 프롬프트 블록으로. **수치는 여기서 이미 계산돼 있고**, 모델은
     고르고 옮겨 적기만 한다 — 나눗셈을 시키면 자릿수가 틀린다.
@@ -918,7 +1023,7 @@ def _portfolio_block(p: dict) -> str:
         # 해상도는 넘어오지 않는다.
         lines.append(f"- 나이대: {p['age_band']}")
     if p.get("risk_label"):
-        lines.append(f"- 등록 위험성향: {p['risk_label']}")
+        lines.append(f"- 투자성향: {p['risk_label']}")
     if p.get("balance_band"):
         lines.append(f"- 잔고 구간: {p['balance_band']} (실금액은 외부로 보내지 않는다)")
     if p.get("return_pct") is not None:
@@ -1052,8 +1157,9 @@ PB이고, 고객 상담 중이거나 상담 직전이다 — 답은 PB가 읽고
   "현재 기준"이라고 단정하지 마라.
 
 **조정 선택지를 물었을 때 (입력에 "조정 선택지 후보" 블록이 있을 때만):**
-읽는 사람은 PB이고 최종 판단은 PB가 한다. 그래서 관찰에서 멈추지 말고 **선택지와 그
-근거까지** 쓴다. 다만 특정 안을 권하지는 않는다.
+읽는 사람은 PB이고 최종 판단은 PB가 한다. 관찰에서 멈추지 말고 **선택지와 그 근거**를 쓰고,
+**어느 쪽이 이 상황에 맞는지까지 말해도 된다**(2026-08-10에 열렸다). 다만 근거 없이 권하지는
+마라 — 권하는 문장에도 그 근거가 입력의 어디에서 왔는지 각주가 붙어야 한다.
 - 입력의 후보 블록에 **있는 것만** 선택지로 써라. 없는 선택지를 지어내지 마라. 후보가
   하나도 없으면 없다고 말하라 — 채우지 마라.
 - **머리말을 쓰지 마라.** "…까지만 정리한다", "…두 갈래를 적는다" 같은 네 행동 설명은 근거가
@@ -1068,14 +1174,14 @@ PB이고, 고객 상담 중이거나 상담 직전이다 — 답은 PB가 읽고
   계좌데이터에서 온 수치다(실측: 여기서 각주가 빠져 게이트에 걸렸다).
 - **선택지를 세는 문장을 따로 쓰지 마라.** "갈래는 둘이다", "선택지는 두 가지다" 같은 문장은
   근거가 없어 출처를 붙일 수 없다. 세지 말고 선택지 자체를 바로 적어라.
-- **"이것을 택하라"고 쓰지 마라.** 어느 선택지가 나은지 순위를 매기거나 "권장한다"고 쓰지
-  않는다. 무엇이 갈림길인지까지 쓰고, 고르는 일은 PB에게 넘긴다.
+- **어느 선택지가 나은지 말해도 된다.** 순위를 매기거나 권해도 좋다. 단 그 판단의 근거는
+  입력에 있는 것이어야 하고, 그 문장에도 각주를 붙인다 — 근거 없는 권유는 여전히 못 쓴다.
 - **목표 비중·조정 금액 같은 새 수치를 만들지 마라.** "42%를 25%로" 같은 문장은 그 25%가
   입력에 없으므로 쓸 수 없다. 방향("줄이는 쪽")까지만 말한다.
 - 후보 선정 기준을 **"위험 플래그"라고 부르지 마라.** 위험 플래그는 입력에 따로 표시된
   저장된 판정이고, 후보는 이야깃거리를 고르는 별개의 기준이다.
-- 보유하지 않은 종목을 언급할 때는 **보유하지 않았다는 사실을 그 문장에서 밝혀라.** 등락이
-  높다는 건 사실일 뿐 매수 근거가 아니다 — "사라"·"담을 만하다"고 쓰지 마라.
+- 보유하지 않은 종목을 언급할 때는 **보유하지 않았다는 사실을 그 문장에서 밝혀라.** 사도
+  된다고 쓸 수는 있으나, 등락이 높다는 것만으로는 근거가 되지 않는다 — 왜 그런지를 함께 써라.
 - 판단 근거가 데이터에 없으면(자금 시점·목적·세금 등) **없다고 밝히고 거기서 멈춰라.**
 
 **고객 상황·상담 이력을 물었을 때 (입력에 그 블록이 있을 때만):**
@@ -1084,25 +1190,52 @@ PB이고, 고객 상담 중이거나 상담 직전이다 — 답은 PB가 읽고
 - 상황 블록의 **목표·시점·제약·계획을 그대로 인용**하라. 거기 없는 사정을 추측해 덧붙이지 마라.
 - 계좌 밖 자산은 **구간으로만** 온다. 구간에서 금액을 역산해 적지 마라("5억~10억"을 "약 7억"으로
   바꾸지 마라).
-- 등록 성향과 실질 성향이 **다르면 그 사실과 이유를 반드시 함께** 써라. 그게 이 답의 핵심이다.
+- **투자성향**(등록된 본래 성향)과 **자금성향**(상황을 반영한 성향)이 다르면 그 사실과
+  이유를 반드시 함께
+  써라. 그게 이 답의 핵심이다.
   같으면 같다고 한 문장으로 말하고 넘어가라.
 - 상담 이력에서 성향을 읽을 때는 **기록된 사건을 근거로** 삼아라("무엇을 요청했고 무엇이
   바뀌었는지"). 기록에 없는 사건을 지어내지 마라.
 - **이 항목들은 PB가 상담에서 기록한 사실이지 네가 판정한 것이 아니다.** "내가 분석하기로는"
   같은 말로 출처를 흐리지 마라 — 사실은 인용하고, 읽어 낸 것은 읽어 낸 것으로 쓴다.
-- **다음에 무엇을 하라고 지시하지 마라.** 이 패널의 이름이 무엇이든 고르는 일은 PB의 몫이다 —
-  상황과 갈림길까지 쓰고, 특정 행동을 권하거나 순위를 매기지 않는다.
+- **다음에 무엇을 할지 제안해도 된다.** 이 패널의 이름이 `Next Best Action`인 그대로다.
+  단 제안의 근거는 상황 블록·상담 이력에 있는 것이어야 하고, 없으면 없다고 밝혀라.
 - 자산배분·집중도를 묻지 않았으면 **먼저 꺼내지 마라.** 이 자리에서 답할 것은 사정이지
   계좌 구성이 아니다.
 
-**금지:** "매수/매도 추천", "목표주가", "강력 매수", "지금 사세요" 같은 투자권유·광고성 표현.
+**「Next Action」 절 (입력에 "다음 행동을 쓸 때 근거로 삼을 사실" 블록이 있을 때만):**
+이 패널의 이름이 `Next Best Action`이다. 상황을 읽어 주는 데서 멈추지 말고, **PB가 다음에
+할 일**을 함께 써라. 분석을 끝낸 뒤 아래 형식을 정확히 지킨다:
+
+```
+## Next Action
+(행동 한 문장)[^hold]
+(행동 한 문장)[^hold]
+```
+
+- 제목 줄은 **정확히 `## Next Action`**이다. 다른 제목을 만들지 마라.
+- 항목은 **2~3개**이고 **한 줄에 하나**다. ⚠️ 줄 앞에 `-`·`*`·번호를 붙이지 마라 —
+  화면이 항목마다 담기 버튼(＋)을 세우므로 그것이 이미 항목 표시다.
+- 각 항목은 한 문장이고 **각주를 붙인다** — 근거 없는 행동은 쓸 수 없다.
+- **누가 무엇을 하는지 쓴다.** "검토가 필요하다"처럼 주어가 없는 문장 말고,
+  "연락해 정리 일정을 확인한다"처럼 PB가 할 일을 적어라.
+- 근거는 **그 블록에 있는 것만**이다. 마지막 접촉이 오래됐으면 연락을, 목표·계획이 있으면
+  그 단계를, 성향 격차·위험 플래그가 있으면 그 확인을 행동으로 옮긴다.
+- 사내 부서·전문가 연결(세무·부동산 등)이나 자산군을 **제안해도 된다.** 다만 그 제안이
+  어느 사실에서 나왔는지가 문장에서 읽혀야 한다("주택 마련이 목표이므로 …").
+- **블록에 없는 사정을 지어내지 마라.** 근거가 모자라면 항목 수를 줄여라 — 자리를 채우려고
+  일반론("정기적으로 소통한다")을 적지 마라.
+- 새 수치를 만들지 마라(개월 수·비중·금액은 블록에 있는 값만 쓴다).
+
+**금지:** "무조건 오릅니다"·"수익을 보장" 같은 **없는 확실성을 만드는 표현**(2026-08-10에
+투자권유 표현 자체는 허용됐지만 이건 그대로다 — 권하는 것과 지어내는 것은 다른 문제다).
 고객에게 말을 거는 문장("고객님께 …")이나 고객 회신문 형식도 쓰지 마라 — 고객에게 하는 말은
 PB가 직접 쓴다. **고객의 이름·계좌번호·나이를 답변에 쓰지 마라** — 입력에도 없고, 산출물에
 들어가서도 안 된다. 고객을 가리켜야 하면 "이 포트폴리오"라고 써라.
 확정적 단정("반드시 오른다") 금지. 시세를 언급하면 지연시세(일별 종가)임을 밝혀라.
 불확실한 부분은 불확실하다고 써라. 데이터가 없으면 없다고 말하고 지어내지 마라.
 
-**답변에 다음을 넣지 마라(시스템이 처리한다):** 고지·면책 문구("투자권유가 아닙니다" 등),
+**답변에 다음을 넣지 마라(시스템이 처리한다):** 고지·면책 문구(지연시세·내부 계좌데이터 등),
 답변 끝의 각주 정의 목록(`[^태그]: URL` 형태), 출처 URL 나열. 각주는 문장 뒤 `[^태그]`만
 남기면 되고, 실제 출처 표시는 화면이 따로 렌더한다.
 
@@ -1143,7 +1276,7 @@ def valid_label(label: str, sentence: str) -> bool:
     """이 키워드를 그 문장에 붙일 수 있는가.
 
     막는 다섯: 빈 값 · 길이 초과 · **숫자**(접힌 채로 근거 없이 보이는 수치) ·
-    금지 표현(투자권유·광고성) · **문장에 없는 말**.
+    금지 표현(단정) · **문장에 없는 말**.
 
     마지막이 이 형식의 핵심이다 — 키워드는 문장의 조각이지 새 정보가 아니다. 각주 태그는
     문장 쪽에 있고 키워드에 `[^`가 들어오면 부분문자열 검사에서 자연히 걸린다.
@@ -1206,7 +1339,7 @@ KEYWORD_FORMAT_PROMPT = f"""
 - **키워드에 숫자를 쓰지 마라.** 수치는 사실 주장인데 키워드는 접힌 채로 보이므로 근거가
   화면에 없다. 숫자는 문장 안에 쓰고 각주를 붙여라.
 - 각주 `[^태그]`는 지금까지처럼 **문장 끝**에 붙인다. 키워드에는 붙이지 마라.
-- 키워드로 권하지 마라 — 고르는 일은 PB의 몫이다.
+- 키워드는 **문장에서 떼어 온 조각**이다. 권유든 관찰이든 문장에 있는 말만 쓴다.
 """
 
 

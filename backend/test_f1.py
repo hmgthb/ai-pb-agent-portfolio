@@ -4,7 +4,7 @@
 """
 
 from backend import f1, redact
-from backend.compliance import CHAT_NOTICE, input_guard, required_notice
+from backend.compliance import CHAT_NOTICE, apply_notice, input_guard, required_notice
 
 
 # ── 라우팅 ────────────────────────────────────────────────
@@ -98,10 +98,26 @@ def test_input_guard_blocks_pii():
     assert any("PII" in x for x in input_guard("계좌 123-4567-8901 확인해줘"))
 
 
-def test_chat_notice_registered():
-    """F1 고지문구가 NOTICES에 등록돼 있어야 게이트가 안다."""
-    assert required_notice("F1") == CHAT_NOTICE
-    assert "지연" in CHAT_NOTICE and "투자권유" in CHAT_NOTICE
+def test_chat_notice_is_registered_but_empty():
+    """**F1 고지문구를 걷어냈다**(2026-08-10). 등록은 남는다 — `required_notice`가 모르는
+    기능 코드에서 터지도록 돼 있어(배선 실수를 조용히 넘기지 않는다) 키가 있어야 한다."""
+    assert required_notice("F1") == CHAT_NOTICE == ""
+    # 빈 문구는 본문 앞에 빈 줄을 만들지 않는다 — 화면·PDF 첫 줄이 밀린다.
+    assert apply_notice("본문", "F1") == "본문"
+
+
+def test_removing_the_notice_also_lifted_the_delayed_quote_rule():
+    """이 문구의 `지연시세`가 QUOTE 규칙을 자기충족적으로 만족시키던 장치였다.
+    문구만 빼면 **만족시킬 방법이 없는 규칙**이 남아 시세 답변이 매번 위반이 된다 —
+    엄격한 것과 만족 불가능한 것은 다르다."""
+    from backend.compliance import QUOTE_EXEMPT_FEATURES, check_note
+
+    s = [{"text": "종가는 185,900원입니다.", "source": None, "sources": [],
+          "is_heading": False, "kind": "claim"}]
+    assert "F1" in QUOTE_EXEMPT_FEATURES
+    assert not any("지연시세" in v for v in check_note("종가는 185,900원입니다.", s, "F1"))
+    # F3는 그대로 걸린다 — 걷어낸 것은 F1 하나다.
+    assert any("지연시세" in v for v in check_note("종가는 185,900원입니다.", s, "F3"))
 
 
 # ── 답변 입력 조립 ─────────────────────────────────────────
@@ -279,9 +295,11 @@ def test_hold_tag_resolves_only_with_holdings_source():
     assert with_src[0]["source"]["as_of"] is None
 
 
-def test_chat_notice_declares_internal_holdings():
-    """공개데이터가 아닌 근거를 쓰면서 화면에 안 밝히면 공시와 같은 급으로 읽힌다."""
-    assert "내부 계좌데이터" in CHAT_NOTICE and "공개데이터가 아니" in CHAT_NOTICE
+def test_internal_holdings_are_still_declared_by_the_source_badge():
+    """고지문구가 빠지면서 "이 근거는 내부 계좌데이터"라고 말하는 자리도 없어졌다.
+    남은 것은 **문장별 출처**뿐이다 — `[^hold]`가 해석되는 경로가 살아 있어야 한다."""
+    label = (f1.portfolio_source() or {}).get("label") or ""
+    assert "내부" in label and "공개데이터 아님" in label, label
 
 
 # ── 되묻기 두 종류 · 키워드 보강 (2026-07-28 2차) ──────────
@@ -580,7 +598,7 @@ def test_stock_questions_are_not_stolen():
 
 
 def test_scenario_block_carries_the_risk_gap():
-    """등록 성향과 실질이 다르면 **그 사실과 이유가 프롬프트에 들어가야** 한다 — 이 답의 핵심이다."""
+    """투자성향과 자금성향이 다르면 **그 사실과 이유가 프롬프트에 들어가야** 한다 — 이 답의 핵심이다."""
     block = f1._scenario_block({
         "summary": "다주택 정리 후 상급지 이동 — 서초 주택 마련",
         "goal": "서초 주택 마련", "horizon": "1~2년",
@@ -664,8 +682,10 @@ def test_keyword_count_is_capped():
 
 
 def test_a_forbidden_phrase_cannot_hide_in_a_keyword():
-    """금지 표현은 키워드에서도 금지다 — 문장에 있다고 통과시키면 접힌 채로 뜬다."""
-    assert not f1.valid_label("지금 사세요", "지금 사세요 라는 말이 있었다.")
+    """남은 금지 표현(단정)은 키워드에서도 금지다 — 문장에 있다고 통과시키면 접힌 채로 뜬다.
+    ⚠️ 투자권유 표현은 2026-08-10에 허용됐으므로 키워드로도 나갈 수 있다."""
+    assert not f1.valid_label("수익을 보장", "수익을 보장한다는 말이 있었다.")
+    assert f1.valid_label("지금 사세요", "지금 사세요 라는 말이 있었다.")
 
 
 def test_a_plain_prose_answer_survives_the_split():
@@ -687,6 +707,93 @@ def test_keyword_format_is_opt_in():
     assert f1.answer_system_prompt(False) == f1.ANSWER_SYSTEM_PROMPT
     assert f1.answer_system_prompt(True).startswith(f1.ANSWER_SYSTEM_PROMPT)
     assert "키워드 ::" in f1.answer_system_prompt(True)
+
+
+# ── 다음 행동 신호 (2026-08-10) ────────────────────────────────────────────────
+#
+# `Next Best Action` 패널이 분석에서 멈추지 않게 붙인 블록이다. **신호는 코드가 세고
+# 행동은 모델이 쓴다** — 여기서 검증하는 것은 앞쪽(계산)이다.
+
+from datetime import date  # noqa: E402
+
+TODAY = date(2026, 8, 10)
+
+_SC = {
+    "goal": "서초 주택 마련",
+    "horizon": "1~2년",
+    "plan": ["수원 주택 우선 정리", "이후 은평 주택 정리"],
+    "registered_risk_label": "공격투자형",
+    "effective_risk_label": "안정형",
+    "effective_risk_why": "정리 일정과 보증금 지출이 겹쳐 단기 현금이 묶여 있음",
+}
+_HIST = [
+    {"at": "2025-02", "kind": "상담", "detail": "국내주식 비중 확대 요청"},
+    {"at": "2026-01", "kind": "상담", "detail": "보유 부동산 정리 계획 공유"},
+]
+
+
+def test_contact_gap_is_counted_by_code_not_the_model():
+    """개월 수를 모델에게 빼게 하면 거기서 틀린다 — 수치는 코드가 센다."""
+    sig = f1.next_action_signals({"history": _HIST, "scenario": _SC}, TODAY)
+    assert sig["last_contact"]["at"] == "2026-01"  # 최신 것을 고른다
+    assert sig["months_since_contact"] == 7
+    assert sig["contact_stale"] is True
+
+
+def test_a_recent_contact_is_not_stale():
+    fresh = [{"at": "2026-07", "kind": "상담", "detail": "정기 점검"}]
+    sig = f1.next_action_signals({"history": fresh}, TODAY)
+    assert sig["months_since_contact"] == 1 and sig["contact_stale"] is False
+
+
+def test_an_unreadable_date_is_dropped_not_zeroed():
+    """0으로 채우면 "이번 달에 만났다"가 되어, 기록이 깨진 고객이 가장 최근 접촉으로 뜬다."""
+    assert f1.months_since("깨진값", TODAY) is None
+    sig = f1.next_action_signals({"history": [{"at": None, "kind": "상담"}]}, TODAY)
+    assert "months_since_contact" not in sig and "contact_stale" not in sig
+
+
+def test_signals_carry_facts_not_verdicts():
+    """"연락 필요"라고 적어 두면 모델은 그걸 베껴 쓰고 근거는 사라진다 — 사실까지만 준다.
+
+    ⚠️ 낱말(`필요`)로 세지 않는다 — 사실 라벨에도 들어 있다("자금이 **필요**한 시점").
+       막아야 하는 건 **판정 어투**다(브리핑 금지어를 구문으로 좁힌 것과 같은 판단)."""
+    text = f1._next_action_block(f1.next_action_signals(
+        {"history": _HIST, "scenario": _SC}, TODAY))
+    assert "마지막 상담" in text  # `접촉`이 아니라 `상담`이다(화면·프롬프트 공통)
+    assert "7개월 전" in text and "오래됐다" in text  # 계산된 사실은 있고
+    for verdict in ("연락 필요", "점검 필요", "권장", "해야 한다", "하는 것이 좋"):
+        assert verdict not in text, verdict  # 무엇을 하라는 말은 없다
+
+
+def test_risk_gap_appears_only_when_the_two_differ():
+    same = {**_SC, "effective_risk_label": "공격투자형"}
+    assert "risk_gap" not in f1.next_action_signals({"scenario": same}, TODAY)
+    assert f1.next_action_signals({"scenario": _SC}, TODAY)["risk_gap"]["effective"] == "안정형"
+
+
+def test_empty_portfolio_yields_no_signals():
+    """근거가 없으면 블록 자체가 없다 — 그때 모델은 다음 행동을 쓸 재료가 없다."""
+    assert f1.next_action_signals(None, TODAY) == {}
+    assert f1.next_action_signals({}, TODAY) == {}
+
+
+def test_the_block_is_absent_unless_today_is_given():
+    """입력으로도 갈라 둔다 — 종목만 묻는 질문에는 할 행동이 없다."""
+    r = f1.route("집중도 어때?", has_portfolio=True)
+    data = {"portfolio": {"history": _HIST, "scenario": _SC}}
+    assert "마지막 상담" not in f1.answer_input("집중도 어때?", r, data)
+    assert "마지막 상담" in f1.answer_input("집중도 어때?", r, data, today=TODAY)
+
+
+def test_the_heading_is_excluded_from_the_unsourced_count():
+    """`## 다음 행동`은 소제목이라 사실 주장이 아니다 — 게이트가 미인용으로 세면 안 된다."""
+    from backend import citations
+
+    sents = citations.parse_sentences("## Next Action\n연락해 일정을 확인한다.[^hold]", {}, {},
+                                      None, f1.portfolio_source())
+    assert sents[0]["is_heading"] is True and sents[0]["kind"] == "heading"
+    assert sents[1]["sources"], "행동 문장에는 각주가 붙어야 한다"
 
 
 if __name__ == "__main__":

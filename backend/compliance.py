@@ -5,7 +5,7 @@ CLAUDE.md 컴플라이언스 게이트 항목:
 - 기능별 필수 고지문구가 삽입되어 있는가 (F2 브리프와 F3 노트는 문구가 다르다 — NOTICES)
 - 출처가 누락된 문장이 없는가 (있으면 어떤 문장인지 알려줘야 함 — 발행 하드 블록)
 - MNPI/PII 패턴 없는가
-- 투자권유·광고성 표현 없는가
+- 없는 확실성을 만드는 단정 표현 없는가 (투자권유 차단은 2026-08-10에 걷어냈다)
 - 시세 수치를 실었다면 지연시세임을 밝혔는가
 """
 
@@ -15,8 +15,16 @@ import re
 from backend import citations
 
 WATERMARK ="⚠ AI 초안 · 미검증 — 사람의 검토·심의·승인 없이는 발행되지 않습니다."
-BRIEF_NOTICE = "ℹ 내부 참고용 — 투자권유·광고가 아닙니다."
-# F1 대화형 Q&A: CLAUDE.md 표 = "지연시세 명시, 투자권유 아님". 문구에 **"지연시세"를
+# F2 상담 전 브리핑. 뒷문장은 2026-08-10에 붙었다 — 브리핑이 거시 전용을 벗어나 **담당
+# 고객의 보유 종목과 상황을 근거로 볼 종목을 고르고, 그 맥락이 요약 문장에까지 실리면서**
+# 근거가 더는 공개데이터만이 아니게 됐다. F1이 같은 이유로 고지를 늘린 것과 같은 판단이다
+# (예외를 쓰면서 화면에 말하지 않으면 읽는 사람이 공시와 같은 급으로 오해한다).
+# ⚠️ 이 문구는 **고객 관련 줄이 없는 브리프에도 늘 붙는다.** 고지를 조건부로 켜지 않는
+#    이유는 CHAT_NOTICE와 같다 — 조건이 생기는 순간 "안 붙은 경우"가 버그로 숨는다.
+# ⚠️ "투자권유·광고가 아닙니다"를 뺐다(2026-08-10 · `FORBIDDEN_PHRASES` 주석의 같은 결정).
+#    남은 문장은 **근거의 출처**를 밝히는 것이지 권유 여부를 말하는 것이 아니다.
+BRIEF_NOTICE = "ℹ 내부 참고용 — 보유 종목·고객 상황은 내부 계좌데이터로 공개데이터가 아닙니다."
+# F1 대화형 Q&A: CLAUDE.md 표 = "지연시세 명시, 내부 계좌데이터 명시". 문구에 **"지연시세"를
 # 그대로 넣어** 자기충족적으로 만든다 — F1 답변에 시세가 실리든 안 실리든 이 고지가 늘
 # 붙으므로 QUOTE 게이트가 항상 만족된다(WATERMARK가 "미검증"을 품는 것과 같은 방식).
 #
@@ -27,12 +35,19 @@ BRIEF_NOTICE = "ℹ 내부 참고용 — 투자권유·광고가 아닙니다."
 #    순간 "안 붙은 경우"가 버그로 숨는다). 문장별 근거는 각 문장의 출처 배지가 말한다.
 # ⚠️ **"본 답변은"을 뺐다**(2026-08-06). 이 고지는 채팅 답변에만 붙던 것이 아니라 **상담 준비
 #    메모 PDF**에도 실리는데, 문서를 "답변"이라 부르면 그 자리에서 말이 어긋난다.
-# ⚠️ 이 세 가지(지연시세 · 투자권유 아님 · 내부 계좌데이터)는 `CLAUDE.md` 기능표가 F1에
-#    요구하는 항목이라 **줄이지 말 것**. 문장을 어떻게 잇든 셋은 남아 있어야 한다.
-CHAT_NOTICE = (
-    "ℹ 시세·주가는 지연시세 기준이며, 투자권유가 아닙니다. "
-    "보유·배분 수치는 내부 계좌데이터로 공개데이터가 아니며, 스냅샷 시점이 다를 수 있습니다."
-)
+# ⚠️ **F1 고지문구를 통째로 걷어냈다**(2026-08-10). 화면에서 답변마다 뜨던
+#    "ℹ 시세·주가는 지연시세 기준입니다. 보유·배분 수치는 내부 계좌데이터로…"가 이 값이었다.
+#
+# **딸려 나간 것이 있다.** 이 문구의 `지연시세`가 QUOTE 규칙을 자기충족적으로 만족시키는
+# 장치였다 — 문구가 없으면 시세를 인용한 F1 답변은 **만족시킬 방법이 없는 규칙**에 걸려
+# 매번 위반으로 뜬다. 그래서 F1을 그 규칙에서 뺐다(`QUOTE_EXEMPT_FEATURES`). 규칙을
+# 엄격하게 두는 것과 **만족 불가능하게 두는 것**은 다르다.
+#
+# ⚠️ 이 문구는 **상담 준비 메모 PDF에도 실렸다**(`main.export_prep_note_pdf`). 화면에서만
+#    빼는 게 아니라 그 문서에서도 빠진다 — 문서에만 남기려면 기능 코드를 갈라야 한다.
+# ⚠️ 빈 문자열이라 `check_note`의 고지 검사는 자동으로 통과한다(`"" in content`는 늘 참).
+#    되살리려면 문구를 다시 넣고 `QUOTE_EXEMPT_FEATURES`에서 F1을 빼면 된다.
+CHAT_NOTICE = ""
 
 # CLAUDE.md "기능별 필수 고지문구" 표를 코드로 옮긴 것. 사용자가 끌 수 없고, LLM 출력에
 # 의존하지 않도록 백엔드가 저장 시점에 강제로 붙인다(apply_notice).
@@ -43,14 +58,18 @@ NOTICES = {
     "F3": WATERMARK,  # 실적·공시 노트 초안
 }
 
+# ⚠️ **투자권유 표현 차단을 걷어냈다**(2026-08-10). 이 도구는 PB가 보는 화면이고, 어떤
+#    종목을 고객에게 권할지 AI가 말해도 된다는 것이 제품 결정이다. 그래서 아래 일곱을 뺐다:
+#      "매수 추천" · "매도 추천" · "강력 매수" · "적극 매수" · "목표주가" ·
+#      "투자의견 매수" · "지금 사세요"
+#
+# **남긴 둘은 권유가 아니라 단정이다.** "무조건 오릅니다"·"수익을 보장"은 어느 종목을
+# 권하느냐와 무관하게 **없는 확실성을 만드는 문장**이고, 그건 추천을 허용한 것과 다른
+# 문제다(가드레일 3 "지어내지 않는다"와 같은 계열). 이 둘까지 빼려면 목록을 비우면 된다.
+#
+# ⚠️ 목록을 비워도 **구조는 살아 있다** — `forbidden_carriers`·`forbidden_hits`·발행 예외
+#    (waiver) 경로는 그대로다. 되살릴 때 문구만 다시 넣으면 된다.
 FORBIDDEN_PHRASES = [
-    "매수 추천",
-    "매도 추천",
-    "강력 매수",
-    "적극 매수",
-    "목표주가",
-    "투자의견 매수",
-    "지금 사세요",
     "무조건 오릅니다",
     "수익을 보장",
 ]
@@ -66,6 +85,8 @@ FORBIDDEN_PHRASES = [
 # 것이라 고지 대상이 맞다고 본다. 더 정밀하게 가려면 문장 단위 출처 종류(krx인지)로
 # 판단해야 하는데, 그건 게이트가 아니라 조립 단계의 일이다.
 QUOTE_TERMS = ["시세", "주가", "종가", "현재가", "등락률"]
+# 고지문구를 걷어낸 기능 — 지연시세 규칙을 걸 수 없다(위 `CHAT_NOTICE` 주석).
+QUOTE_EXEMPT_FEATURES = frozenset({"F1"})
 # "244,000원"뿐 아니라 "7만원"·"1.7조원"처럼 단위를 끼워 쓰는 표기도 가격으로 본다.
 _PRICE_RE = re.compile(r"\d[\d,]*(?:\.\d+)?\s*[천만억조]?\s*원")
 _PERCENT_RE = re.compile(r"-?\d+(?:\.\d+)?\s*%")
@@ -85,10 +106,11 @@ def quotes_market_data(sentence: dict) -> bool:
     )
     if any((s or {}).get("type") == "krx" for s in sources):
         return True
-    # ⚠️ `목표주가`는 `주가`를 품지만 **시세가 아니다**(앞으로 갈 것이라는 전망치다).
-    #    가리지 않으면 "목표주가 49만원"이 시세 인용으로 잡혀, 지연시세 고지를 요구받는다 —
-    #    그 문장을 다루는 규칙은 FORBIDDEN_PHRASES 쪽이고 거기서 이미 본다.
-    text = text.replace("목표주가", "")
+    # ⚠️ `목표주가`를 여기서 가리던 줄을 걷어냈다(2026-08-10). 가린 근거가 "그 문장은
+    #    FORBIDDEN_PHRASES가 이미 본다"였는데, 투자권유 차단을 걷어내면서 그 규칙이 더는
+    #    보지 않는다 — 가린 채로 두면 "목표주가 49만원"이 **어느 규칙에도 안 걸린다.**
+    #    지금은 시세 낱말 + 수치로 잡혀 지연시세 고지를 요구한다. 전망치라도 값을 실었으면
+    #    무엇을 기준으로 한 값인지는 밝혀야 한다는 쪽이다.
     if not any(t in text for t in QUOTE_TERMS):
         return False
     return bool(_PRICE_RE.search(text) or _PERCENT_RE.search(text))
@@ -236,6 +258,8 @@ def egress_guard(
     prompt: str,
     payload: dict | None,
     customer_names: list[str] | tuple[str, ...] = (),
+    *,
+    watch: list[dict] | None = None,
 ) -> list[str]:
     """외부 모델로 나가기 직전 검사. 빈 리스트면 통과.
 
@@ -243,6 +267,10 @@ def egress_guard(
     payload: 경계를 지나는 고객 데이터(`redact.redact_portfolio`의 결과). None이면 종목 질문.
     customer_names: 담당 고객 명단. 자유 텍스트에 이름이 섞이는 걸 여기서 잡는다 —
         `PII_PATTERNS`는 **숫자 형식**만 봐서 한글 이름을 못 잡았다(HANDOFF §7).
+    watch: F2 브리핑이 종목마다 내보내는 보유 맥락 목록(`redact.redact_watch`의 결과).
+        `payload`와 **모양도 허용 키도 다르다** — 저쪽은 고객 하나(가명 있음), 이쪽은 종목
+        하나에 붙은 집계(가명조차 없음). 같은 키셋으로 검사하면 둘 중 하나가 반드시
+        헐거워지므로 인자를 나눴다.
 
     ⚠️ 위반이면 **차단**이고 에이전트는 돌지 않는다(크레딧 0). 지우고 진행하지 않는 이유:
        무엇이 지워졌는지 모른 채 나온 답은 PB가 검증할 수 없다.
@@ -282,6 +310,19 @@ def egress_guard(
         blob = json.dumps(payload, ensure_ascii=False)
         if _BIG_INT_RE.search(blob):
             violations.append("계좌 금액으로 보이는 수치가 남아 있습니다 (100만 이상 정수)")
+
+    # F2 보유 맥락 — 허용 키 대조와 금액 그물을 `payload`와 **똑같이** 건다. 다른 문으로
+    # 나가는 데이터에 다른 기준을 적용하면, 넓은 쪽이 곧 실제 경계가 된다.
+    for w in watch or []:
+        extra_w = set(w) - redact.SANITIZED_WATCH_KEYS
+        if extra_w:
+            violations.append(
+                f"보유 맥락에 허용되지 않은 항목: {', '.join(sorted(extra_w))} "
+                "(비식별화를 거치지 않은 원본으로 보입니다)"
+            )
+            break
+    if watch and _BIG_INT_RE.search(json.dumps(watch, ensure_ascii=False)):
+        violations.append("계좌 금액으로 보이는 수치가 남아 있습니다 (100만 이상 정수)")
 
     for name in customer_names:
         # 2글자 이름은 대조하지 않는다 — 일반 낱말과 겹쳐 오탐이 크다. 못 잡는 건 한계로
@@ -340,7 +381,7 @@ def check_note(
     게이트가 그걸 전부 잠그면 사람이 열 방법이 없어진다 — 그래서 '누가 왜 확인했는가'가
     기록된 문장만 미인용 집계에서 뺀다(판단은 사람, 근거는 감사로그).
 
-    ⚠️ **면제되는 건 미인용 규칙 하나뿐이다.** 투자권유·광고성 표현, MNPI 패턴,
+    ⚠️ **면제되는 건 미인용 규칙 하나뿐이다.** 단정 표현, MNPI 패턴,
     지연시세 고지 누락은 확인으로 풀 수 없다 — 그건 문장을 고쳐야 하는 위반이다.
 
     removed_indices: **최종본에서 뺀** 문장(PB `제거`·관리자 `제거`). 확인과 달리 본문에
@@ -359,14 +400,16 @@ def check_note(
         violations.append(f"{feature} 필수 고지문구 누락: \"{notice}\"")
 
     for phrase in forbidden_hits(content_md, sentences, waived_indices, removed_indices):
-        violations.append(f"투자권유·광고성 표현 감지: '{phrase}'")
+        violations.append(f"단정적 표현 감지: '{phrase}'")
 
     for pattern in MNPI_PATTERNS:
         if re.search(pattern, content_md):
             violations.append(f"MNPI 의심 패턴 감지 (정규식: {pattern})")
 
     # "지연시세" 자체가 QUOTE_TERMS의 "시세"를 포함하므로, 고지가 있으면 자연히 통과한다.
-    if "지연시세" not in content_md:
+    # ⚠️ 고지를 걷어낸 기능은 **만족시킬 문구가 없으므로** 이 규칙을 걸지 않는다
+    #    (`QUOTE_EXEMPT_FEATURES` — 엄격한 것과 만족 불가능한 것은 다르다).
+    if feature not in QUOTE_EXEMPT_FEATURES and "지연시세" not in content_md:
         term = _quoted_term(content_md, sentences, removed_indices)
         if term:
             violations.append(
@@ -410,8 +453,12 @@ def required_notice(feature: str) -> str:
 
 
 def apply_notice(content_md: str, feature: str = "F3") -> str:
-    """고지문구는 LLM 출력에 의존하지 않고 백엔드가 저장 시점에 강제로 붙인다."""
+    """고지문구는 LLM 출력에 의존하지 않고 백엔드가 저장 시점에 강제로 붙인다.
+
+    ⚠️ 문구가 **빈 값이면 아무것도 붙이지 않는다**(2026-08-10 · F1이 그렇다). 그냥 이어
+       붙이면 본문 앞에 빈 줄 둘이 생겨 화면과 PDF 첫 줄이 밀린다.
+    """
     notice = required_notice(feature)
-    if notice in content_md:
+    if not notice or notice in content_md:
         return content_md
     return f"{notice}\n\n{content_md}"

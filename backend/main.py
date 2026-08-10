@@ -1021,7 +1021,11 @@ async def chat_stream(
         #      비식별화가 제 일을 했는지, 자유 텍스트에 고객 이름이 섞이지 않았는지 본다.
         #      걸리면 차단하고 에이전트를 돌리지 않는다(크레딧 0) — 지우고 진행하면
         #      무엇이 지워졌는지 모른 채 나온 답을 PB가 검증할 수 없다.
-        prompt_text = f1.answer_input(q, routing, data)
+        # `today`를 넘기면 「다음 행동」 신호 블록이 붙는다 — **고객이 붙은 질문에만**
+        # 넘긴다(`portfolio`가 있을 때). 종목만 묻는 질문에는 할 행동이 없다.
+        prompt_text = f1.answer_input(
+            q, routing, data, today=bizdate.biz_today() if portfolio else None
+        )
         leaked = compliance.egress_guard(prompt_text, data.get("portfolio"), customer_names)
         if leaked:
             await db.append_audit("egress_blocked", None, None, {
@@ -1905,7 +1909,7 @@ def _customer_to_dict(row) -> dict:
         # 상담 히스토리 — 지나간 접점의 기록(`pb_sessions`(미처리 문의 큐)와 다른 것이다).
         "history": json.loads(row["history"]) if row.get("history") else [],
         # 고객의 **상황**(2026-08-07 · db.py `pb_customers.scenario`). 계좌 숫자가 못 보여 주는
-        # 것 — 계좌 밖 자산·제약·정리 순서·목표, 그리고 등록 성향과 다를 수 있는 실질 성향.
+        # 것 — 계좌 밖 자산·제약·정리 순서·목표, 그리고 투자성향과 다를 수 있는 자금성향.
         # ⚠️ 이 키를 더해도 **F1 프롬프트로는 자동으로 안 나간다.** 경계가 화이트리스트라
         #    (`redact.SANITIZED_KEYS`) 거기 없는 것은 `egress_guard`가 막는다. 시나리오를
         #    답변 근거로 쓰려면 그 목록에 넣는 것이 **명시적인 결정**이어야 한다.
@@ -2168,8 +2172,9 @@ async def dashboard_audit(
 # 그래서 이 경로에서 **에이전트가 한 번도 돌지 않는다**. 지표는 backend가 직접 부르고, 지표
 # 문장은 전부 순수 함수(`brief.macro_digest`)가 만든다. 실행이 40~50초·크레딧에서 몇 초·0으로
 # 내려갔고, `_collect_brief_data`(a1·a4 위임)는 **호출되지 않는다**(아래 그 함수 주석).
-# ⚠️ 2026-08-07에 **LLM이 한 자리로 돌아왔다** — 밤사이 헤드라인(`_macro_headlines`)이다.
-#    "이 경로에 LLM이 없다"고 읽고 검증을 빼지 말 것: 감싸는 장치 다섯은 brief.py의 「⑤」에 있다.
+# ⚠️ 2026-08-10에 **LLM이 한 자리로 돌아왔다** — 고객 관련 종목 줄(`_watch_bullets`)이다.
+#    "이 경로에 LLM이 없다"고 읽고 검증을 빼지 말 것: 감싸는 장치는 brief.py의
+#    「고객 관련 종목 줄」 머리말에 있다.
 #
 # ⚠️ 남은 것들을 지우지 않았다 — `pb_watchlist`·`_collect_brief_data`·`_stock_summaries`·
 #    `BRIEF_SYSTEM_PROMPT`. 규칙과 프롬프트가 멀쩡하고, 고객 데이터를 갈아엎은 뒤 "내 고객
@@ -2257,69 +2262,48 @@ class BriefRunBody(BaseModel):
     """
 
 
-def _collect_macro_news() -> list[dict]:
-    """밤사이 매크로 기사 — **에이전트를 거치지 않고 도구를 직접 부른다.**
+async def _trend_bullets(indices: list[dict]) -> list[dict]:
+    """3개월 추세 줄 — 고르기는 코드, 문장만 LLM (F2 ①, 2026-08-10).
 
-    a4에 위임하지 않는 이유: 브리핑 파이프라인에는 이제 O가 없고(거시 전용), 위임을 되살리면
-    비동기 서브에이전트의 결과 유실 문제(CLAUDE.md §서브에이전트 위임은 비동기다)를 다시
-    떠안게 된다. 검색어가 고정이라 판단할 것도 없다 — 지수를 backend가 직접 부르는 것과 같다.
+    `_watch_bullets`와 구조가 같고 재료만 다르다: 후보를 규칙이 뽑고(`brief.pick_trends`),
+    지표마다 뉴스를 긁고, 하나에 문장 하나를 받는다.
 
-    ⚠️ 한 검색어가 실패해도 나머지는 살린다. 뉴스는 **있으면 좋은 것**이라, 못 가져왔다고
-       브리프가 흔들리면 안 된다(지수·ECOS와 같은 규약이되 사유는 남기지 않는다 —
-       헤드라인은 없을 때 불릿 자체가 안 서는 것이 정상이라 알릴 "빈자리"가 없다).
+    ⚠️ 여기서는 **반출 가드를 타지 않는다.** 나가는 것이 공개 지표 수치와 기사 제목뿐이고
+       고객 데이터가 한 톨도 없다 — 가드는 경계를 지나는 고객 데이터를 보는 장치다.
+    ⚠️ 실패해도 브리프를 죽이지 않는다(지수 조회·종목 줄과 같은 규약).
     """
-    from backend.mcp_servers.news_server import news_search
-
-    rows: list[dict] = []
-    for query in brief.MACRO_QUERIES:
-        try:
-            rows += news_search(query, display=10)
-        except Exception:
-            logger.warning("매크로 뉴스 조회 실패: %s", query)
-    return rows
-
-
-async def _macro_headlines(rows: list[dict]) -> list[dict]:
-    """밤사이 헤드라인 — 사건 하나에 한 줄씩. **F2에서 유일하게 LLM이 문장을 쓰는 자리.**
-
-    사건을 가르는 일은 **코드가 끝내 놓고**(`brief.cluster_headlines`) 여기서는 묶음마다
-    한 번씩 문장을 받는다. 묶음을 따로 도는 이유는 각주다 — 한 호출에 후보를 다 넣으면
-    문장은 여러 줄이 나와도 근거 기사는 전부 공유해서, **어느 기사가 어느 문장의 근거인지
-    화면이 말하지 못한다.**
-
-    ⚠️ **실패해도 브리프를 죽이지 않는다.** 지수 조회와 같은 규약이고, 여기서는 한 묶음이
-       실패해도 나머지 줄은 산다(`_collect_macro_news`가 검색어에 쓰는 규약과 같다).
-    ⚠️ 통과 못 한 묶음은 **줄을 안 낸다.** 지표 불릿과 달리 대신할 규칙 문장이 없다 —
-       지어내느니 비우는 쪽이다(brief.py의 「⑤」 머리말 ⑤번).
-    """
-    groups = brief.cluster_headlines(rows)
-    # 묶음끼리는 서로를 안 본다 — 동시에 돌려도 문장이 섞이지 않는다.
-    out = await asyncio.gather(*(_macro_headline(g) for g in groups))
+    picks = brief.pick_trends(indices)
+    if not picks:
+        return []
+    out = await asyncio.gather(*(_trend_bullet(t) for t in picks))
     return [b for b in out if b]
 
 
-async def _macro_headline(rows: list[dict]) -> dict | None:
-    """한 묶음 → 한 줄(못 쓰면 None). 위 `_macro_headlines`가 묶음마다 부른다.
+async def _trend_bullet(t: dict) -> dict | None:
+    """지표 하나 → 한 줄(못 쓰면 None)."""
+    name = t.get("index_name") or ""
+    query_text = brief.TREND_QUERIES.get(name, name)
+    try:
+        rows = await asyncio.to_thread(_news_rows_for, query_text, brief.HEADLINE_LIMIT * 2)
+    except Exception:
+        logger.warning("거시 추세 뉴스 조회 실패: %s", name)
+        rows = []
+    # 신선도 창이 종목 줄보다 넓다 — 석 달 추세를 설명하는 자리라 어제 기사만으로는 모자란다.
+    rows = brief.pick_headlines(
+        rows, datetime.now(timezone.utc),
+        hours=brief.TREND_NEWS_DAYS * 24, limit=brief.TREND_NEWS_LIMIT,
+    )
+    # ⚠️ 기사가 없어도 **줄은 낸다.** 움직임 자체는 지표가 이미 증명한 사실이고, 이유만
+    #    비는 것이다 — 프롬프트가 "이유를 못 읽겠으면 움직임만 쓰라"고 지시한다.
+    prompt_text = brief.trend_input(t, rows)
 
-    `_stock_summaries`(배선 해제됨)와 같은 구조다: 도구를 못 쓰게 막고(`_deny_all_tools`)
-    넘겨받은 텍스트 밖으로 나가지 못하게 한 뒤, 나온 문장을 **순수 함수가 다시 검사한다**
-    (`brief.parse_headline` — 길이·문장 수·금지 표현·입력에 없는 숫자).
-
-    ⚠️ 검사도 각주도 **이 묶음 기준**이다. 숫자 검사(`parse_headline`)가 묶음의 제목만
-       보므로, 옆 묶음 제목에 있던 수치를 끌어다 쓰면 그때 걸린다 — 묶음을 나눈 것이
-       검사를 함께 좁혔다.
-    ⚠️ 입력은 `brief.headline_input`이 만든다 — **제목만** 나간다(기사 본문도 링크도 아니다).
-       넓히려면 그 함수를 고칠 것: 여기서 직접 조립하지 마라.
-    """
-    if not rows:
-        return None
     texts: list[str] = []
     try:
         async for message in query(
-            prompt=_prompt_stream(brief.headline_input(rows)),
+            prompt=_prompt_stream(prompt_text),
             options=ClaudeAgentOptions(
                 cwd=str(REPO_ROOT),
-                system_prompt=brief.HEADLINE_SYSTEM_PROMPT,
+                system_prompt=brief.TREND_SYSTEM_PROMPT,
                 can_use_tool=_deny_all_tools,
                 max_turns=1,
                 hooks={
@@ -2329,18 +2313,123 @@ async def _macro_headline(rows: list[dict]) -> dict | None:
             ),
         ):
             if isinstance(message, AssistantMessage):
-                texts += [b.text for b in message.content if isinstance(b, TextBlock)]
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        texts.append(block.text)
     except Exception:
-        logger.warning("밤사이 헤드라인 요약 실패", exc_info=True)
+        logger.warning("거시 추세 문장 생성 실패: %s", name)
         return None
 
-    text = brief.parse_headline("\n".join(texts), rows)
-    return brief._headline_bullet(text, rows) if text else None
+    raw = "\n".join(texts).strip()
+    reason = brief.trend_reject(raw, t, rows)
+    if reason:
+        logger.warning("거시 추세 줄 버림 [%s] %s — %r", name, reason, raw[:120])
+        return None
+    return brief.trend_bullet(" ".join(raw.split()), t, rows)
+
+
+async def _watch_bullets(customers: list[dict]) -> list[dict]:
+    """고객 관련 종목 줄 — 고르기는 코드, 문장만 LLM (F2 ②, 2026-08-10).
+
+    걷어낸 거시 헤드라인 줄과 구조가 같고 재료만 다르다: 후보를 규칙이 뽑고
+    (`brief.watch_candidates`), 종목마다 뉴스를 긁고, 묶음 하나에 문장 하나를 받는다.
+
+    ⚠️ **경계를 지나는 것은 `redact.redact_watch`의 결과뿐**이고, 나가기 직전에
+       `compliance.egress_guard`가 한 번 더 본다. 걸리면 그 줄을 버린다 — F1처럼 전체를
+       세우지 않는 이유는 브리프가 배치라서다(한 종목 때문에 브리핑 전체가 없어지면,
+       PB는 오늘 브리핑이 왜 비었는지 화면에서 알 수 없다). 대신 감사로그에 남긴다.
+    ⚠️ 실패해도 브리프를 죽이지 않는다(지수 조회·거시 헤드라인과 같은 규약).
+    """
+    if not customers:
+        return []
+    codes = sorted({
+        h.get("code") for c in customers for h in (c.get("holdings") or []) if h.get("code")
+    })
+    if not codes:
+        return []
+    # 등락률은 **코드가 계산한다** — 모델에게 두 종가를 주고 나눗셈을 시키지 않는다.
+    changes, _note = await asyncio.to_thread(market.fetch_change_batch, codes)
+    cands = brief.watch_candidates(customers, changes)
+    if not cands:
+        return []
+    out = await asyncio.gather(*(_watch_bullet(c) for c in cands))
+    return [b for b in out if b]
+
+
+async def _watch_bullet(cand: dict) -> dict | None:
+    """한 종목 → 한 줄(못 쓰면 None). 검색어는 **종목명**이라 공개 정보다."""
+    name = cand.get("name") or ""
+    try:
+        rows = await asyncio.to_thread(_news_rows_for, name, brief.HEADLINE_LIMIT * 2)
+    except Exception:
+        logger.warning("보유 종목 뉴스 조회 실패: %s", name)
+        return None
+    # 최신 `WATCH_NEWS_LIMIT`건만 남긴다 — 한 문장이 담을 수 있는 사건 수의 상한이자,
+    # 각주가 문장이 말하지 않은 기사를 가리키지 않게 하는 자리다(brief.py 그 상수 주석).
+    rows = brief.pick_headlines(
+        rows, datetime.now(timezone.utc), limit=brief.WATCH_NEWS_LIMIT
+    )
+    if not rows:
+        logger.info("보유 종목 뉴스 없음(24시간 내): %s", name)
+        return None
+
+    context = redact.redact_watch(name, cand.get("holder_rows") or [])
+    prompt_text = brief.stock_headline_input(rows, context)
+    # 반출 가드 — 프롬프트가 만들어진 뒤, 모델에 넘기기 **전**이다(F1과 같은 자리).
+    leaked = compliance.egress_guard(
+        prompt_text, None, await db.list_customer_names(PB_NAME), watch=[context]
+    )
+    if leaked:
+        await db.append_audit("egress_blocked", None, None, {
+            "feature": "F2", "stock_code": cand.get("code"), "violations": leaked,
+        })
+        return None
+
+    texts: list[str] = []
+    try:
+        async for message in query(
+            prompt=_prompt_stream(prompt_text),
+            options=ClaudeAgentOptions(
+                cwd=str(REPO_ROOT),
+                system_prompt=brief.STOCK_HEADLINE_SYSTEM_PROMPT,
+                can_use_tool=_deny_all_tools,  # 넘겨받은 텍스트 밖으로 못 나간다
+                max_turns=1,
+                hooks={
+                    "PreToolUse": [HookMatcher(hooks=[_pre_tool_use_hook])],
+                    "PostToolUse": [HookMatcher(hooks=[_post_tool_use_hook])],
+                },
+            ),
+        ):
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        texts.append(block.text)
+    except Exception:
+        logger.warning("보유 종목 헤드라인 생성 실패: %s", name)
+        return None
+
+    raw = "\n".join(texts).strip()
+    # ⚠️ 버려진 줄은 화면에서 **아예 안 보인다.** 사유를 로그에 남기지 않으면 "오늘은 관련
+    #    종목이 없었다"와 "검증에 걸렸다"를 구별할 수 없다(brief.stock_headline_reject 주석).
+    reason = brief.stock_headline_reject(raw, rows, context)
+    if reason:
+        logger.warning("보유 종목 헤드라인 버림 [%s] %s — %r", name, reason, raw[:120])
+        return None
+    return brief.stock_headline_bullet(
+        brief.parse_stock_headline(raw, rows, context), rows, cand
+    )
+
+
+def _news_rows_for(query_text: str, display: int) -> list[dict]:
+    """뉴스 한 검색어 조회(동기). MCP 서버 함수를 직접 부른다 — F2에는 O가 없다."""
+    from backend.mcp_servers.news_server import news_search
+
+    return news_search(query_text, display=display)
 
 
 async def _stock_summaries(items: list[dict]) -> dict[str, str]:
     """종목 한 줄 요약 — **배선 해제**(2026-08-07 · 위 절 머리말). 브리핑에서 살아 있는 LLM
-    자리는 `_macro_headlines`(사건별 한 줄)뿐이다. 아래 구조를 그쪽이 그대로 물려받았다.
+    자리는 `_watch_bullets`(종목 한 줄)뿐이다. 아래 구조를 그쪽이 그대로 물려받았다.
 
     a5와 같은 구조다: 도구를 못 쓰게 막고(`_deny_all_tools`) 넘겨받은 텍스트 밖으로 나가지
     못하게 한 뒤, 나온 문장을 **순수 함수가 다시 검사한다**(`brief.parse_summaries` —
@@ -2505,16 +2594,21 @@ async def _collect_brief_data(stock_codes: list[str]) -> tuple[dict, dict, dict]
     return quotes, disclosures, news
 
 
-async def build_brief() -> dict:
+async def build_brief(pb: str | None = None) -> dict:
     """브리프 1건을 만들어 저장하고 응답 형태로 돌려준다 — **파이프라인의 정본**.
 
     엔드포인트(`run_brief`)와 시드 스크립트(`scripts/seed_brief.py`)가 **둘 다 이걸 부른다.**
     예전에는 시드가 파이프라인을 통째로 베껴 갖고 있었는데(에이전트를 못 쓰니 어쩔 수 없었다),
     거시 전용이 되면서 둘이 하는 일이 같아졌다 — 규칙이 두 벌이면 반드시 갈린다.
 
-    ⚠️ **LLM이 한 번도 돌지 않는다.** 실패할 수 있는 곳은 지수 조회 하나이고, 그마저 실패해도
-       브리프는 생성된다 — 사유(`market_note`)를 싣고 화면이 그걸 말한다. "지수가 없는 브리프"와
-       "지수를 못 불러온 브리프"는 PB에게 전혀 다른 정보다(backend/market.py).
+    pb: 담당 PB. **주면 고객 관련 종목 줄이 붙고, 안 주면 거시만 나온다**(2026-08-10).
+        인자로 받는 이유는 시드 스크립트가 고객 없이도 돌 수 있어야 해서다 — 기본값을
+        `PB_NAME`으로 두면 "고객 없는 브리프"라는 상태가 코드에서 사라진다.
+
+    ⚠️ **브리프가 다시 PB마다 다른 값이 됐다**(2026-08-07에 공용 배치가 됐던 것을 되돌린다).
+       cron이 때린다면 PB마다 한 번씩 돌아야 하고, 지금은 `run_brief`가 `PB_NAME` 하나만 쓴다.
+    ⚠️ LLM이 도는 자리는 둘이다 — 거시 헤드라인 1회, 고객 관련 종목 최대 2회. 어느 쪽이
+       실패해도 브리프는 생성된다(지수 조회와 같은 규약).
     """
     # 거시 지표는 에이전트에 위임하지 않고 backend가 직접 부른다 — 고정된 조회라 판단이 필요 없다.
     #
@@ -2557,23 +2651,32 @@ async def build_brief() -> dict:
     )
     compare = brief.compare_macro(indices, prev_indices)
 
-    # 밤사이 헤드라인 — 수집(도구 직접 호출)과 고르기(순수)는 여기, 문장은 LLM이 쓴다.
-    # ⚠️ **신선도 기준 시각을 넘긴다.** `pick_headlines`가 "지금"을 스스로 정하면 순수 함수가
-    #    아니게 되어 테스트가 시계에 묶인다(`bizdate`와 같은 판단).
-    headlines = brief.pick_headlines(
-        await asyncio.to_thread(_collect_macro_news), datetime.now(timezone.utc)
+    # 담당 고객 — **보유 종목과 사정을 고르는 데만** 쓴다. 여기서 읽은 원본은 경계를 넘지
+    # 않고, 넘어가는 것은 `redact.redact_watch`를 거친 집계뿐이다(`_watch_bullet`).
+    customers = (
+        [_customer_to_dict(r) for r in await db.list_customers(pb)] if pb else []
     )
 
     market_payload = {"indices": indices, "note": market_note}
-    # 요약 불릿 — 지표 줄은 규칙이 **고르고 문장까지 만들고**, 헤드라인만 LLM이 쓴다.
-    # 헤드라인은 **사건 수만큼 여러 줄**이다(`brief.cluster_headlines` · 최대 3줄).
+    # 요약 불릿 — 평소 대비·유의사항은 규칙이 **고르고 문장까지 만들고**, 3개월 추세와
+    # 고객 관련 종목 줄만 LLM이 쓴다(추세 ≤2 + 종목 ≤2 = 최대 4회).
+    # ⚠️ 밤사이 거시 헤드라인 줄과 어제 대비 줄은 걷어냈다(2026-08-10 · `macro_digest` 주석).
     # 본문에는 들어가지 않는다(같은 사실을 두 번 세면 출처 부착률의 분모가 흔들린다).
+    trend_bullets, watch_bullets = await asyncio.gather(
+        _trend_bullets(indices), _watch_bullets(customers)
+    )
     lead_payload = {
+        # 화면이 고객별 목록을 **기한 급한 순**으로 세울 때 쓰는 어휘. 백엔드가 실어 보내는
+        # 이유는 화면이 같은 목록을 두 벌로 들지 않게 하려는 것이다 — 갈리면 브리핑이 급하다고
+        # 센 고객과 화면이 위에 올린 고객이 달라진다(금지 표현 목록을 프론트로 복사하지
+        # 않는 것과 같은 규칙).
+        "urgent_horizons": list(brief.SHORT_HORIZONS),
         "bullets": brief.macro_digest(
             indices,
             compare=compare,
             market_note=market_note,
-            headlines=await _macro_headlines(headlines),
+            trends=trend_bullets,
+            watch=watch_bullets,
         )
     }
     # items는 `[]`다 — 브리프에 종목이 없다. 컬럼과 조립 경로는 그대로 두었다(brief.assemble).
@@ -2594,6 +2697,13 @@ async def build_brief() -> dict:
             "compared": compare["compared"],
             "turns": [t["index_name"] for t in compare["turns"]],
             "market_note": market_note,
+            # 어느 종목이 고객 관련 줄로 올라갔는지는 감사 대상이다 — **종목명까지만**이고
+            # 어느 고객인지는 적지 않는다(감사로그도 화면(감시 탭)에 나가는 텍스트다).
+            "watch": [brief.watch_meta(b.get("stock") or {}) for b in watch_bullets],
+            # 어느 지표가 첫 줄로 뽑혔는지도 같은 이유로 남긴다. 화면 배지를 걷어내면서
+            # (`brief.trend_bullet`) 여기서는 **문장 앞머리**를 남긴다 — 감사로그가 답할
+            # 질문은 "무엇이 뽑혔나"이고, 그건 문장 첫 낱말이 이미 말한다.
+            "trends": [(b.get("text") or "")[:40] for b in trend_bullets],
         },
     )
     return {
@@ -2612,10 +2722,11 @@ async def run_brief(body: BriefRunBody):
     # ponytail: 스케줄러는 넣지 않았다 — 배치 트리거가 하나 있으면 cron/CI로 충분하고,
     # 앱 안에 스케줄러를 두면 컨테이너 재시작·중복 실행을 직접 관리해야 한다.
 
-    입력이 없다. 고객 스코핑도 없다 — 나오는 브리프는 어느 PB가 돌려도 같으므로 **하루 한 번
-    공용 배치**면 된다(2026-08-07. 예전에는 담당 고객 보유 상위 종목이 입력이라 PB마다 달랐다).
+    입력이 없다 — 무엇을 볼지는 담당 고객의 보유·사정이 정하지 종목 지정이 정하지 않는다.
+    ⚠️ **고객 스코핑이 돌아왔다**(2026-08-10). 브리프는 다시 PB마다 다르므로 공용 배치가
+       아니다. cron을 건다면 PB마다 한 번씩 돌아야 한다(`build_brief` 주석).
     """
-    return await build_brief()
+    return await build_brief(PB_NAME)
 
 
 @app.get("/api/briefs/latest")

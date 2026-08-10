@@ -315,6 +315,67 @@ def daily_moves(values: list[tuple[str, float]], move_unit: str) -> list[float]:
     return moves
 
 
+# ── 3개월 추세 (2026-08-10) ──────────────────────────────────────────────────
+#
+# 브리핑 첫 줄이 답할 질문이 바뀌었다: "어제 대비 방향이 바뀐 것"에서 **"최근 석 달 동안
+# 가장 크게 움직인 것"**으로. 하루치 방향 전환은 노이즈가 섞이는데, 상담에서 꺼낼 이야기는
+# 그것보다 긴 축이라는 판단이다.
+#
+# **왜 그냥 변화폭으로 줄 세우지 않나.** 다섯 지표의 단위가 다르다 — 나스닥·S&P500·원/달러는
+# `%`이고 국고채10년·미국채30년은 `bp`다. `+12%`와 `+40bp` 중 무엇이 큰가는 물음 자체가
+# 성립하지 않는다. 그래서 **그 지표 자신의 일간 변동으로 나눈다**(z):
+#
+#     z = 석 달 누적 변화 ÷ (일간 변동 표준편차 × √관측수)
+#
+# 단위가 상쇄되므로 다섯을 같은 축에서 견줄 수 있고, 뜻도 분명하다 — "이 지표가 평소 흔들리는
+# 폭에 비해 몇 배로 움직였나". 절대 변화폭(`change`)도 함께 돌려주므로 문장은 그걸 인용한다.
+#
+# ⚠️ **표준편차가 0이면 z를 만들지 않는다**(None). 관측이 전부 같은 값이면 나눌 것이 없고,
+#    거기서 무한대를 내면 그 지표가 늘 1등이 된다.
+# ⚠️ 이 함수는 순수하다 — 조회는 공급자(`fred`·`ecos`)가 하고 판정은 여기서만 한다
+#    (`rank_recent_move`를 이 파일에 둔 것과 같은 이유).
+TREND_MIN_WINDOW = 20  # 이보다 짧은 창에서는 추세를 말하지 않는다(석 달을 물었는데 2주면 답이 아니다)
+
+
+def trend_of(values: list[tuple[str, float]], move_unit: str) -> dict | None:
+    """창 전체의 누적 변화와 그 크기 (순수·결정론적). 근거가 모자라면 **None**.
+
+    values: `(YYYYMMDD, 값)` 오름차순 — 공급자가 주는 그대로.
+    반환: `{from, from_level, to, to_level, change, unit, days, sigma, z}`
+      - `change`: 창 처음 → 끝 누적 변화. 단위는 `move_unit`(`%` 또는 `bp`)이고
+        **일별 움직임과 같은 관례**다(bp는 절대차 ×100, %는 비율).
+      - `z`: 위 머리말의 정규화 값. 표준편차가 0이면 None.
+    """
+    if not values or len(values) < TREND_MIN_WINDOW:
+        return None
+    (first_at, first), (last_at, last) = values[0], values[-1]
+    if move_unit == "bp":
+        change = (last - first) * 100
+    elif first:
+        change = (last - first) / first * 100
+    else:
+        return None  # 0으로 나누지 않는다
+
+    moves = daily_moves(values, move_unit)
+    if len(moves) < 2:
+        return None
+    mean = sum(moves) / len(moves)
+    var = sum((m - mean) ** 2 for m in moves) / (len(moves) - 1)
+    sigma = var ** 0.5
+    return {
+        "from": first_at,
+        "from_level": first,
+        "to": last_at,
+        "to_level": last,
+        "change": change,
+        "unit": move_unit,
+        "days": len(values),
+        "sigma": sigma,
+        # √n으로 나누는 건 "누적 변화가 무작위 걸음이었다면 이만큼"이라는 기준선이다.
+        "z": (change / (sigma * len(moves) ** 0.5)) if sigma else None,
+    }
+
+
 def rank_recent_move(pcts: list[float], latest: float | None) -> dict | None:
     """오늘 등락률이 최근 창에서 몇 번째로 큰 움직임인가 (순수·결정론적).
 

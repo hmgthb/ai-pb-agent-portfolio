@@ -47,7 +47,12 @@ from datetime import timedelta
 import requests
 
 from backend.bizdate import biz_today
-from backend.market import MarketDataUnavailable, daily_moves, rank_recent_move
+from backend.market import (
+    MarketDataUnavailable,
+    daily_moves,
+    rank_recent_move,
+    trend_of,
+)
 
 ENDPOINT = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 
@@ -89,10 +94,16 @@ SERIES = (
     },
 )
 
-# 조회 창. `ecos.LOOKBACK_DAYS`와 **같은 40일로 맞춘다** — `rank_recent_move`가 내는 문구가
-# "N거래일 중 가장 큰 하락"이라, 지표마다 창이 다르면 같은 띠 안에서 N이 달라진다.
-# 미국 휴장일(빈 행)이 빠져도 40일이면 관측이 25~28개라 `MIN_WINDOW=8`을 여유 있게 넘긴다.
+# 평소 대비 판정(`rank_recent_move`)의 창. `ecos.LOOKBACK_DAYS`와 **같은 40일로 맞춘다** —
+# 그 함수가 내는 문구가 "N거래일 중 가장 큰 하락"이라, 지표마다 창이 다르면 같은 띠 안에서
+# N이 달라진다. 미국 휴장일(빈 행)이 빠져도 40일이면 관측이 25~28개라 `MIN_WINDOW=8`을
+# 여유 있게 넘긴다.
 LOOKBACK_DAYS = 40
+# 3개월 추세(`market.trend_of`)의 창 — 브리핑 첫 줄이 답하는 축이다(2026-08-10).
+# ⚠️ **조회는 이 넓은 창으로 한 번만 하고**, 평소 대비 판정에는 뒤 `LOOKBACK_DAYS`만 잘라
+#    쓴다. 요청을 둘로 늘리지 않으면서 "N거래일 중"의 N도 그대로 지키는 방법이다.
+# ⚠️ `ecos.TREND_DAYS`와 같은 값이어야 한다 — 다르면 두 지표의 "석 달"이 다른 길이가 된다.
+TREND_DAYS = 92
 
 
 def _observations(text: str) -> list[tuple[str, str]]:
@@ -138,7 +149,7 @@ def fetch_series(spec: dict) -> dict:
             ENDPOINT,
             params={
                 "id": spec["series_id"],
-                "cosd": (today - timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%d"),
+                "cosd": (today - timedelta(days=TREND_DAYS)).strftime("%Y-%m-%d"),
                 "coed": today.strftime("%Y-%m-%d"),
             },
             timeout=30,
@@ -161,7 +172,16 @@ def fetch_series(spec: dict) -> dict:
             f"최근 {LOOKBACK_DAYS}일 관측이 2건 미만입니다(휴장·공표 지연 확인)."
         )
 
-    moves = daily_moves(_values(obs), spec["move_unit"])
+    values = _values(obs)
+    # 평소 대비 판정은 **뒤 LOOKBACK_DAYS 구간만** 본다(위 TREND_DAYS 주석). 관측 수가 아니라
+    # 날짜로 자른다 — 휴장이 몰린 달에 관측 수로 자르면 창의 실제 길이가 달라진다.
+    cutoff = (biz_today() - timedelta(days=LOOKBACK_DAYS)).strftime("%Y%m%d")
+    recent_values = [v for v in values if v[0] >= cutoff] or values
+    moves = daily_moves(recent_values, spec["move_unit"])
+    if not moves:
+        raise MarketDataUnavailable(
+            f"최근 {LOOKBACK_DAYS}일 관측이 2건 미만입니다(휴장·공표 지연 확인)."
+        )
     as_of, level = obs[-1]
     latest = moves[-1]
     return {
@@ -174,6 +194,9 @@ def fetch_series(spec: dict) -> dict:
         "move_unit": spec["move_unit"],
         "basis": spec["basis"],
         "recent": rank_recent_move(moves, latest),
+        # 창 전체(TREND_DAYS)로 낸 3개월 추세. 근거가 모자라면 None이고, 그때 그 지표는
+        # 첫 줄 후보에서 빠진다(`brief.pick_trends`).
+        "trend": trend_of(values, spec["move_unit"]),
         "source": spec["source"],
     }
 

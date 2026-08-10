@@ -50,7 +50,7 @@ export type CustomerScenario = {
   /** 한 줄 요약 — 카드가 접혀 있을 때 보이는 것. 규칙이 조립한다. */
   summary: string;
   goal: string;
-  /** 자금이 필요한 시점(`1~2년`·`상시`). 실질 성향이 등록 성향과 갈리는 주된 이유다. */
+  /** 자금이 필요한 시점(`1~2년`·`상시`). 자금성향이 투자성향과 갈리는 주된 이유다. */
   horizon: string;
   /** 계좌 **밖** 자산. 증권 잔고(`balance`)는 여기 안 들어간다 — 두 번 세게 된다. */
   assets: { kind: string; band?: string; where?: string; note?: string }[];
@@ -282,7 +282,7 @@ export type NoteAck = {
   text: string;
 };
 
-/** 금지 표현 예외 — 관리자가 사유를 적어 그 문장의 투자권유·광고성 표현 위반을 통과시킨 기록.
+/** 금지 표현 예외 — 관리자가 사유를 적어 그 문장의 단정 표현 위반을 통과시킨 기록.
  *  ⚠️ `reason`이 **이 앱에서 유일한 자유 입력 사유**다(반려·보류·확인은 고정값).
  *     통과의 근거가 건마다 달라서인데, 그 대신 사유별 집계는 포기했다(백엔드 WAIVER_MAX_LEN). */
 export type NoteWaiver = {
@@ -361,7 +361,7 @@ export type NoteDetail = {
    *  (이 필드가 붙기 전에 받은 응답은 없다 — 백엔드가 항상 배열을 준다.) */
   marks: NoteMark[];
   /** 관리자가 **사유를 직접 적어** 통과시킨 금지 표현(2026-08-06). ack과 컬럼이 다른 이유는
-   *  여는 규칙이 달라서다 — ack은 미인용, 이건 투자권유·광고성 표현 하나뿐. */
+   *  여는 규칙이 달라서다 — ack은 미인용, 이건 단정 표현 하나뿐. */
   waivers: NoteWaiver[];
   /** 금지 표현을 담은 문장 — **백엔드가 찾아 준다.** ⚠️ 금지 표현 목록을 이 파일로
    *  복사하지 말 것: 컴플라이언스 어휘가 두 곳으로 갈린다(`compliance.FORBIDDEN_PHRASES`). */
@@ -496,19 +496,29 @@ export type BriefMarket = { indices?: MarketIndex[]; note?: string | null };
  *  ⚠️ **불릿당 한 문장이고, 없는 항목은 오지 않는다.** 0건을 나열하지 않는 것이 규칙이라
  *     `kind`로 자리를 비워 두거나 빈 문구를 채우지 말 것. 예외는 `delta` 하나 —
  *     거기서는 "어제 이후 방향이 바뀐 지표가 없다"가 그 자체로 답이다.
- *  ⚠️ **같은 `kind`가 여러 줄일 수 있다**(`notable`·`news`). 특히 `news`는 밤사이 사건
- *     수만큼 서므로(백엔드 `brief.cluster_headlines`, 최대 3줄) 하나로 가정하지 말 것 —
+ *  ⚠️ **같은 `kind`가 여러 줄일 수 있다**(`notable`·`watch`·`trend`). `watch`는 종목 수만큼,
+ *     `trend`는 큰 변화가 둘이면 둘까지 서므로(각각 최대 2줄) 하나로 가정하지 말 것 —
  *     각주(`sources`)가 **줄마다 다르다**는 것이 이 구조의 요점이다. */
 export type BriefBullet = {
-  /** delta=어제 대비 방향 전환 · notable=오늘 움직임이 평소와 다름 ·
-   *  news=밤사이 시장 헤드라인(**LLM이 쓴 유일한 줄** — `ai`·`sources`가 붙는다) ·
-   *  caution=유의사항(조회 실패 · 견주지 못한 이유).
+  /** trend=3개월 추세(첫 줄) · notable=오늘 움직임이 평소와 다름 ·
+   *  watch=담당 고객 보유 종목 · caution=유의사항(조회 실패).
+   *  ⚠️ **LLM이 쓰는 줄은 `trend`와 `watch` 둘**이다(`ai`·`sources`·`meta`가 붙는다).
+   *     `b.ai`로 판정하지 kind로 판정하지 말 것 — 줄 종류가 늘 때마다 조용히 빠진다.
+   *  ⚠️ `delta`(어제 대비)·`news`(밤사이 헤드라인)·`stock`은 **옛 브리프에만 있다**
+   *     (2026-08-10에 걷어냈다). 새로 생기지 않지만, 남아 있는 행이 화면에서 클래스 없이
+   *     찍히지 않도록 유니온에 남겨 둔다.
    *  ⚠️ `stock`은 **옛 브리프에만 있다**(2026-08-07 이전). 새로 생기지 않지만, 남아 있는
    *     행이 화면에서 클래스 없이 찍히지 않도록 유니온에 남겨 둔다.
    *  ⚠️ 그전에 걷어낸 것 셋(2026-08-06): `lead`·`quiet`는 종목 줄과 같은 말을 했고,
    *     `market`(시장 대비)은 어느 지수와 견줄지를 종목의 시장으로 고르지 않았다. */
-  kind: 'delta' | 'notable' | 'news' | 'caution' | 'stock';
+  kind: 'trend' | 'notable' | 'watch' | 'caution' | 'delta' | 'news' | 'stock';
   text: string;
+  /** `watch` 불릿의 **조인 열쇠 + 집계**(2026-08-10). 화면이 이걸로 `/api/customers`와
+   *  종목코드를 맞춰 **보유 고객 이름**을 붙인다(`WatchHolders`).
+   *  ⚠️ **여기에 고객 이름도 id도 오지 않는다.** 담으면 `briefs` 테이블에 고객 식별정보가
+   *     저장된다(가드레일 1) — 이름은 화면에서만 붙고 어디에도 안 남는다.
+   *  ⚠️ `ai` 배지가 가리키는 범위 **밖**이다. 모델이 쓴 것은 `text` 하나뿐이다. */
+  stock?: WatchStock;
   /** 공시 뷰어 링크. 시세 기반 불릿에는 열어 볼 원문이 없어 null(링크를 지어내지 않는다). */
   href: string | null;
   /** **밑줄이 걸리는 구간** — `text` 안에 그대로, 한 번만 나타난다.
@@ -529,8 +539,28 @@ export type BriefBullet = {
   sources?: { title: string; url: string; pub_date: string }[];
 };
 
+/** 브리핑 「고객 관련 종목」 줄의 종목 집계. **고객을 가리키는 값이 없다**(위 `stock` 주석). */
+export type WatchStock = {
+  code: string;
+  name: string;
+  holders: number;
+  /** 등락을 잰 구간(거래일). 시세를 못 가져왔으면 null이다 — 0으로 채우지 않는다. */
+  days: number | null;
+  pct: number | null;
+  /** 기한이 급한 보유자 수 · 자금성향이 투자성향보다 보수적인 보유자 수(집계). */
+  short: number;
+  gap: number;
+};
+
 /** (2026-08-06 이전 브리프는 빈 객체 — 화면은 그때 아무것도 그리지 않는다.) */
-export type BriefLeadPayload = { bullets?: BriefBullet[] };
+export type BriefLeadPayload = {
+  bullets?: BriefBullet[];
+  /** 기한이 "급하다"고 보는 표기 목록 — **백엔드가 실어 보낸다**(`brief.SHORT_HORIZONS`).
+   *  ⚠️ 화면이 같은 목록을 따로 들지 말 것. 갈리면 브리핑이 급하다고 센 인원수와 화면이
+   *     위에 올린 고객이 달라진다(금지 표현 목록을 프론트로 복사하지 않는 것과 같은 규칙).
+   *  ⚠️ 옛 브리프에는 없다 — 없으면 급한 고객을 위로 올리지 못할 뿐 목록은 그대로 뜬다. */
+  urgent_horizons?: string[];
+};
 
 export type Brief = {
   id: number;
@@ -593,7 +623,7 @@ export const WATERMARK =
  *
  *  **왜 둘뿐인가.** PB가 담당하는 고객이 많아 각각의 경위를 기억할 수 없다는 것이 이 패널이
  *  있는 이유다. 그래서 묻는 것은 계좌 구성이 아니라 **이 사람의 사정**이다: 지금 어떤 상황인가,
- *  등록 성향과 지금 실질이 왜 갈리는가.
+ *  투자성향과 지금의 자금성향이 왜 갈리는가.
  *
  *  ⚠️ **걷어낸 것들**(2026-08-07): 보유 종목 칩(삼성전자·SK하이닉스)과 구성 칩(집중도·자산배분·
  *     성향 대비·조정 선택지·최근 흐름). 이 자리에서 자산배분을 묻지 않기로 했다.

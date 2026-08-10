@@ -57,7 +57,11 @@ def test_unknown_feature_raises():
 
 
 def test_forbidden_phrase():
-    assert any("투자권유" in x for x in _check("목표주가는 10만원이다."))
+    """⚠️ **투자권유 표현 차단은 걷어냈다**(2026-08-10). 남은 것은 없는 확실성을 만드는
+    단정뿐이다 — 권하는 것과 지어내는 것은 다른 문제라는 판단(`FORBIDDEN_PHRASES` 주석)."""
+    assert any("단정" in x for x in _check("이 종목은 수익을 보장합니다."))
+    # 종목 추천은 이제 통과한다 — 이 도구가 PB에게 종목을 권해도 된다는 제품 결정이다.
+    assert not any("단정" in x for x in _check("목표주가는 10만원이며 매수 추천한다."))
 
 
 def test_mnpi_pattern():
@@ -141,38 +145,42 @@ def test_removed_sentence_drops_out_of_the_quote_rule():
 def test_waiver_opens_the_forbidden_phrase_rule_for_that_sentence_only():
     """준법이 사유를 적어 통과시킨 문장의 금지 표현만 빠진다(2026-08-06).
 
-    쓰임: 제3자 목표주가를 **각주와 함께 인용한** 문장. 규칙은 제시와 인용을 구분하지
-    못하고, 확인(ack)은 미인용 전용이라 예전엔 삭제 말고 길이 없었다.
+    쓰임: 규칙이 제시와 인용을 구분하지 못하는 문장. 확인(ack)은 미인용 전용이라 예전엔
+    삭제 말고 길이 없었다.
+    ⚠️ 예시가 `목표주가`에서 바뀐 것은 그 표현이 2026-08-10에 허용됐기 때문이다 — 예외
+       경로 자체는 남은 금지 표현(단정)에 대해 그대로 동작한다.
     """
-    quoted = "골드만삭스가 목표주가를 49만원으로 제시했다고 보도됐다."
-    other = "당사는 목표주가를 12만원으로 봅니다."
+    quoted = "리포트가 수익을 보장한다고 적었다고 보도됐다."
+    other = "당사도 수익을 보장한다고 봅니다."
     ours = [_qsent(quoted, {"type": "news"}), _qsent(other, {"type": "news"})]
     body = apply_notice(f"{quoted} {other}", "F3")
 
     # ⚠️ 위반 문구는 미인용 예시로 **문장 원문을 인용**한다 — `'목표주가' in x`로 세면
-    #    엉뚱한 위반이 잡힌다. 규칙 이름("투자권유")으로 본다.
-    assert any("투자권유" in x for x in check_note(body, ours, "F3"))
+    #    엉뚱한 위반이 잡힌다. 규칙 이름("단정")으로 본다.
+    assert any("단정" in x for x in check_note(body, ours, "F3"))
     # 인용 문장만 예외 → **다른 문장에 같은 표현이 남아 있으므로 여전히 막힌다**
-    assert any("투자권유" in x for x in check_note(body, ours, "F3", None, None, {0}))
+    assert any("단정" in x for x in check_note(body, ours, "F3", None, None, {0}))
     # 둘 다 예외라야 풀린다 — 예외가 본문 전체로 번지지 않는다는 뜻이다
     assert check_note(body, ours, "F3", None, None, {0, 1}) == []
 
 
 def test_waiver_opens_nothing_else():
     """⚠️ 예외는 **금지 표현 규칙 하나만** 연다 — 미인용·지연시세·MNPI는 그대로 막는다."""
-    s = [_qsent("목표주가 49만원이라고 내부자 정보에 따르면 전해진다.")]  # 출처 없음
+    s = [_qsent("수익을 보장한다고 내부자 정보에 따르면 전해진다.")]  # 출처 없음
     v = check_note(apply_notice(s[0]["text"], "F3"), s, "F3", None, None, {0})
-    assert not any("투자권유" in x for x in v)  # 금지 표현은 풀렸는데
+    assert not any("단정" in x for x in v)  # 금지 표현은 풀렸는데
     assert any("MNPI" in x for x in v), v  # MNPI는 그대로
     assert any("출처 없는" in x for x in v), v  # 미인용도 그대로
 
 
-def test_target_price_is_not_a_market_quote():
-    """`목표주가`는 `주가`를 품지만 시세가 아니다 — 지연시세 고지를 요구하지 않는다.
-    (요구하면 예외로 금지 표현을 풀어도 시세 규칙이 남아 결국 못 낸다.)"""
+def test_target_price_now_needs_the_delayed_quote_notice():
+    """`목표주가`를 시세 규칙에서 가리던 예외를 걷어냈다(2026-08-10).
+
+    가린 근거가 "그 문장은 금지 표현 규칙이 이미 본다"였는데 그 규칙이 없어졌다 —
+    가린 채로 두면 `목표주가 49만원`이 **어느 규칙에도 안 걸린다.** 전망치라도 값을
+    실었으면 무엇을 기준으로 한 값인지는 밝혀야 한다는 쪽으로 정했다."""
     s = [_qsent("골드만삭스가 목표주가를 49만원으로 제시했다.", {"type": "news"})]
-    v = check_note(apply_notice(s[0]["text"], "F3"), s, "F3", None, None, {0})
-    assert v == [], v
+    assert any("지연시세" in x for x in check_note(apply_notice(s[0]["text"], "F3"), s, "F3"))
 
 
 def test_f1_notice_self_satisfies_delayed_quote():
@@ -248,11 +256,11 @@ def test_gate_and_screen_count_the_same_acks():
 
 
 def test_ack_cannot_waive_forbidden_phrase():
-    """확인은 미인용만 푼다 — 투자권유 표현·지연시세 누락은 문장을 고쳐야 한다."""
-    s = [{"text": "목표주가는 20만원이다.", "source": None, "is_heading": False, "kind": "claim"}]
-    v = check_note(apply_notice("목표주가는 20만원이다.", "F3"), s, "F3", {0})
+    """확인은 미인용만 푼다 — 남은 금지 표현(단정)·지연시세 누락은 문장을 고쳐야 한다."""
+    s = [{"text": "수익을 보장한다.", "source": None, "is_heading": False, "kind": "claim"}]
+    v = check_note(apply_notice("수익을 보장한다.", "F3"), s, "F3", {0})
     assert not any("출처 없는" in x for x in v)  # 미인용은 풀렸는데
-    assert any("목표주가" in x for x in v)       # 투자권유 표현은 그대로 막는다
+    assert any("수익을 보장" in x for x in v)     # 단정 표현은 그대로 막는다
 
 
 if __name__ == "__main__":

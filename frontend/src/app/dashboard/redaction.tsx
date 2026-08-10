@@ -149,7 +149,7 @@ function EgressTwin({ p }: { p: EgressPortfolio }) {
           `Next Best Action` 채팅이 답하는 근거라 실제로 프롬프트에 실린다. 화면이 안 그리면
           "AI가 보는 정보"가 나가는 양을 축소해 말하는 셈이다(이 패널의 존재 이유가 무너진다).
           ⚠️ 왼쪽 상세(`.detail`)에는 이 블록이 없다 — 거기는 계좌를 읽는 자리이고 상황은
-             머리줄의 `→ 실질 …` 한 조각으로만 나온다. 형식을 맞추는 규칙에서 벗어나는
+             머리줄의 `→ 자금성향 …` 한 조각으로만 나온다. 형식을 맞추는 규칙에서 벗어나는
              두 번째 자리이고, 이유는 **여기서만 보이는 값이라서**다(보유 표의 `잔고 대비`
              열과 같은 판단).
           ⚠️ 금액을 그리지 않는다 — 계좌 밖 자산도 구간 라벨뿐이다. */}
@@ -176,7 +176,7 @@ function EgressTwin({ p }: { p: EgressPortfolio }) {
                 ))}
                 {p.scenario.effective_risk_label && (
                   <li>
-                    성향: {p.scenario.registered_risk_label} → 실질{' '}
+                    성향: {p.scenario.registered_risk_label} → 자금성향{' '}
                     {p.scenario.effective_risk_label}
                     {p.scenario.effective_risk_why
                       ? ` (${p.scenario.effective_risk_why})`
