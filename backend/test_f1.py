@@ -608,6 +608,87 @@ def test_history_block_is_oldest_first_and_carries_no_verdict():
     assert "판정이 아니다" in block and "[^hold]" in block
 
 
+# ── 키워드 형식 (`Next Best Action`) ──────────────────────────────────────────
+
+_LINE = (
+    "은퇴|월 생활비를 배당·이자|인출은 이미 시작 :: "
+    "은퇴 후 근로소득이 끝나고 월 생활비를 배당·이자로 충당하는 현금흐름 전환 "
+    "국면이며, 인출은 이미 시작됐다.[^hold]"
+)
+
+
+def test_keywords_are_pieces_cut_from_the_sentence():
+    """키워드는 문장에서 **그대로 떼어 온 조각**이다 — 여러 개를 한 줄에 붙일 수 있다."""
+    (labels, text), = f1.split_labeled(_LINE)
+    assert labels == ["은퇴", "월 생활비를 배당·이자", "인출은 이미 시작"]
+    # 규칙이 부탁이 아니라 보장인 지점: 키워드는 반드시 문장 안에 그대로 있다.
+    assert all(kw in text for kw in labels)
+
+
+def test_a_category_name_is_not_a_keyword():
+    """`상황 요약` 같은 갈래 이름은 문장에 없는 말이라 통과하지 못한다 — 이 형식이 막으려던
+    것이 바로 그것이다."""
+    assert not f1.valid_label("상황 요약", "은퇴 후 근로소득이 끝났다.")
+    assert f1.valid_label("은퇴", "은퇴 후 근로소득이 끝났다.")
+    assert f1.split_labeled("상황 요약 :: 은퇴 후 근로소득이 끝났다.[^hold]") == [
+        (None, "상황 요약 :: 은퇴 후 근로소득이 끝났다.[^hold]")
+    ]
+
+
+def test_a_reworded_keyword_is_dropped_not_repaired():
+    """조사를 바꾸거나 말을 다듬으면 더 이상 문장의 조각이 아니다. 고쳐서 통과시키지 않는다 —
+    고치기 시작하면 무엇이 검사된 값인지가 흐려진다."""
+    assert not f1.valid_label("은퇴가", "은퇴 후 근로소득이 끝났다.")
+
+
+def test_a_keyword_with_a_number_is_rejected():
+    """접혀 있는 동안 화면에 보이는 건 키워드뿐이다 — 수치가 거기 있으면 **각주 없이 뜨는
+    사실 주장**이 된다(가드레일 3). 문장의 조각이어도 막는다."""
+    assert not f1.valid_label("반도체 42%", "반도체 42%로 가장 높다.")
+    assert f1.valid_label("반도체", "반도체 42%로 가장 높다.")
+
+
+def test_one_bad_keyword_does_not_sink_the_whole_line():
+    """통과 못 한 조각만 조용히 빠진다 — 하나 때문에 줄 전체를 산문으로 떨어뜨리면
+    멀쩡한 조각까지 접히지 않는다."""
+    (labels, _), = f1.split_labeled("은퇴|상황 요약 :: 은퇴 후 근로소득이 끝났다.[^hold]")
+    assert labels == ["은퇴"]
+
+
+def test_keyword_count_is_capped():
+    """넘치면 접은 뜻이 없다 — 키워드 줄이 문장보다 길어진다."""
+    s = "가 나 다 라 마 바 사."
+    line = "|".join(["가", "나", "다", "라", "마"]) + " :: " + s
+    (labels, _), = f1.split_labeled(line)
+    assert len(labels) == f1.LABEL_MAX_COUNT == 3
+
+
+def test_a_forbidden_phrase_cannot_hide_in_a_keyword():
+    """금지 표현은 키워드에서도 금지다 — 문장에 있다고 통과시키면 접힌 채로 뜬다."""
+    assert not f1.valid_label("지금 사세요", "지금 사세요 라는 말이 있었다.")
+
+
+def test_a_plain_prose_answer_survives_the_split():
+    """형식이 깨져도 답이 사라지면 안 된다 — 키워드 없는 줄은 예전과 똑같이 처리된다."""
+    assert f1.split_labeled("이 포트폴리오는 반도체 비중이 높다.[^hold]") == [
+        (None, "이 포트폴리오는 반도체 비중이 높다.[^hold]")
+    ]
+    assert f1.split_labeled("") == [] and f1.split_labeled("\n \n") == []
+
+
+def test_a_news_footnote_url_does_not_look_like_a_keyword():
+    """뉴스 각주는 URL 전체다(`https://`) — 콜론이 들어 있어도 키워드로 잘못 읽히면 안 된다."""
+    line = "관련 보도가 있다.[^https://n.example/a]"
+    assert f1.split_labeled(line) == [(None, line)]
+
+
+def test_keyword_format_is_opt_in():
+    """전역 F1(고객 없음)은 산문 그대로다 — 종목 한 건 문답을 접었다 펴는 건 손만 늘린다."""
+    assert f1.answer_system_prompt(False) == f1.ANSWER_SYSTEM_PROMPT
+    assert f1.answer_system_prompt(True).startswith(f1.ANSWER_SYSTEM_PROMPT)
+    assert "키워드 ::" in f1.answer_system_prompt(True)
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

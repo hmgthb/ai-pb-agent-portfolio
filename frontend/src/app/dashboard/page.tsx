@@ -5,7 +5,8 @@
  *  **대상 사용자 = PB**(2026-07-22 확정). 이 화면은 PB가 고객을 만나기 전에 여는 화면이고,
  *  AI는 PB를 대신하지 않는다 — 출처 있는 사실을 모아줄 뿐, 고객에게 나가는 말은 사람이 쓴다.
  *  그래서 기본 역할이 PB이고, 첫 화면에 "오늘 시장 → 고객 보유 종목 → 고객별 상담 준비" 순으로
- *  놓인다(관리자·준법 역할은 감독용 뷰로 유지).
+ *  놓인다. 화면은 둘뿐이고(PB · 관리자) 관리자는 노트를 만들고 통과시키는 **다른 사람**의
+ *  화면을 데모로 보는 모드다 — 들어가는 문은 페이지 맨 아래 고지 카드의 톱니 하나다.
  *
  *  시안과 달라진 점:
  *   · 노트 생성 카드가 시뮬레이션이 아니라 **실제 SSE**로 돈다 (ResearchCard).
@@ -82,13 +83,21 @@ import {
 const ROLES: Record<
   Role,
   {
+    /** 탭 셋 — **화면마다 하나씩 켠다**(2026-08-10에 탭과 권한을 갈랐다).
+     *
+     *  그전에는 `research` 하나가 두 일을 했다: 「작성·검토」 탭을 켜는 일과, PB만 쓰는
+     *  것(F1 채팅)을 켜는 일. 작성·검토를 관리자 쪽으로 옮기는 순간 그 둘이 서로 다른
+     *  값을 원해서 갈랐다 — 한 깃발이 두 뜻을 나르면 옮길 때마다 한쪽이 조용히 따라간다. */
+    custTab: boolean;
+    noteTab: boolean;
     aiTab: boolean;
     portfolio: boolean;
+    /** **PB의 일인가** — F1 채팅(고정 버튼)이 여기 달린다. 탭 구성과는 무관하다. */
     research: boolean;
-    /** 상담 전 브리핑 노출 — 상담 준비는 PB의 일이다. 준법 화면에 띄우면 카드가 자기를
+    /** 상담 전 브리핑 노출 — 상담 준비는 PB의 일이다. 관리자 화면에 띄우면 카드가 자기를
      *  "내 고객 보유 상위"라고 소개하는데, 그 화면을 보는 사람에게 담당 고객은 없다. */
     brief: boolean;
-    defaultView: 'cust' | 'ai' | null;
+    defaultView: View;
     queueFilter: ((it: QueueItem) => boolean) | null;
     custFilter: ((c: Customer) => boolean) | null;
   }
@@ -97,7 +106,15 @@ const ROLES: Record<
   // 여기서 다시 거를 필요가 없다 — 남의 고객은 애초에 브라우저에 도착하지 않는다.
   // 노트도 거르지 않는다: PB가 1명이니 이 대시보드의 노트는 전부 이 사람 것이다.
   // (예전엔 created_by로 걸렀는데, 생성자가 없는 노트 6건이 큐에서 통째로 사라졌다.)
+  // **탭이 하나다**(2026-08-10). 노트를 만들고 처리하는 일(「작성·검토」)을 관리자 쪽으로
+  // 넘기면서 PB에게 남은 화면은 상담 준비 하나가 됐고, 그러면 탭 줄이 서지 않는다
+  // (`tabs.length > 1`) — 고를 것이 하나뿐인 탭은 고르는 장치가 아니라 제목일 뿐이다.
+  // ⚠️ PB는 이제 **처리 대기 큐를 보지 않는다.** 상담에 쓸 수 있는 등급은 발행분뿐이고
+  //    그건 고객 카드에 이미 붙는다(`pickNotes`) — 아직 못 쓰는 것을 이 화면에 늘어놓으면
+  //    "읽을 것"과 "처리할 일"이 다시 한 화면에 섞인다.
   pb: {
+    custTab: true,
+    noteTab: false,
     aiTab: false,
     portfolio: true,
     research: true,
@@ -109,17 +126,27 @@ const ROLES: Record<
     queueFilter: (it) => it.type === 'note',
     custFilter: null,
   },
-  // 준법은 이 대시보드의 사용자가 아니다 — **다른 사람의 화면**을 데모로 미리 보는 모드다.
-  // 그래서 고객 포트폴리오가 안 보이고(정보장벽), 심의 단계 노트만 손댈 수 있다.
+  // 관리자(2026-08-10에 「준법」에서 이름을 바꿨다)는 이 대시보드의 주인이 아니다 —
+  // **다른 사람의 화면**을 데모로 미리 보는 모드다. 그래서 고객 포트폴리오가 안 보인다
+  // (정보장벽 — 이름이 바뀌었다고 이 경계를 풀지 않았다).
+  //
+  // 「작성·검토」가 여기로 왔다. 그래서 **심의 탭이 따로 없다** — 심의 대기 큐는 그 탭이
+  // 담고 있고, 큐만 남은 빈 탭을 하나 더 세울 이유가 없다.
+  // ⚠️ 노트를 **만드는 쪽과 통과시키는 쪽이 한 화면이 됐다.** 승인 버튼의 권한 판정은
+  //    그대로 `role === 'comp'`에 걸려 있다(ReviewModal) — 두 일을 한 사람이 하게 할지는
+  //    제품 결정이고, 이 파일은 그 결정을 따를 뿐 몰래 넓히지 않는다.
   comp: {
+    custTab: false,
+    noteTab: true,
     aiTab: true,
     portfolio: false,
     research: false,
     brief: false,
-    // 준법도 처리할 일(심의 대기 큐)부터 본다 — 감시 탭은 지표를 훑는 화면이지
-    // 오늘 손댈 것을 알려주지 않는다.
-    defaultView: 'cust',
-    queueFilter: (it) => it.type === 'note' && it.status === 'deliberation',
+    defaultView: 'note',
+    // ⚠️ `status === 'deliberation'`을 뺐다(2026-08-10). 이제 이 화면에서 노트를 **만들기도**
+    //    하는데, 심의 단계만 거르면 방금 만든 노트가 큐에 안 보여 만든 사람이 자기 것을
+    //    잃어버린다. 무엇을 손댈 수 있는지는 여전히 큐가 아니라 ReviewModal이 정한다.
+    queueFilter: (it) => it.type === 'note',
     custFilter: null,
   },
 };
@@ -221,7 +248,8 @@ type Data = {
  *     발행분이 #32 검토중에 가려 열리지 않았다). 발행분은 PB가 상담에 실제로 써도 되는
  *     유일한 등급이고, 이 자리에서 여는 것도 그 등급에만 있는 **최종본 PDF**다.
  *  ⚠️ 미발행 노트는 여기 담지 않는다. 감추는 게 아니라 **자리가 다른 것**이다 —
- *     검토·심의는 `작성·검토` 탭의 큐가 맡는다("읽을 것"과 "처리할 일"은 다른 목록이다).
+ *     검토·심의는 **관리자 화면**의 「작성·검토」 큐가 맡는다(2026-08-10에 PB에서 옮겼다).
+ *     "읽을 것"과 "처리할 일"은 다른 목록이고, 이제 보는 사람까지 갈렸다.
  *  ⚠️ 보류(rejected)는 호출자가 걸러서 넘긴다 — PB가 직접 버린 물건은 상담 재료가 아니다.
  *
  *  입력은 **id 내림차순**(최신 먼저)을 가정한다 — `/api/notes`가 그 순서로 준다.
@@ -448,7 +476,7 @@ export default function DashboardPage() {
     setTimeout(() => setToastMsg(''), 2800);
   }, []);
 
-  // 마운트 시 저장된 역할·탭을 복원한다. 저장된 탭이 그 역할에 실제로 없으면(예: 준법인데
+  // 마운트 시 저장된 역할·탭을 복원한다. 저장된 탭이 그 역할에 실제로 없으면(예: PB인데
   // 'note') 빈 화면이 되므로, 유효할 때만 복원하고 아니면 기본 화면으로 돌린다.
   /* eslint-disable react-hooks/set-state-in-effect --
      마운트 1회 복원이다. localStorage는 SSR에서 못 읽으니 하이드레이션 불일치를 피하려면
@@ -461,12 +489,14 @@ export default function DashboardPage() {
       setRole(r);
       const cfgR = ROLES[r];
       const savedView = localStorage.getItem('pb-dash-view');
+      // 저장된 탭이 **그 역할에 실제로 있을 때만** 복원한다. 없는 탭을 복원하면 카드가
+      // 전부 `hidden`이라 빈 화면이 뜬다 — 2026-08-10에 탭 구성이 바뀌면서 예전에 저장된
+      // 값(관리자인데 `cust`, PB인데 `note`)이 정확히 그 경우가 됐다.
       const viewOk =
-        savedView === 'cust' ||
-        (savedView === 'note' && cfgR.research) ||
+        (savedView === 'cust' && cfgR.custTab) ||
+        (savedView === 'note' && cfgR.noteTab) ||
         (savedView === 'ai' && cfgR.aiTab);
-      if (viewOk) setView(savedView as View);
-      else setView(cfgR.defaultView ?? 'cust');
+      setView(viewOk ? (savedView as View) : cfgR.defaultView);
     } catch {
       /* localStorage 접근 불가(프라이빗 모드 등) — 기본값 유지 */
     }
@@ -770,32 +800,35 @@ export default function DashboardPage() {
   const [editText, setEditText] = useState('');
   /** 담은 것을 PDF로. **POST라 링크로 못 연다** — 받은 바이트를 blob으로 열어 새 탭에
    *  띄운다(서버가 `inline`으로 준다). 게이트에 걸리면 그 사유를 그대로 보여준다. */
-  const prepPdf = useCallback(async (cid: number, items: PrepItem[]) => {
-    setPrepBusy(true);
-    setPrepError('');
-    try {
-      const r = await fetch(prepNotePdfUrl(cid, MY_PB), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items }),
-      });
-      if (!r.ok) {
-        setPrepError(errorMessage(await r.json().catch(() => null)));
-        return;
+  const prepPdf = useCallback(
+    async (cid: number, items: PrepItem[]) => {
+      setPrepBusy(true);
+      setPrepError('');
+      try {
+        const r = await fetch(prepNotePdfUrl(cid, MY_PB), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items }),
+        });
+        if (!r.ok) {
+          setPrepError(errorMessage(await r.json().catch(() => null)));
+          return;
+        }
+        const url = URL.createObjectURL(await r.blob());
+        window.open(url, '_blank', 'noopener');
+        // 새 탭이 읽어 간 뒤에 놓는다 — 바로 revoke하면 빈 탭이 열린다.
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        // 서버가 방금 것을 남겼으므로 목록을 다시 받는다 — 만든 메모가 아래 카드에 바로
+        // 서야 "저장됐다"는 사실이 화면에서 확인된다(새로고침을 시키지 않는다).
+        void load();
+      } catch (e) {
+        setPrepError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setPrepBusy(false);
       }
-      const url = URL.createObjectURL(await r.blob());
-      window.open(url, '_blank', 'noopener');
-      // 새 탭이 읽어 간 뒤에 놓는다 — 바로 revoke하면 빈 탭이 열린다.
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      // 서버가 방금 것을 남겼으므로 목록을 다시 받는다 — 만든 메모가 아래 카드에 바로
-      // 서야 "저장됐다"는 사실이 화면에서 확인된다(새로고침을 시키지 않는다).
-      void load();
-    } catch (e) {
-      setPrepError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setPrepBusy(false);
-    }
-  }, [load]);
+    },
+    [load],
+  );
   useEffect(() => {
     if (!chatBig) return;
     const onKey = (e: KeyboardEvent) => {
@@ -841,21 +874,16 @@ export default function DashboardPage() {
       (
         [
           // 축은 "읽기 / 하기"다. 상담 준비 = 무엇을 알아야 하나(브리핑·고객),
-          // 작성·검토 = 내가 손대야 하는 것(생성·처리 대기).
-          // "노트·승인"이었다 — ①승인(발행)은 준법의 일이라 PB 화면에서 못 하는 동작을
-          // 이름으로 걸고 있었고 ②큐 절반이 고객 문의라 "노트"가 그 절반을 못 덮었다.
-          // 지금 이름은 PB가 실제로 하는 두 동작이고 카드 순서(생성 → 큐)와 같으며
-          // 큐 행의 버튼 라벨("검토")과도 이어진다.
-          // 준법은 고객을 관리하지 않는다 — 이 탭이 하는 일은 심의 큐 처리뿐이라
-          // "심의"로 부른다(예전 "고객 관리"는 없는 고객 카드를 기대하게 만들었다).
-          {
-            id: 'cust',
-            label: cfg.research ? '상담 준비' : '심의',
-            on: true,
-          },
-          { id: 'note', label: '작성·검토', on: cfg.research },
-          // 준법감시인의 두 일 = 심의(통과시키기) / 감시(지켜보기). "AI 평가"는 준법이
-          // AI 성능을 채점하는 것처럼 읽혀서 바꿨다 — 실제 내용은 산출물의 규정 준수 감시다.
+          // 작성·검토 = 손대야 하는 것(생성·처리 대기).
+          // "노트·승인"이었다 — ①승인(발행)은 PB 화면에서 못 하는 동작이라 이름으로 걸고
+          // 있었고 ②큐 절반이 고객 문의라 "노트"가 그 절반을 못 덮었다. 지금 이름은 카드
+          // 순서(생성 → 큐)와 같고 큐 행의 버튼 라벨("검토")과도 이어진다.
+          // ⚠️ 두 탭이 **한 역할에 같이 서지 않는다**(2026-08-10) — PB는 상담 준비만,
+          //    관리자는 작성·검토 + 감시다. 그래서 PB 화면에는 탭 줄 자체가 없다.
+          { id: 'cust', label: '상담 준비', on: cfg.custTab },
+          { id: 'note', label: '작성·검토', on: cfg.noteTab },
+          // 관리자의 두 일 = 처리(통과시키기) / 감시(지켜보기). "AI 평가"는 AI 성능을
+          // 채점하는 것처럼 읽혀서 바꿨다 — 실제 내용은 산출물의 규정 준수 감시다.
           { id: 'ai', label: '감시', on: cfg.aiTab },
         ] as const
       ).filter((t) => t.on),
@@ -864,15 +892,13 @@ export default function DashboardPage() {
 
   function applyRole(r: Role) {
     setRole(r);
-    const next = ROLES[r];
-    // 역할을 바꾸면 지금 보던 탭이 없어질 수 있다 — 없으면 그 역할의 기본 화면으로 돌린다.
-    // (예: 종목 노트 탭에서 준법으로 넘어가면 준법에는 그 탭이 없다.)
-    const stillThere =
-      view === 'cust' ||
-      (view === 'note' && next.research) ||
-      (view === 'ai' && next.aiTab);
-    if (next.defaultView) setView(next.defaultView);
-    else if (!stillThere) setView('cust');
+    // 역할을 바꾸면 그 역할의 기본 화면으로 간다. **지금 보던 탭이 저쪽에도 있는지 따지지
+    // 않는다**(2026-08-10) — 두 역할이 겹치는 탭이 하나도 없어졌으므로 따질 것이 없다.
+    setView(ROLES[r].defaultView);
+    // 맨 위로 되돌린다. 관리자로 가는 문이 **페이지 맨 아래**에 있어서(`.admin-door`)
+    // 그냥 두면 새 화면의 한가운데에 떨어진다 — 화면을 바꿔 놓고 그 화면의 머리말을
+    // 안 보여 주는 셈이다. 돌아올 때도 같은 이유로 위에서 시작해야 한다.
+    window.scrollTo({ top: 0 });
   }
 
   const pending = useMemo(
@@ -1173,8 +1199,8 @@ export default function DashboardPage() {
             value: String(pendingChats.length),
           },
         ]
-      : // 준법 심의 탭엔 타일을 두지 않는다. 심의 대기 수는 아래 처리 대기 카드("N건"+목록)에,
-        // 게이트 차단은 감시 탭(AI 신뢰도 카드)에 이미 있어 타일은 중복 요약일 뿐이었다.
+      : // 관리자 화면에는 이 타일이 **닿지 않는다** — 타일은 상담 준비(cust) 화면 안에 있고
+        // 관리자에게는 그 탭이 없다(2026-08-10). 값은 담당 고객 수라 어차피 그쪽 것이 아니다.
         [];
 
   /* "AI가 오늘 한 일" — 큐와 같이 **한 번 정의하고 자리만 옮긴다.**
@@ -1282,7 +1308,10 @@ export default function DashboardPage() {
      ⚠️ **정렬하지 않는다**: 서버가 최신순으로 주고 묶음 순서도 그 안에서 처음 나온 순서다. */
   const prepGroups: { id: number; name: string; rows: PrepNoteIndex[] }[] = [];
   {
-    const byId = new Map<number, { id: number; name: string; rows: PrepNoteIndex[] }>();
+    const byId = new Map<
+      number,
+      { id: number; name: string; rows: PrepNoteIndex[] }
+    >();
     for (const p of data.prepNotes) {
       const g = byId.get(p.customer_id);
       if (g) {
@@ -1328,7 +1357,9 @@ export default function DashboardPage() {
               <span className="cno">#{g.id}</span>
               <strong>{g.name}</strong>
               <span className="hint">{g.rows.length}건</span>
-              <span className="meta">최근 {fmtDateTime(g.rows[0].created_at)}</span>
+              <span className="meta">
+                최근 {fmtDateTime(g.rows[0].created_at)}
+              </span>
             </summary>
             {g.rows.map((p) => (
               <div className="qrow" key={p.id}>
@@ -1405,10 +1436,9 @@ export default function DashboardPage() {
     </section>
   );
 
-  /* 처리 대기 카드 — 두 화면이 나눠 갖는다.
-     PB에게는 「작성·검토」 탭(만드는 것과 처리하는 것을 같이 두는 곳)에,
-     준법에게는 그 탭이 없으므로 원래 자리에 남긴다 — 준법이 큐를 잃으면
-     심의할 노트를 화면에서 찾을 방법이 아예 없어진다.
+  /* 처리 대기 카드 — **자리는 하나다**(2026-08-10). 「작성·검토」 탭 안이고, 그 탭이 있는
+     화면은 관리자뿐이다. 한동안은 그 탭이 없는 역할을 위해 고객 탭에도 한 벌 더 그렸는데,
+     작성·검토가 통째로 관리자 쪽으로 가면서 그런 역할이 없어졌다.
 
      ⚠️ 이름은 **`처리 대기`**다(2026-08-06에 `종목 노트`에서 되돌렸다). 이 카드가 담는 건
         노트 전부가 아니라 **아직 처리할 것**이고(발행분은 빠진다), 바로 위에 `발행된 노트`가
@@ -1437,7 +1467,7 @@ export default function DashboardPage() {
               {/* 담당자(it.who)는 적지 않는다 — 1인용 대시보드에서 이 큐의 건은 전부
                         한 사람 몫이라 "미배정/관리자/박PB"가 구분하는 게 없다. 누가 무엇을
                         했는지는 노트 모달의 확인·심의·발행 줄과 감사로그에 그대로 남는다
-                        (거기서는 PB와 준법이 갈리므로 실제로 다른 사람을 가리킨다). */}
+                        (거기서는 PB와 관리자가 갈리므로 실제로 다른 사람을 가리킨다). */}
               <span className="meta">{ago(it.updated_at)} 경과</span>
               <span className="spacer" />
               <span className={`pill ${cls}`}>{label}</span>
@@ -1461,30 +1491,33 @@ export default function DashboardPage() {
       <header className="topbar">
         <div className="brand">AI PB Agent</div>
         <div className="right">
-          {/* 역할 전환이 아니라 **화면 전환**이다 — 이 대시보드의 사용자는 PB 한 명이고,
-              준법은 이 화면을 같이 쓰는 사람이 아니라 승인 단계를 맡는 다른 사람이다.
-              데모에서 그 단계를 보여줘야 해서 미리보기로 남겨 뒀고, 라벨이 그렇게 말한다. */}
-          <div
-            className="role-toggle"
-            role="group"
-            aria-label="화면 전환 (목 로그인)"
-          >
-            {(['pb', 'comp'] as Role[]).map((r) => (
-              <button
-                key={r}
-                aria-pressed={role === r}
-                onClick={() => applyRole(r)}
-              >
-                {r === 'pb' ? 'PB' : '준법'}
-              </button>
-            ))}
-          </div>
+          {/* [PB][관리자] 토글이 여기 있었다(2026-08-10에 걷어냈다).
+              이 대시보드의 사용자는 PB 한 명이고, 관리자는 같이 쓰는 사람이 아니라 노트를
+              만들고 통과시키는 **다른 사람**이다. 늘 보이는 토글은 "둘 중 골라 쓰는 화면"으로
+              읽혀서, 실제로는 한 사람만 쓰는 화면에 매번 고를 것을 하나 더 얹고 있었다.
+              들어가는 문은 **페이지 맨 아래 톱니**로 옮겼다(아래 `.admin-door`).
+
+              ⚠️ **나오는 길은 숨기지 않는다.** 들어간 화면에서 돌아올 길까지 안 보이면
+                 갇힌 것처럼 보이고, 발표 중에 복귀를 못 찾으면 그게 사고다. 그래서 이 버튼은
+                 관리자 화면에서만, 상단에 **뚜렷하게** 선다(들어가는 문과 대칭이 아닌 것이 의도다).
+              ⚠️ 역할 id는 `comp` 그대로다 — 권한 판정이 거기 걸려 있다(types.ts `Role`). */}
+          {role === 'comp' && (
+            <button
+              className="btn"
+              onClick={() => applyRole('pb')}
+              title="PB 화면으로 돌아갑니다"
+            >
+              PB
+            </button>
+          )}
           <ThemeToggle />
         </div>
       </header>
 
       {/* 탭 줄은 **고를 게 둘 이상일 때만** 낸다 — 선택지가 하나뿐인 탭은 고르는 장치가
-          아니라 제목일 뿐이다. PB는 상담 준비 + 작성·검토, 준법은 심의 + 감시. */}
+          아니라 제목일 뿐이다. 그래서 **PB 화면에는 탭 줄이 없다**(상담 준비 하나) —
+          2026-08-10에 작성·검토를 관리자 쪽으로 옮기면서 그렇게 됐다.
+          관리자는 작성·검토 + 감시 둘이라 줄이 선다. */}
       {tabs.length > 1 && (
         <nav className="cats" aria-label="대시보드 카테고리">
           {tabs.map((t) => (
@@ -1506,7 +1539,8 @@ export default function DashboardPage() {
         </nav>
       )}
 
-      {/* ══════════ 탭 1 · 고객 관리 ══════════ */}
+      {/* ══════════ 상담 준비 — **PB 화면의 전부다**(2026-08-10) ══════════
+          탭이 이것 하나뿐이라 위 탭 줄이 서지 않는다. "탭 1"이라고 부르지 않는 이유다. */}
       <div className="view stack" hidden={view !== 'cust'}>
         {/* ⚠️ 여기 있던 「AI가 오늘 한 일」은 걷어냈다(2026-08-06) — **감시 탭에만 산다.**
             그 줄은 "오늘 손댈 것"이 아니라 **지켜본 결과**라, PB의 첫 화면 맨 위에서
@@ -1516,28 +1550,27 @@ export default function DashboardPage() {
 
         {/* 오늘 규모(내 담당 고객·내 처리 대기) → 바로 만들 수 있는 것(종목 노트) 순서다.
             그 아래로 읽을거리(브리핑·처리 대기·고객)가 이어진다. */}
-        {/* 타일은 어느 화면에서나 균등 2열이다. 한때 준법 화면에서만 감시 탭의
-            사이드바 격자(2fr 1fr)에 맞췄는데, 두 타일의 무게가 같은데 폭이 다르면
-            왼쪽이 더 중요한 것처럼 읽힌다 — 탭 사이 이음매보다 이쪽이 우선이다. */}
-        {/* 타일이 없으면(준법: 아래 처리 대기 카드가 같은 정보를 담는다) 빈 그리드를 안 낸다. */}
-        {tiles.length > 0 && (
-          <div className="tile-row">
-            {/* 지금은 두 타일 다 **읽는 값**이다 — 누르는 타일(`.tile.clickable`,
-                라벨 옆 →)은 없앴다. 처리 대기 노트 타일이 작성·검토 탭으로 가던 자리인데,
-                고객 문의 수로 바뀌면서 갈 곳이 없어졌다(문의는 이 화면 아래에 있다).
-                다시 필요해지면 button + setView로 되살린다 — CSS는 그대로 있다. */}
-            {tiles.map((t) => (
-              <div className="tile" key={t.label}>
-                <div className="label">{t.label}</div>
-                <div className="value">{t.value}</div>
-                {/* 설명줄이 없는 타일은 빈 칸을 남기지 않는다(빈 div도 자리를 차지한다). */}
-                {'breakdown' in t && t.breakdown && (
-                  <div className="breakdown">{t.breakdown}</div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+        {/* 타일은 균등 2열이다. 한때 관리자 화면에서만 감시 탭의 사이드바 격자(2fr 1fr)에
+            맞췄는데, 두 타일의 무게가 같은데 폭이 다르면 왼쪽이 더 중요한 것처럼 읽힌다.
+            ⚠️ `tiles.length > 0` 가드가 여기 있었다 — 타일이 빈 화면(준법)이 있던 시절의
+               것이라 걷어냈다. 지금 이 자리에 닿는 화면은 PB 하나이고 타일은 늘 둘이다. */}
+        <div className="tile-row">
+          {/* 지금은 두 타일 다 **읽는 값**이다 — 누르는 타일(`.tile.clickable`, 라벨 옆 →)은
+              없앴다. 처리 대기 노트 타일이 작성·검토로 가던 자리인데, 고객 문의 수로 바뀌면서
+              갈 곳이 없어졌다(문의는 이 화면 아래에 있다).
+              ⚠️ 되살리더라도 **작성·검토로 보내지는 못한다** — 그건 이제 관리자 화면이고,
+                 PB에게는 setView로 갈 수 있는 탭이 아니다(2026-08-10). */}
+          {tiles.map((t) => (
+            <div className="tile" key={t.label}>
+              <div className="label">{t.label}</div>
+              <div className="value">{t.value}</div>
+              {/* 설명줄이 없는 타일은 빈 칸을 남기지 않는다(빈 div도 자리를 차지한다). */}
+              {'breakdown' in t && t.breakdown && (
+                <div className="breakdown">{t.breakdown}</div>
+              )}
+            </div>
+          ))}
+        </div>
 
         {/* 브리핑 (F2) — **거시 전용**(2026-08-07). 오늘 지수와, 어제 대비 달라진 것. */}
         <section className="card" aria-labelledby="b-title" hidden={!cfg.brief}>
@@ -1798,10 +1831,14 @@ export default function DashboardPage() {
           )}
         </section>
 
-        {/* 처리 대기는 작성·검토 탭으로 옮겼다(PB). 준법은 그 탭이 없어 여기 남는다. */}
-        {!cfg.research && queueCard}
+        {/* 처리 대기 큐는 **여기 없다**(2026-08-10). 「작성·검토」 탭이 유일한 자리이고,
+            그 탭이 있는 화면은 관리자뿐이다. 예전에는 그 탭이 없는 역할을 위해 이 자리에
+            한 벌 더 그렸는데, 지금은 그런 역할이 없어 남겨 두면 큐가 두 곳에 서게 된다.
+            ⚠️ PB에게 되살리지 말 것 — 상담에 쓸 수 있는 등급은 발행분뿐이고 그건 고객 카드에
+               이미 붙는다. 아직 못 쓰는 것을 여기 늘어놓으면 "읽을 것"과 "처리할 일"이 다시
+               한 화면에 섞인다(탭을 갈랐던 이유 그대로다). */}
 
-        {/* 고객 포트폴리오 — PB 전용. 준법은 정보장벽으로 고객 개인정보를 안 보므로 카드
+        {/* 고객 포트폴리오 — PB 전용. 관리자는 정보장벽으로 고객 개인정보를 안 보므로 카드
             자체를 렌더하지 않는다(예전엔 "접근 제한"만 든 빈 카드가 화면 최하단을 차지했다).
             정보장벽 자체는 서버 스코핑(남의 고객 404)이 보장한다 — 빈 카드로 광고할 게 아니다. */}
         {cfg.portfolio && (
@@ -1995,7 +2032,7 @@ export default function DashboardPage() {
                                 '상황을 반영한 실질 위험성향'
                               }
                             >
-                              → 실질 {RISK[selected.scenario.effective_risk]}
+                              → {RISK[selected.scenario.effective_risk]}
                             </span>
                           )}
                       </div>
@@ -2489,17 +2526,17 @@ export default function DashboardPage() {
 
         {/* 만들어 둔 상담 준비 메모 — **읽을 것**의 목록이고, 위 카드가 만드는 자리다
             (`발행된 노트`와 `종목 노트` 카드의 관계 그대로: 만드는 곳 다음에 다 된 것).
-            ⚠️ PB 전용이다 — 준법은 고객 카드를 안 보는데 그 고객의 메모만 볼 수는 없다.
+            ⚠️ PB 전용이다 — 관리자는 고객 카드를 안 보는데 그 고객의 메모만 볼 수는 없다.
             ⚠️ **다시 정렬하지 않는다.** 서버가 최신순(id DESC)으로 주고, 고객 묶음의 순서도
                그 안에서 처음 나온 순서다(= 최근에 메모를 만든 고객이 위). */}
         {cfg.portfolio && prepCard}
       </div>
 
-      {/* ══════════ 탭 2 · 종목 노트 (F3) ══════════
+      {/* ══════════ 작성·검토 (F3) — **관리자 화면**(2026-08-10에 PB에서 옮겨 왔다) ══════════
           `hidden`으로 감출 뿐 **언마운트하지 않는다** — 실행이 1~2분 걸리는데 언마운트되면
           ResearchCard가 스트림을 닫아(§ResearchCard의 cleanup) 노트가 안 나온다.
-          그래서 생성을 걸어두고 고객 관리 탭으로 건너가도 계속 돈다. */}
-      {cfg.research && (
+          그래서 생성을 걸어두고 감시 탭으로 건너가도 계속 돈다. */}
+      {cfg.noteTab && (
         <div className="view stack" hidden={view !== 'note'}>
           <ResearchCard
             actor={ACTOR[role]}
@@ -2508,13 +2545,13 @@ export default function DashboardPage() {
           />
           {/* 순서는 **만든다 → 다 된 것을 읽는다 → 처리할 것을 본다**이다. 발행분을 큐
               위에 두는 이유: 상담에 실제로 쓸 수 있는 등급은 발행분뿐이고, 큐는 아직
-              쓸 수 없는 것들이다. ⚠️ 이 카드는 PB 화면 전용이다 — 준법에는 이 탭이 없다. */}
+              쓸 수 없는 것들이다. ⚠️ 이 셋은 **이 탭에만 있다** — PB 화면에는 없다. */}
           {publishedCard}
           {queueCard}
         </div>
       )}
 
-      {/* ══════════ 탭 3 · 감시 (준법 전용) ══════════ */}
+      {/* ══════════ 감시 — **관리자 화면의 둘째 탭** ══════════ */}
       {/* 감시 탭은 카드 셋을 전폭으로 세로로 쌓는다(요약 지표 → 막힌 사건 → 원장).
           2열로 두면 짧은 AI 신뢰도가 긴 알림 목록 높이만큼 늘어나 빈칸이 생겼다.
           세 카드의 타고난 폭(넓음/넓음/넓음)이 달라 억지로 나란히 둘 이유가 없다. */}
@@ -2730,14 +2767,37 @@ export default function DashboardPage() {
           미검증 초안이며, 투자권유·광고가 아닙니다. 대고객 문안 작성과 발행은
           사람의 검토·심의·승인을 거칩니다.
         </p>
+        {/* 관리자 화면으로 가는 문 — **이 고지 카드 안, 문장과 같은 줄의 오른쪽 끝에 선
+            흐린 톱니 하나**(2026-08-10). 한때 이 카드 아래에 줄 하나짜리 푸터를 따로 세웠는데,
+            페이지를 닫는 띠가 둘이 되면서 그 사이에 구분선만 뜬 빈 칸이 생겼다 — 문 하나
+            때문에 페이지의 마지막 면을 늘릴 이유가 없다.
+            여기 둔 이유는 그대로다: ① PB 화면 상단이 브랜드와 테마 토글만 남아 깨끗해진다
+            ② 스크롤 끝이라 상담 준비를 훑는 동안에는 시야에 안 들어온다 ③ **자리가 고정이라
+            아는 사람은 반드시 찾는다**(발표 중에 "눌렀는데 안 열리는" 경우가 없어야 한다).
+            ⚠️ 흐린 것은 기본 상태뿐이다 — hover·키보드 포커스에서는 또렷해진다(CSS).
+            ⚠️ 관리자 화면에서는 **안 낸다.** 돌아가는 길은 상단 `PB` 버튼 하나여야 한다 —
+               오가는 문이 둘이면 지금 어디인지가 화면에서 흐려진다.
+            ⚠️ 마크업에서 **고지문 뒤에 온다.** 화면에서 오른쪽 끝인 것은 flex가 만드는 것이고,
+               읽는 순서(스크린리더·탭 이동)는 고지문이 먼저여야 한다. */}
+        {role === 'pb' && (
+          <div className="admin-door">
+            <button
+              onClick={() => applyRole('comp')}
+              aria-label="관리자 화면 열기"
+              title="관리자 화면 (노트 작성·검토 · 감시)"
+            >
+              ⚙
+            </button>
+          </div>
+        )}
       </footer>
 
       {/* ── 종목 즉답(F1) 입구 ────────────────────────────────
           화면에서 이것만 성격이 다르다 — 나머지는 상담 **전** 준비인데 F1은 상담 **중**
           쓴다. 그래서 스크롤 위치와 무관하게 고정이고(고객 표를 보다가도 바로 누른다),
           본문 흐름에는 끼지 않으며, 모달로 열려 보고 있던 화면을 잃지 않는다.
-          준법 화면에는 띄우지 않는다 — 에이전트를 돌려 산출물을 만드는 쪽은 PB고,
-          준법은 그걸 통과시키는 쪽이다(cfg.research와 같은 경계). */}
+          관리자 화면에는 띄우지 않는다 — 이 채팅이 답하는 근거가 담당 고객의 계좌·상담
+          데이터라, 고객을 안 보는 화면(cfg.portfolio=false)에서는 답할 것이 없다. */}
       {/* 인라인 채팅이 화면에 서 있으면 내린다 — 위 `inlineChatSeen` 주석 참조.
           ⚠️ 답변이 도는 중이라도 내린다(`●`이 그때 안 보인다). 그 자리에는 같은 일을 하는
              채팅이 이미 서 있고, 스크롤을 조금만 움직이면 표시등째로 다시 뜬다. */}
@@ -2917,7 +2977,7 @@ export default function DashboardPage() {
                     onClose={() => setModal(null)}
                     onChanged={() => void load()}
                     chatKeep={chatKeep}
-                    /* 준법에게는 고객 포트폴리오 카드가 없다(정보장벽) — 그때는 넘기지
+                    /* 관리자에게는 고객 포트폴리오 카드가 없다(정보장벽) — 그때는 넘기지
                        않아서 버튼 자체가 안 그려진다. */
                     onOpenPortfolio={
                       cfg.portfolio
@@ -2949,7 +3009,7 @@ export default function DashboardPage() {
           ② cleanup이 EventSource를 닫는다 — 답변이 오는 중에 닫으면 **크레딧만 쓰고 버린다.**
           그래서 닫아 둔 동안에도 스트림은 계속 돌고, 그 사실은 고정 버튼의 `●`이 말한다.
           ⚠️ 대화를 끊는 것은 이제 닫기가 아니라 머리말의 `새 대화`다(세션 id까지 버린다).
-          ⚠️ `cfg.research`가 꺼지면(준법 화면) 언마운트되고 대화도 사라진다 — 의도한 것이다.
+          ⚠️ `cfg.research`가 꺼지면(관리자 화면) 언마운트되고 대화도 사라진다 — 의도한 것이다.
              그 화면에는 F1 입구가 없어 감춘 채 들고 있을 이유가 없다(정보장벽과 같은 경계). */}
       {cfg.research && (
         <div

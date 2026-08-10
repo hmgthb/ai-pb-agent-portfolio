@@ -9,7 +9,7 @@
     ⚠️ 그래서 발행된 노트의 본문에는 뺀 문장이 그대로 들어 있다 — 발행물에서 실제로
        덜어내는 처리는 아직 없다(발행 시 본문 재작성이 필요하다).
 
-PB·준법이 `제거`로 판정한 문장은 지금까지 **게이트 판정용 사본**에서만 빠졌다. PDF가
+PB·관리자가 `제거`로 판정한 문장은 지금까지 **게이트 판정용 사본**에서만 빠졌다. PDF가
 사람 손에 들어가는 첫 산출물이므로 여기서 실제로 덜어낸다. ⚠️ **저장은 여전히 건드리지
 않는다**(`notes.content_md`는 AI가 쓴 그대로) — 무엇을 썼고 사람이 무엇을 뺐는지가 둘 다
 남아야 감사가 된다. 뺀 문장은 사라지지 않고 **2면 이력표**에 판정과 함께 남는다.
@@ -567,7 +567,7 @@ def build(note: dict, removed: set[int] | None = None, now: datetime | None = No
     acks = [a for a in (note.get("acks") or []) if a.get("reason") != "제거"]
     if acks:
         flow.append(Spacer(1, 14))
-        flow.append(_p("준법 확인: 각주를 붙일 수 없는 문장", st["h2"]))
+        flow.append(_p("관리자 확인: 각주를 붙일 수 없는 문장", st["h2"]))
         flow.append(_table(
             [[head("문장"), head("사유"), head("담당 · 시각")]]
             + [[cell(a.get("text", "")), cell(a.get("reason", "")),
@@ -583,7 +583,7 @@ def build(note: dict, removed: set[int] | None = None, now: datetime | None = No
                 by_index[m["index"]] = ("PB 제거", m.get("actor", ""), m.get("ts"))
         for a in note.get("acks") or []:
             if a.get("reason") == "제거":
-                by_index[a["index"]] = ("준법 제거", a.get("actor", ""), a.get("ts"))
+                by_index[a["index"]] = ("관리자 제거", a.get("actor", ""), a.get("ts"))
         rows = [
             [cell(sentences[i].get("text", "")), cell(by_index.get(i, ("제거", "", None))[0]),
              cell(f"{by_index.get(i, ('', '', None))[1]} · {_fmt_ts(by_index.get(i, ('', '', None))[2])}")]

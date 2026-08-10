@@ -899,8 +899,9 @@ async def chat_stream(
     session: str | None = Query(None),
     customer_id: int | None = Query(None),
 ):
-    """customer_id가 붙으면 **포트폴리오 질문**(집중도·배분·성향 대비)도 답할 수 있다.
-    안 붙으면 예전 그대로 종목 질문만 답한다 — 우하단 FAB로 여는 전역 F1이 그 경로다.
+    """customer_id가 붙으면 **`Next Best Action`**(고객 상황·상담 이력 · 집중도·배분)도
+    답하고, 답이 **키워드 형식**으로 나온다(`keyword_format`). 안 붙으면 예전 그대로 종목
+    질문만 답하고 산문이다 — 우하단 FAB로 여는 전역 F1이 그 경로다.
 
     ⚠️ 스코핑은 화면이 아니라 **여기**서 한다. 담당이 아닌 고객이면 404다(`/api/customers/{id}`와
        같은 규칙 — 403으로 존재를 알려주면 목록을 거른 의미가 없다). 프론트가 id를 바꿔
@@ -937,9 +938,19 @@ async def chat_stream(
             yield _sse("run_error", {"message": f"실행 중 오류가 발생했습니다 ({type(exc).__name__})."})
             yield _sse("done", {})
 
+    # 답이 키워드 형식으로 나오는가 — **고객이 붙은 채팅에서만**이다. 그 자리가
+    # `Next Best Action` 패널이고, 전역 F1(고정 버튼)에는 고객이 없다(page.tsx가 거기만
+    # customerId를 넘긴다). 종목 한 건 문답을 접었다 펴는 건 손만 늘린다.
+    # ⚠️ **이 판단은 여기 한 곳에서만 한다.** 프롬프트를 고르는 데도, 아래 `session`
+    #    이벤트로 화면에 알리는 데도 같은 값을 쓴다 — 화면이 같은 규칙을 다시 만들면
+    #    라우팅 이름표에서 이미 두 번 겪은 조용한 어긋남이 그대로 반복된다(F1Chat.tsx 머리말).
+    keyword_format = customer_id is not None
+
     async def _chat_run(q: str):
         # 0. 세션 id를 먼저 알려준다(신규든 기존이든) — 프론트가 다음 턴에 그대로 붙인다.
-        yield _sse("session", {"session": session_id})
+        #    답변 형식도 같이 알린다: 화면은 토큰이 흐르는 동안 **키워드만** 그려야 하는데,
+        #    그 판단을 하려면 이 답이 키워드 형식인지를 첫 토큰보다 먼저 알아야 한다.
+        yield _sse("session", {"session": session_id, "keyword_format": keyword_format})
 
         # 1. 입력 가드 — 에이전트를 돌리기 전에 신뢰 못 할 자유텍스트를 먼저 검사한다.
         blocked = compliance.input_guard(q)
@@ -1033,7 +1044,7 @@ async def chat_stream(
             options=ClaudeAgentOptions(
                 cwd=str(REPO_ROOT),
                 include_partial_messages=True,
-                system_prompt=f1.ANSWER_SYSTEM_PROMPT,
+                system_prompt=f1.answer_system_prompt(keyword_format),
                 can_use_tool=_deny_all_tools,  # 넘겨받은 데이터 밖으로 못 나간다
                 max_turns=1,
                 hooks={
@@ -1073,15 +1084,26 @@ async def chat_stream(
                         f"({span['from']}→{span['as_of']} 일별 종가 비교, 실시간 아님)"
                     ),
                 }
-        sentences = citations.parse_sentences(
-            raw,
-            data.get("dart_sources") or {},
-            data.get("news_sources") or {},
-            quote_source,
-            # 포트폴리오 라우트에서만 `[^hold]`가 해석된다 — 다른 답변이 이 태그를 지어내도
-            # 출처로 인정되지 않고 UNSOURCED로 남는다(게이트가 잡는다).
-            f1.portfolio_source() if data.get("portfolio") else None,
-        )
+        # 키워드(`은퇴|인출은 이미 시작 :: …`)는 **문장 밖으로 뗀 뒤** 각주를 파싱한다 —
+        # 붙은 채로 넘기면 키워드가 문장의 일부가 되어 출처 없는 문장으로 세어진다. 줄
+        # 단위로 도는 이유는 정렬이다: 한 줄이 문장 둘로 갈려도 그 줄의 키워드가 둘 다에
+        # 그대로 따라간다.
+        # ⚠️ 키워드를 못 읽은 줄은 `(None, 줄)`로 와서 예전과 똑같이 처리된다 — 형식이
+        #    깨져도 답이 사라지지 않는다(`f1.split_labeled`).
+        sentences = []
+        for labels, line in f1.split_labeled(raw):
+            for s in citations.parse_sentences(
+                line,
+                data.get("dart_sources") or {},
+                data.get("news_sources") or {},
+                quote_source,
+                # 포트폴리오 라우트에서만 `[^hold]`가 해석된다 — 다른 답변이 이 태그를 지어내도
+                # 출처로 인정되지 않고 UNSOURCED로 남는다(게이트가 잡는다).
+                f1.portfolio_source() if data.get("portfolio") else None,
+            ):
+                sentences.append({**s, "labels": labels} if labels else s)
+        # ⚠️ 게이트에는 **키워드가 붙은 원문**을 그대로 넘긴다. 떼고 넘기면 금지 표현이나
+        #    MNPI가 키워드에 숨었을 때 검사하는 곳이 없어진다 — 키워드도 화면에 나가는 글이다.
         content = compliance.apply_notice(raw, "F1")
         violations = compliance.check_note(content, sentences, "F1")
         # 감사로그에는 **고객 id만** 남긴다(이름·계좌 아님). 누구 포트폴리오를 근거로 답했는지는
@@ -1175,19 +1197,19 @@ class SessionDecisionBody(BaseModel):
 # `제거`만 뜻이 다르다: 앞의 셋은 "이대로 두고 통과시킨다"이고 이건 "최종본에서 뺀다"다.
 # 게이트 효과는 같다(미인용 집계에서 빠진다) — 뺄 문장이 발행을 막을 이유가 없기 때문이다.
 # ⚠️ PB의 `remove` 판정과 헷갈리지 말 것: 그건 게이트를 열지 않는다(아래 PB_MARKS).
-#    게이트를 여는 건 준법의 확인뿐이라는 규칙이 여기서도 그대로다.
+#    게이트를 여는 건 관리자의 확인뿐이라는 규칙이 여기서도 그대로다.
 ACK_REASONS = ("해석·전망", "고지·면책", "데이터 설명", "제거")
 
 # PB가 각주 없는 문장에 남기는 판정. 사유 목록과 마찬가지로 닫힌 값이다.
 #   remove  = 이 문장은 빼야 한다(근거를 못 붙이거나 노트에 있을 문장이 아니다)
 #   approve = 이대로 둔다
-# ⚠️ **게이트를 열지 않는다.** 미인용 문장을 발행 가능하게 만드는 건 준법의 확인(ack)뿐이고,
+# ⚠️ **게이트를 열지 않는다.** 미인용 문장을 발행 가능하게 만드는 건 관리자의 확인(ack)뿐이고,
 #    이건 그 전 단계에서 PB가 훑은 흔적이다. 여기에 게이트 효과를 붙이면 만든 사람이
 #    자기 노트를 스스로 통과시키는 길이 생긴다 — 이 제품이 갈라 놓은 지점이 거기다.
 # ⚠️ `remove`가 문장을 실제로 지우지는 않는다. 본문은 그대로 두고 표시만 남긴다:
 #    AI가 무엇을 썼고 사람이 무엇을 빼기로 했는지가 둘 다 남아야 감사가 된다.
 PB_MARKS = ("remove", "approve")
-# PB가 판정할 수 있는 단계 — 노트가 아직 PB 손에 있을 때뿐이다(심의로 올라간 뒤엔 준법 몫).
+# PB가 판정할 수 있는 단계 — 노트가 아직 PB 손에 있을 때뿐이다(심의로 올라간 뒤엔 관리자 몫).
 # 초안 단계를 없앤 뒤로 검토중 하나다(db.py SCHEMA 주석) — 노트는 여기서 만들어져 여기서
 # 판정되고, `확인`을 누르면 심의로 넘어간다.
 PB_MARK_STATUSES = ("review",)
@@ -1200,7 +1222,7 @@ WAIVER_MAX_LEN = 200
 
 # 반려·폐기 사유도 같은 이유로 닫힌 값이다 — "왜 막았나"를 나중에 세려면 자유 입력이면 안 된다.
 # 두 목록을 나눠 둔 건 **뜻이 다른 거절**이기 때문이다:
-#   REJECT  = 준법이 심의중 노트를 PB에게 되돌린다(고칠 수 있다 → 검토중).
+#   REJECT  = 관리자가 심의중 노트를 PB에게 되돌린다(고칠 수 있다 → 검토중).
 #   DISCARD = PB가 검토중 노트를 버린다(고쳐 쓸 게 아니다 → 보류됨, 종결).
 # 한 목록으로 합치면 "출처 불충분"으로 폐기하고 "중복"으로 반려하는 조합이 생기는데,
 # 둘 다 그 단계에서 할 수 있는 판단이 아니다.
@@ -1225,7 +1247,7 @@ def _live_violations(row, sentences: list[dict]) -> list[str]:
 
 
 def _waived_indices(row, sentences: list[dict]) -> set[int]:
-    """준법이 **사유를 적어** 금지 표현을 통과시킨 문장(2026-08-06).
+    """관리자가 **사유를 적어** 금지 표현을 통과시킨 문장(2026-08-06).
 
     ⚠️ 여는 건 **금지 표현 규칙 하나뿐**이다 — 미인용은 확인(ack)이, 지연시세는 문장
        수정·제거가 푼다. `_gate_exempt`(미인용 집계)와 합치지 말 것: 합치는 순간 "무엇을
@@ -1240,13 +1262,13 @@ def _waived_indices(row, sentences: list[dict]) -> set[int]:
 def _gate_exempt(row, sentences: list[dict]) -> set[int]:
     """게이트의 미인용 집계에서 빼는 문장 인덱스. 두 갈래를 합친다.
 
-    ① **준법의 확인(ack)** — 사유를 적어 이대로 통과시킨 문장.
+    ① **관리자의 확인(ack)** — 사유를 적어 이대로 통과시킨 문장.
     ② **PB의 `제거` 판정** — 최종본에서 뺄 문장이라 발행을 막을 이유가 없다(2026-08-03).
        화면이 이 문장의 확인 셀렉트를 아예 그리지 않으므로(ReviewModal), 세는 채로 두면
-       **준법이 풀 방법이 없는 차단**이 되어 노트가 영원히 발행되지 않았다.
+       **관리자가 풀 방법이 없는 차단**이 되어 노트가 영원히 발행되지 않았다.
 
     ⚠️ ②는 "PB 판정은 게이트를 열지 않는다"(PB_MARKS 주석)의 예외가 아니다. 여는 것과
-       **빼는 것**은 다르다: `승인`은 여전히 아무것도 통과시키지 못하고(준법이 확인해야
+       **빼는 것**은 다르다: `승인`은 여전히 아무것도 통과시키지 못하고(관리자가 확인해야
        한다), `제거`는 그 문장을 발행물의 판단 대상에서 내리는 것뿐이다. 만드는 사람이
        자기 문장을 통과시키는 길은 여전히 없다.
     ⚠️ **본문(content_md)에는 그 문장이 그대로 남는다** — 무엇을 뺐는지도 감사 대상이라
@@ -1263,7 +1285,7 @@ def _removed_indices(row, sentences: list[dict]) -> set[int]:
     """**최종본에서 빼기로 한 문장.** 두 사람의 같은 판단을 합친다.
 
     - PB의 `remove` 판정(검토 단계)
-    - 준법의 확인 사유 `제거`(심의 단계) — 화면 배지로는 `준법 제거`
+    - 관리자의 확인 사유 `제거`(심의 단계) — 화면 배지로는 `관리자 제거`
 
     둘 다 "이 문장은 나가지 않는다"이므로 게이트는 **이 문장들이 없는 본문**을 본다
     (`_effective_md`). 미인용 집계뿐 아니라 문구 규칙(지연시세 고지·금지 표현)도 같이
@@ -1310,7 +1332,7 @@ def _note_to_dict(row, audit_rows) -> dict:
         # PB 판정도 같은 함수로 거른다 — `live_acks`가 보는 건 확인이라는 뜻이 아니라
         # **인덱스+원문 앞 60자가 지금 문장과 맞는가**이고, 그 문제는 두 목록이 똑같다.
         "marks": compliance.live_acks(json.loads(row["pb_marks_json"]), sentences),
-        # 준법이 사유를 적어 통과시킨 금지 표현(2026-08-06). 유효성 대조는 확인·판정과
+        # 관리자가 사유를 적어 통과시킨 금지 표현(2026-08-06). 유효성 대조는 확인·판정과
         # 같은 함수다 — 재파싱으로 밀린 예외는 화면에서도 사라져야 게이트와 말이 맞는다.
         "waivers": compliance.live_acks(json.loads(row["waivers_json"]), sentences),
         # **어느 문장이 금지 표현 때문에 막고 있는가.** 화면이 스스로 찾지 않게 백엔드가 준다
@@ -1392,7 +1414,7 @@ async def start_deliberation(note_id: int, body: ActorBody):
 
 @app.post("/api/notes/{note_id}/reject")
 async def reject_deliberation(note_id: int, body: ReasonBody):
-    """준법이 심의중 노트를 **PB에게 되돌린다**(심의중 → 검토중).
+    """관리자가 심의중 노트를 **PB에게 되돌린다**(심의중 → 검토중).
 
     이 제품이 "최종 판단은 사람"이라고 말하려면 사람이 **아니오**라고 말할 경로가 있어야
     한다. 게이트 차단(`publish_blocked`)은 기계의 거절이지 판단이 아니다.
@@ -1432,7 +1454,7 @@ async def ack_sentence(note_id: int, body: AckBody):
     """미인용 문장 하나를 '확인함'으로 표시하거나(reason) 되돌린다(reason=null).
 
     심의 단계에서만 가능하다 — 검토 단계에서 미리 풀어두면 검토가 형식이 된다.
-    권한(준법만)은 화면이 막고, 여기서는 **누가 무엇을 왜** 확인했는지를 남기는 게 일이다.
+    권한(관리자만)은 화면이 막고, 여기서는 **누가 무엇을 왜** 확인했는지를 남기는 게 일이다.
     """
     row = await _require_status(note_id, "deliberation")
     sentences = json.loads(row["sentences_json"])
@@ -1449,7 +1471,7 @@ async def ack_sentence(note_id: int, body: AckBody):
         # ⚠️ `제거`만 예외다(2026-08-03). 그건 "이대로 통과시킨다"가 아니라 "이 문장을
         #    최종본에서 뺀다"라, 출처가 있든 없든 할 수 있어야 한다 — 지연시세 고지처럼
         #    **문장을 고쳐야 풀리는 위반**이 출처 있는 문장에서 나면, 뺄 길이 없는 한
-        #    준법에게 남는 선택지가 반려뿐이었다.
+        #    관리자에게 남는 선택지가 반려뿐이었다.
         if body.reason != "제거" and (not citations.is_body(s) or s["source"] is not None):
             raise HTTPException(400, "출처가 이미 있거나 게이트 대상이 아닌 문장입니다.")
         if body.reason == "제거" and not citations.is_body(s):
@@ -1477,7 +1499,7 @@ async def waive_forbidden_phrase(note_id: int, body: WaiveBody):
 
     왜 필요한가: 금지 표현 규칙은 제시와 **인용**을 구분하지 못한다. 제3자(증권사)의
     목표주가를 뉴스가 보도한 것을 각주와 함께 옮긴 문장도 똑같이 막히는데, 확인(ack)은
-    미인용 전용이라 준법에게 남는 수단이 **삭제**뿐이었다 — 판단을 남길 자리가 없었다.
+    미인용 전용이라 관리자에게 남는 수단이 **삭제**뿐이었다 — 판단을 남길 자리가 없었다.
 
     - **심의 단계에서만.** 검토 단계에서 미리 풀면 검토가 형식이 된다(ack과 같은 규칙).
     - **한 문장만 연다.** 같은 표현이 다른 문장에도 있으면 그건 그대로 막힌다.
@@ -1531,7 +1553,7 @@ async def waive_forbidden_phrase(note_id: int, body: WaiveBody):
 async def mark_sentence(note_id: int, body: MarkBody):
     """각주 없는 문장 하나에 PB 판정을 남기거나(mark) 지운다(mark=None).
 
-    검토 단계에서만 가능하다 — 심의로 올라간 노트는 준법이 보는 물건이고, 그 단계의
+    검토 단계에서만 가능하다 — 심의로 올라간 노트는 관리자가 보는 물건이고, 그 단계의
     조작은 확인(ack)이다. 게이트에는 영향이 없다(위 PB_MARKS 주석).
     """
     row = await db.get_note(note_id)
@@ -2143,9 +2165,11 @@ async def dashboard_audit(
 # 어떤가"만 답한다 — PB가 아침에 가장 먼저 보는 것이 그쪽이고, 어제 성립하던 이야기가 오늘
 # 성립하지 않는 이유도 대개 개별 종목이 아니라 거시에서 온다.
 #
-# 그래서 이 경로에서 **LLM이 한 번도 돌지 않는다**(1단계). 지수는 backend가 직접 부르고,
+# 그래서 이 경로에서 **에이전트가 한 번도 돌지 않는다**. 지표는 backend가 직접 부르고, 지표
 # 문장은 전부 순수 함수(`brief.macro_digest`)가 만든다. 실행이 40~50초·크레딧에서 몇 초·0으로
 # 내려갔고, `_collect_brief_data`(a1·a4 위임)는 **호출되지 않는다**(아래 그 함수 주석).
+# ⚠️ 2026-08-07에 **LLM이 한 자리로 돌아왔다** — 밤사이 헤드라인(`_macro_headlines`)이다.
+#    "이 경로에 LLM이 없다"고 읽고 검증을 빼지 말 것: 감싸는 장치 다섯은 brief.py의 「⑤」에 있다.
 #
 # ⚠️ 남은 것들을 지우지 않았다 — `pb_watchlist`·`_collect_brief_data`·`_stock_summaries`·
 #    `BRIEF_SYSTEM_PROMPT`. 규칙과 프롬프트가 멀쩡하고, 고객 데이터를 갈아엎은 뒤 "내 고객
@@ -2255,16 +2279,35 @@ def _collect_macro_news() -> list[dict]:
     return rows
 
 
+async def _macro_headlines(rows: list[dict]) -> list[dict]:
+    """밤사이 헤드라인 — 사건 하나에 한 줄씩. **F2에서 유일하게 LLM이 문장을 쓰는 자리.**
+
+    사건을 가르는 일은 **코드가 끝내 놓고**(`brief.cluster_headlines`) 여기서는 묶음마다
+    한 번씩 문장을 받는다. 묶음을 따로 도는 이유는 각주다 — 한 호출에 후보를 다 넣으면
+    문장은 여러 줄이 나와도 근거 기사는 전부 공유해서, **어느 기사가 어느 문장의 근거인지
+    화면이 말하지 못한다.**
+
+    ⚠️ **실패해도 브리프를 죽이지 않는다.** 지수 조회와 같은 규약이고, 여기서는 한 묶음이
+       실패해도 나머지 줄은 산다(`_collect_macro_news`가 검색어에 쓰는 규약과 같다).
+    ⚠️ 통과 못 한 묶음은 **줄을 안 낸다.** 지표 불릿과 달리 대신할 규칙 문장이 없다 —
+       지어내느니 비우는 쪽이다(brief.py의 「⑤」 머리말 ⑤번).
+    """
+    groups = brief.cluster_headlines(rows)
+    # 묶음끼리는 서로를 안 본다 — 동시에 돌려도 문장이 섞이지 않는다.
+    out = await asyncio.gather(*(_macro_headline(g) for g in groups))
+    return [b for b in out if b]
+
+
 async def _macro_headline(rows: list[dict]) -> dict | None:
-    """밤사이 헤드라인 한 줄 — **F2에서 유일하게 LLM이 문장을 쓰는 자리**(2026-08-07).
+    """한 묶음 → 한 줄(못 쓰면 None). 위 `_macro_headlines`가 묶음마다 부른다.
 
     `_stock_summaries`(배선 해제됨)와 같은 구조다: 도구를 못 쓰게 막고(`_deny_all_tools`)
     넘겨받은 텍스트 밖으로 나가지 못하게 한 뒤, 나온 문장을 **순수 함수가 다시 검사한다**
     (`brief.parse_headline` — 길이·문장 수·금지 표현·입력에 없는 숫자).
 
-    ⚠️ **실패해도 브리프를 죽이지 않는다.** 지수 조회와 같은 규약이다.
-    ⚠️ 통과 못 하면 **불릿을 안 낸다.** 지표 불릿과 달리 대신할 규칙 문장이 없다 —
-       지어내느니 비우는 쪽이다(brief.py의 「⑤」 머리말 ⑤번).
+    ⚠️ 검사도 각주도 **이 묶음 기준**이다. 숫자 검사(`parse_headline`)가 묶음의 제목만
+       보므로, 옆 묶음 제목에 있던 수치를 끌어다 쓰면 그때 걸린다 — 묶음을 나눈 것이
+       검사를 함께 좁혔다.
     ⚠️ 입력은 `brief.headline_input`이 만든다 — **제목만** 나간다(기사 본문도 링크도 아니다).
        넓히려면 그 함수를 고칠 것: 여기서 직접 조립하지 마라.
     """
@@ -2296,8 +2339,8 @@ async def _macro_headline(rows: list[dict]) -> dict | None:
 
 
 async def _stock_summaries(items: list[dict]) -> dict[str, str]:
-    """종목 한 줄 요약 — **배선 해제**(2026-08-07 · 위 절 머리말). 살아 있는 LLM 자리는
-    `_macro_headline` 하나다. 아래 구조를 그쪽이 그대로 물려받았다.
+    """종목 한 줄 요약 — **배선 해제**(2026-08-07 · 위 절 머리말). 브리핑에서 살아 있는 LLM
+    자리는 `_macro_headlines`(사건별 한 줄)뿐이다. 아래 구조를 그쪽이 그대로 물려받았다.
 
     a5와 같은 구조다: 도구를 못 쓰게 막고(`_deny_all_tools`) 넘겨받은 텍스트 밖으로 나가지
     못하게 한 뒤, 나온 문장을 **순수 함수가 다시 검사한다**(`brief.parse_summaries` —
@@ -2522,14 +2565,15 @@ async def build_brief() -> dict:
     )
 
     market_payload = {"indices": indices, "note": market_note}
-    # 요약 불릿 — 지표 줄은 규칙이 **고르고 문장까지 만들고**, 헤드라인 한 줄만 LLM이 쓴다.
+    # 요약 불릿 — 지표 줄은 규칙이 **고르고 문장까지 만들고**, 헤드라인만 LLM이 쓴다.
+    # 헤드라인은 **사건 수만큼 여러 줄**이다(`brief.cluster_headlines` · 최대 3줄).
     # 본문에는 들어가지 않는다(같은 사실을 두 번 세면 출처 부착률의 분모가 흔들린다).
     lead_payload = {
         "bullets": brief.macro_digest(
             indices,
             compare=compare,
             market_note=market_note,
-            headline=await _macro_headline(headlines),
+            headlines=await _macro_headlines(headlines),
         )
     }
     # items는 `[]`다 — 브리프에 종목이 없다. 컬럼과 조립 경로는 그대로 두었다(brief.assemble).

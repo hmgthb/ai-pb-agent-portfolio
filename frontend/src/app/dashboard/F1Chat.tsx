@@ -24,7 +24,13 @@ import { useEffect, useRef, useState } from 'react';
 import { chatStreamUrl } from './api';
 import { RedactionDetails } from './redaction';
 import { mergeSources, SourceBadge } from './sources';
-import type { ChatAnswer, ChatRedaction, ChatRouting, PrepItem } from './types';
+import type {
+  ChatAnswer,
+  ChatRedaction,
+  ChatRouting,
+  NoteSentence,
+  PrepItem,
+} from './types';
 
 /* 라우팅 배지 이름표는 **여기 없다**(2026-08-09에 `backend/f1.ROUTE_LABEL`로 옮겼다).
  *
@@ -45,6 +51,11 @@ type Turn = {
   blockedStage?: string;
   error?: string;
   running: boolean;
+  /** 이 답이 키워드 형식인가 — **백엔드가 `session` 이벤트로 알려준다**(`main.keyword_format`).
+   *  토큰이 흐르는 동안 원문 대신 키워드만 그릴지가 여기서 갈린다.
+   *  ⚠️ 화면에서 `customerId != null`로 다시 판단하지 말 것. 규칙이 두 곳에 있으면 한쪽만
+   *     고쳐져 조용히 어긋난다 — 라우팅 이름표에서 이미 두 번 겪었다(위 머리말). */
+  kwFormat?: boolean;
 };
 
 /** 보내기 전 경고 — 입력창에 담당 고객 이름이나 계좌·주민번호 형식이 있으면 알린다.
@@ -67,6 +78,39 @@ function outboundWarning(text: string, names: string[]): string | null {
   if (_RRN_RE.test(text) || _ACCOUNT_RE.test(text))
     return '계좌·주민번호 형식이 들어 있습니다. 지우고 물어보세요.';
   return null;
+}
+
+/** 토큰이 흐르는 동안 보여줄 **키워드만** 뽑는다 — `[[키워드, …], …]`(순수 함수).
+ *
+ *  왜 필요한가: 답이 오는 동안 원문을 그대로 찍으면 **최종 화면에서는 접힐 문장이 통째로
+ *  지나간다.** 읽는 사람은 그걸 이미 읽어 버려서, 키워드로 접어 둔 뜻이 없어진다.
+ *  그래서 도착한 만큼에서 `::` 앞부분(키워드)만 그린다.
+ *
+ *  ⚠️ **이건 진행 표시지 답이 아니다.** 여기서 그린 키워드는 백엔드 검사(`f1.valid_label` —
+ *     문장의 조각인지 대조)를 아직 안 거쳤고, `answer` 이벤트가 오면 검사를 통과한 것으로
+ *     통째로 갈린다. 그래서 여기 나왔다가 사라지는 키워드가 있을 수 있다(정상이다).
+ *  ⚠️ 숫자가 든 조각은 **여기서도 뺀다.** 백엔드가 막는 것과 같은 이유이고(접힌 채 근거 없이
+ *     보이는 수치 · 가드레일 3), 잠깐 스쳐 지나가는 화면이라고 예외를 두지 않는다.
+ *  ⚠️ `::`가 아직 안 온 줄은 **키워드를 치는 중**으로 본다. 다만 그 상태로 너무 길어지면
+ *     형식이 깨진 것이므로(모델이 산문을 쓰고 있다) 그 줄은 그리지 않는다 — 안 그러면
+ *     막으려던 산문이 그대로 다시 흐른다. 없으면 `조회 중…`이 그대로 서는 것이 맞다. */
+const LIVE_HEAD_MAX = 70; // 키워드 3개(각 20자)와 구분자가 들어갈 만큼
+
+export function liveKeywords(buf: string): string[][] {
+  return buf
+    .split('\n')
+    .map((line) => {
+      const cut = line.indexOf('::');
+      const head = cut >= 0 ? line.slice(0, cut) : line;
+      // `::`가 아직 없는 줄에서 길이나 마침표가 나오면 키워드가 아니라 **산문**이다
+      // (모델이 형식을 깼다). 그리지 않는다 — 막으려던 문장이 그대로 흐르게 된다.
+      if (cut < 0 && (head.length > LIVE_HEAD_MAX || head.includes('.'))) return [];
+      return head
+        .split('|')
+        .map((w) => w.trim())
+        .filter((w) => w && !/\d/.test(w));
+    })
+    .filter((kws) => kws.length > 0);
 }
 
 /** 입력창에 질문을 채워 넣는 신호. 같은 종목을 두 번 눌러도 다시 채워져야 하므로
@@ -179,6 +223,18 @@ export default function F1Chat({
   const esRef = useRef<EventSource | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const running = turns.length > 0 && turns[turns.length - 1].running;
+  /** 펴 놓은 키워드 — `턴번호:문장번호`. **여러 개를 동시에 펼 수 있다**(하나만 열리는
+   *  아코디언이 아니다): PB는 두 항목을 나란히 놓고 견주려고 펴는 것이라, 새로 누를 때
+   *  앞의 것이 닫히면 방금 읽던 문장이 사라진다.
+   *  ⚠️ 답변이 아니라 **보기 상태**다 — 대화 보관(`ChatKeep`)에 넣지 않는다. 다시 열면
+   *     전부 접힌 채로 서는 것이 맞다(그게 이 형식의 기본 상태다). */
+  const [openKw, setOpenKw] = useState<ReadonlySet<string>>(new Set());
+  const toggleKw = (key: string) =>
+    setOpenKw((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
   // 렌더 중 계산이다(상태가 아니다) — 입력이 바뀌면 그 프레임에 같이 바뀌어야 하고,
   // effect로 두면 한 글자 늦게 뜬다. 순수 문자열 검사라 비용도 없다.
   const warning = outboundWarning(input, customerNames ?? []);
@@ -275,7 +331,10 @@ export default function F1Chat({
     let done = false;
 
     es.addEventListener('session', (e) => {
-      sessionRef.current = JSON.parse((e as MessageEvent).data).session;
+      const d = JSON.parse((e as MessageEvent).data);
+      sessionRef.current = d.session;
+      // 첫 토큰보다 먼저 온다 — 그래야 스트리밍을 무엇으로 그릴지 정할 수 있다.
+      patchLast({ kwFormat: !!d.keyword_format });
     });
     es.addEventListener('routing', (e) =>
       patchLast({ routing: JSON.parse((e as MessageEvent).data) }),
@@ -326,6 +385,112 @@ export default function F1Chat({
         });
     };
   }
+
+  /** 답변 문장 한 줄 — 출처 배지와 `담기`가 붙는다.
+   *
+   *  **함수로 떼어 둔 이유**: 키워드 형식에서는 이 줄이 접힌 채로 서고 이름표를 눌러야
+   *  펴진다(아래 `chat-kw`). 감싸는 것이 하나 늘었을 뿐 줄 자체는 그대로여야 해서,
+   *  둘을 한자리에 겹쳐 쓰지 않고 갈랐다 — 이름표가 없는 답변(전역 F1·형식이 깨진 줄)이
+   *  **예전과 똑같이** 그려지는 것이 이 갈래의 요점이다.
+   *  ⚠️ 컴포넌트가 아니라 함수다 — 컴포넌트로 두면 부모가 그려질 때마다 새 타입이 되어
+   *     이 줄이 통째로 다시 마운트된다(여기 상태는 없지만, 그 차이를 모르고 상태를
+   *     들이면 조용히 초기화된다). */
+  const sentenceRow = (s: NoteSentence, on: boolean) => (
+    <div
+      className={`chat-sent${on ? ' is-picked' : ''}${onPick ? ' has-pick' : ''}`}
+    >
+      {/* 담기 — **AI가 낸 것 중 무엇을 상담에 가져갈지 고르는 자리**다.
+      문장 **왼쪽 거터**에 선다(2026-08-06). 본문과 같은 줄의 형제였을
+      때는 문장 길이가 배치를 정해, 긴 문장에서는 첫 줄만 버튼 옆에서
+      시작하고 둘째 줄부터 왼쪽 끝으로 돌아왔다 — 조작이 글줄 밖으로
+      나가야 본문 시작점이 문장마다 같다.
+      ⚠️ 담을 때 **출처를 같이 들고 간다** — 문서에서도 각주가 붙어야
+         한다(가드레일 3). 화면 배지와 같은 값을 그대로 넘긴다.
+      ⚠️ **출처 배지와 같은 모양으로 만들지 말 것**(2026-08-06). 배지는
+         문장이 무엇에 근거하는지 말하는 라벨(읽는 것·상태 없음)이고
+         이건 PB가 누르는 조작이다. 갈라 주는 건 넷이다: **자리**(글줄
+         밖 거터) · **모난 사각**(배지는 알약) · **아이콘**(＋/✓) ·
+         **눌리면 변한다**(배지는 절대 안 변한다).
+      ⚠️ 거터에 글자를 넣지 말 것 — 폭은 본문에서 나온다. `담기`라는 말은
+         `aria-label`과 tooltip이 나른다(아이콘만으로는 스크린리더에
+         아무것도 안 읽힌다). */}
+      {onPick && (
+        <button
+          className={`pickbtn${on ? ' is-picked' : ''}`}
+          aria-pressed={on}
+          aria-label={
+            on
+              ? '상담 준비 메모에서 빼기'
+              : '상담 준비 메모에 담기'
+          }
+          title={
+            on
+              ? '상담 준비 메모에서 뺍니다'
+              : '상담 준비 메모에 담습니다'
+          }
+          onClick={() =>
+            onPick({
+              kind: 'sentence',
+              text: s.text,
+              sentence_kind: s.kind,
+              sources: s.sources?.length
+                ? s.sources
+                : s.source
+                  ? [s.source]
+                  : [],
+            })
+          }
+        >
+          <span className="pick-ico" aria-hidden="true">
+            {on ? '✓' : '＋'}
+          </span>
+        </button>
+      )}
+      {/* 문장과 배지가 **한 덩어리**다 — 배지를 본문 밖 형제로 두면 남는
+      자리에 따라 자기 줄로 떨어져 어느 문장 것인지 흐려진다. */}
+      <span className="sent-text">
+        {s.text}
+        {/* 같은 출처를 두 번 인용하면 배지도 두 개였다 — 하나로 묶고
+        `×2`로 센다. **다른 출처끼리는 합치지 않는다**(합치면 한쪽
+        링크가 사라져 가드레일 3 위반).
+
+        ⚠️ `보유`(holdings)만 **화면에서 뺀다**(2026-08-09). 나머지
+           출처와 달리 이 배지는 열어 볼 원문이 없어(`sourceHref`가 null)
+           누를 수도 없고, 고객 패널에서는 모든 문장이 같은 값을 달아
+           문장마다 같은 말이 반복됐다. 그 사실을 나르는 것은 원래 배지가
+           아니라 **아래 F1 고지**다("보유·배분 수치는 내부 계좌데이터로
+           공개데이터가 아니며…" · CLAUDE.md 가드레일 1의 F1 예외).
+        ⚠️ **데이터에서 지우는 것이 아니라 표시만 뺀다.** `s.sources`는
+           그대로라 담기(→ 상담 준비 메모·PDF)에는 각주가 따라간다 —
+           거기서 빠지면 가드레일 3 위반이다.
+        ⚠️ 공시·뉴스·시세 배지는 **남긴다.** 그쪽은 원문 링크가 달려 있고,
+           한 답변에 여러 출처가 섞이면 어느 문장이 무엇에 근거하는지를
+           이 배지 말고는 말할 것이 없다. */}
+        {mergeSources(
+          (s.sources?.length
+            ? s.sources
+            : s.source
+              ? [s.source]
+              : []
+          ).filter((src) => src.type !== 'holdings'),
+        ).map(({ src, count }, k) => (
+          <SourceBadge key={k} src={src} count={count} />
+        ))}
+        {!s.source &&
+          !s.sources?.length &&
+          (s.kind === 'interpretation' ? (
+            <span
+              className="sbadge itp"
+              title="해석·전망 문장은 각주 대상이 아닙니다"
+            >
+              해석
+            </span>
+          ) : (
+            <SourceBadge src={null} />
+          ))}
+      </span>
+    </div>
+  );
 
   return (
     <>
@@ -445,101 +610,44 @@ export default function F1Chat({
                   <div className="chat-answer">
                     {t.answer.sentences.map((s, j) => {
                       const on = picked?.has(`sentence:${s.text}`) ?? false;
+                      // 키워드 형식(`Next Best Action`) — 키워드가 붙은 문장은 **접힌 채로**
+                      // 선다. 상담 직전에 훑는 자리라 키워드를 먼저 보고 필요한 것만 편다.
+                      // ⚠️ **상자를 두르지 않는다.** 키워드는 카드가 아니라 글줄이고, 접었다
+                      //    폈다 하는 일은 앞의 꺾쇠가 말한다 — 테두리를 두르면 답변 안에
+                      //    작은 카드가 여러 장 생겨 무엇이 본문인지가 흐려진다.
+                      // ⚠️ 키워드가 없으면 **접지 않는다.** 형식이 깨진 줄이거나 전역 F1의
+                      //    답변인데, 접어 두면 화면에서 사라진 것처럼 보인다.
+                      // ⚠️ 담긴 문장은 접혀 있어도 그 사실이 보여야 한다(`is-picked`) —
+                      //    안 보이면 메모에 뭐가 들었는지 알려고 전부 펴야 한다.
+                      const kwKey = `${i}:${j}`;
+                      const kws = s.labels ?? [];
+                      const shown = !kws.length || openKw.has(kwKey);
                       return (
-                        <div
-                          className={`chat-sent${on ? ' is-picked' : ''}${onPick ? ' has-pick' : ''}`}
-                          key={j}
-                        >
-                          {/* 담기 — **AI가 낸 것 중 무엇을 상담에 가져갈지 고르는 자리**다.
-                          문장 **왼쪽 거터**에 선다(2026-08-06). 본문과 같은 줄의 형제였을
-                          때는 문장 길이가 배치를 정해, 긴 문장에서는 첫 줄만 버튼 옆에서
-                          시작하고 둘째 줄부터 왼쪽 끝으로 돌아왔다 — 조작이 글줄 밖으로
-                          나가야 본문 시작점이 문장마다 같다.
-                          ⚠️ 담을 때 **출처를 같이 들고 간다** — 문서에서도 각주가 붙어야
-                             한다(가드레일 3). 화면 배지와 같은 값을 그대로 넘긴다.
-                          ⚠️ **출처 배지와 같은 모양으로 만들지 말 것**(2026-08-06). 배지는
-                             문장이 무엇에 근거하는지 말하는 라벨(읽는 것·상태 없음)이고
-                             이건 PB가 누르는 조작이다. 갈라 주는 건 넷이다: **자리**(글줄
-                             밖 거터) · **모난 사각**(배지는 알약) · **아이콘**(＋/✓) ·
-                             **눌리면 변한다**(배지는 절대 안 변한다).
-                          ⚠️ 거터에 글자를 넣지 말 것 — 폭은 본문에서 나온다. `담기`라는 말은
-                             `aria-label`과 tooltip이 나른다(아이콘만으로는 스크린리더에
-                             아무것도 안 읽힌다). */}
-                          {onPick && (
+                        <div className="chat-kw" key={j}>
+                          {kws.length > 0 && (
                             <button
-                              className={`pickbtn${on ? ' is-picked' : ''}`}
-                              aria-pressed={on}
-                              aria-label={
-                                on
-                                  ? '상담 준비 메모에서 빼기'
-                                  : '상담 준비 메모에 담기'
-                              }
+                              className={`kw-row${shown ? ' is-open' : ''}${on ? ' is-picked' : ''}`}
+                              aria-expanded={shown}
+                              onClick={() => toggleKw(kwKey)}
                               title={
-                                on
-                                  ? '상담 준비 메모에서 뺍니다'
-                                  : '상담 준비 메모에 담습니다'
-                              }
-                              onClick={() =>
-                                onPick({
-                                  kind: 'sentence',
-                                  text: s.text,
-                                  sentence_kind: s.kind,
-                                  sources: s.sources?.length
-                                    ? s.sources
-                                    : s.source
-                                      ? [s.source]
-                                      : [],
-                                })
+                                shown
+                                  ? '설명 접기'
+                                  : '이 키워드를 설명하는 문장을 폅니다'
                               }
                             >
-                              <span className="pick-ico" aria-hidden="true">
-                                {on ? '✓' : '＋'}
+                              <span className="kw-caret" aria-hidden="true">
+                                ▸
                               </span>
+                              {/* 키워드 안에 `·`가 들어 있을 수 있어(`배당·이자`) 가운뎃점으로
+                                  가르지 않는다 — 구분은 글자가 아니라 CSS 세로줄이 한다. */}
+                              {kws.map((kw, k) => (
+                                <span className="kw-word" key={k}>
+                                  {kw}
+                                </span>
+                              ))}
                             </button>
                           )}
-                          {/* 문장과 배지가 **한 덩어리**다 — 배지를 본문 밖 형제로 두면 남는
-                          자리에 따라 자기 줄로 떨어져 어느 문장 것인지 흐려진다. */}
-                          <span className="sent-text">
-                            {s.text}
-                            {/* 같은 출처를 두 번 인용하면 배지도 두 개였다 — 하나로 묶고
-                            `×2`로 센다. **다른 출처끼리는 합치지 않는다**(합치면 한쪽
-                            링크가 사라져 가드레일 3 위반).
-
-                            ⚠️ `보유`(holdings)만 **화면에서 뺀다**(2026-08-09). 나머지
-                               출처와 달리 이 배지는 열어 볼 원문이 없어(`sourceHref`가 null)
-                               누를 수도 없고, 고객 패널에서는 모든 문장이 같은 값을 달아
-                               문장마다 같은 말이 반복됐다. 그 사실을 나르는 것은 원래 배지가
-                               아니라 **아래 F1 고지**다("보유·배분 수치는 내부 계좌데이터로
-                               공개데이터가 아니며…" · CLAUDE.md 가드레일 1의 F1 예외).
-                            ⚠️ **데이터에서 지우는 것이 아니라 표시만 뺀다.** `s.sources`는
-                               그대로라 담기(→ 상담 준비 메모·PDF)에는 각주가 따라간다 —
-                               거기서 빠지면 가드레일 3 위반이다.
-                            ⚠️ 공시·뉴스·시세 배지는 **남긴다.** 그쪽은 원문 링크가 달려 있고,
-                               한 답변에 여러 출처가 섞이면 어느 문장이 무엇에 근거하는지를
-                               이 배지 말고는 말할 것이 없다. */}
-                            {mergeSources(
-                              (s.sources?.length
-                                ? s.sources
-                                : s.source
-                                  ? [s.source]
-                                  : []
-                              ).filter((src) => src.type !== 'holdings'),
-                            ).map(({ src, count }, k) => (
-                              <SourceBadge key={k} src={src} count={count} />
-                            ))}
-                            {!s.source &&
-                              !s.sources?.length &&
-                              (s.kind === 'interpretation' ? (
-                                <span
-                                  className="sbadge itp"
-                                  title="해석·전망 문장은 각주 대상이 아닙니다"
-                                >
-                                  해석
-                                </span>
-                              ) : (
-                                <SourceBadge src={null} />
-                              ))}
-                          </span>
+                          {shown && sentenceRow(s, on)}
                         </div>
                       );
                     })}
@@ -564,16 +672,46 @@ export default function F1Chat({
                   <div className="chat-clarify">{t.answer.text}</div>
                 )}
 
-                {/* 스트리밍 중(최종 answer 도착 전) */}
-                {!t.answer && !t.blocked && t.streaming && (
-                  <div className="chat-streaming">
-                    {t.streaming}
-                    {t.running && <span className="gen-caret">▌</span>}
-                  </div>
-                )}
-                {!t.answer && !t.blocked && !t.streaming && t.running && (
-                  <div className="chat-thinking">조회 중…</div>
-                )}
+                {/* 스트리밍 중(최종 answer 도착 전).
+                  키워드 형식에서는 **원문을 흘리지 않는다** — 최종 화면에서 접힐 문장이
+                  통째로 지나가면 읽는 사람이 이미 읽어 버려서, 접어 둔 뜻이 없어진다.
+                  도착한 만큼에서 키워드만 뽑아 그리고(`liveKeywords`), 문장은 `answer`가
+                  올 때 접힌 채로 처음 선다.
+                  ⚠️ 여기 그려지는 건 **진행 표시지 답이 아니다** — 백엔드 검사를 아직 안
+                     거쳤고 `answer`가 오면 통째로 갈린다(`liveKeywords` 주석).
+                  ⚠️ 형식이 아닌 답(전역 F1)은 예전 그대로 원문을 흘린다. 거기서 키워드만
+                     그리면 화면에 아무것도 안 뜬다. */}
+                {!t.answer &&
+                  !t.blocked &&
+                  t.streaming &&
+                  (t.kwFormat ? (
+                    liveKeywords(t.streaming).map((kws, k) => (
+                      <div className="kw-row is-live" key={k}>
+                        <span className="kw-caret" aria-hidden="true">
+                          ▸
+                        </span>
+                        {kws.map((kw, n) => (
+                          <span className="kw-word" key={n}>
+                            {kw}
+                          </span>
+                        ))}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="chat-streaming">
+                      {t.streaming}
+                      {t.running && <span className="gen-caret">▌</span>}
+                    </div>
+                  ))}
+                {/* 아직 그릴 것이 없을 때. 키워드 형식에서는 **첫 `::`가 오기 전까지**도
+                  여기 머문다 — 그 사이 원문을 대신 흘리면 위에서 막은 것이 그대로 샌다. */}
+                {!t.answer &&
+                  !t.blocked &&
+                  t.running &&
+                  (!t.streaming ||
+                    (t.kwFormat && liveKeywords(t.streaming).length === 0)) && (
+                    <div className="chat-thinking">조회 중…</div>
+                  )}
                 {t.error && <div className="chat-blocked">⛔ {t.error}</div>}
               </div>
             </div>

@@ -40,13 +40,13 @@ CREATE TABLE IF NOT EXISTS notes (
 ALTER TABLE notes ALTER COLUMN status SET DEFAULT 'review';
 UPDATE notes SET status = 'review' WHERE status = 'draft';
 
--- 누가 만든 노트인가. PB도 F3로 노트를 만들 수 있는데(생성은 PB, 발행은 준법) 생성자가
+-- 누가 만든 노트인가. PB도 F3로 노트를 만들 수 있는데(생성은 PB, 발행은 관리자) 생성자가
 -- 없으면 **만든 사람이 자기 노트를 처리 대기에서 찾을 수 없다**. 나중에 붙은 컬럼이라
 -- 멱등 ALTER로 더한다 — 이전에 만들어진 노트는 NULL(생성자 미상)이고, 지어내지 않는다.
 ALTER TABLE notes ADD COLUMN IF NOT EXISTS created_by TEXT;
 
 -- 미인용 문장 확인 기록. 각주를 붙일 수 없는 문장(해석·고지·데이터 설명)이 게이트를 잠그면
--- 사람이 열 방법이 없어서, 준법이 사유를 적어 확인한 문장을 여기 남긴다.
+-- 사람이 열 방법이 없어서, 관리자가 사유를 적어 확인한 문장을 여기 남긴다.
 -- [{"index": 3, "reason": "해석·전망", "actor": "정준법", "ts": "...", "text": "앞 60자"}]
 -- text를 같이 두는 이유: 재파싱(scripts/reparse_notes.py)으로 문장 배열이 바뀌면 인덱스가
 -- 다른 문장을 가리킬 수 있다 — 발행 때 원문과 대조해 안 맞으면 그 확인은 무효로 본다.
@@ -54,13 +54,13 @@ ALTER TABLE notes ADD COLUMN IF NOT EXISTS acks_json JSONB NOT NULL DEFAULT '[]'
 
 -- PB의 문장 판정. 각주가 없는 문장(UNSOURCED·해석)을 **심의로 올리기 전에** PB가 훑으면서
 -- 빼야 할 것(remove)과 그대로 둘 것(approve)을 표시한다. acks_json과 모양은 같지만
--- **다른 사람의 다른 판단**이라 컬럼을 나눈다: 확인(ack)은 준법이 심의 단계에서 게이트를
+-- **다른 사람의 다른 판단**이라 컬럼을 나눈다: 확인(ack)은 관리자가 심의 단계에서 게이트를
 -- 여는 조작이고, 이건 PB가 검토 단계에서 남기는 표시라 게이트를 열지 않는다.
 -- [{"index": 3, "mark": "remove", "actor": "PB", "ts": "...", "text": "앞 60자"}]
 -- text를 같이 두는 이유도 acks_json과 같다(재파싱 후 인덱스 어긋남 대조).
 ALTER TABLE notes ADD COLUMN IF NOT EXISTS pb_marks_json JSONB NOT NULL DEFAULT '[]';
 
--- 금지 표현 예외(waiver). 준법이 **사유를 직접 적어** 그 문장의 투자권유·광고성 표현
+-- 금지 표현 예외(waiver). 관리자가 **사유를 직접 적어** 그 문장의 투자권유·광고성 표현
 -- 위반을 통과시킨 기록이다(2026-08-06). 확인(ack)·판정(mark)과 같은 모양이지만 **여는 것이
 -- 다르다**: ack은 미인용 규칙만, 이건 금지 표현 규칙만 연다. 서로 대신하지 못한다.
 -- [{"index": 10, "phrase": "목표주가", "reason": "제3자 목표주가의 사실 보도", ...}]
@@ -336,9 +336,9 @@ async def advance_status(
 ) -> None:
     """검토/심의/발행 단계 전이. violations가 주어지면(발행 시점 게이트 재평가) 같이 갱신한다.
 
-    `record_actor=False`는 **되돌리는 전이**용이다(준법 반려 → 검토중, PB 폐기 → 보류됨).
+    `record_actor=False`는 **되돌리는 전이**용이다(관리자 반려 → 검토중, PB 폐기 → 보류됨).
     앞으로 갈 때만 "이 단계를 누가 맡았나"를 노트에 새긴다 — 반려로 검토중에 돌아왔다고
-    `reviewer`를 준법 이름으로 덮어쓰면 **사실을 확인한 PB가 노트에서 사라진다.**
+    `reviewer`를 관리자 이름으로 덮어쓰면 **사실을 확인한 PB가 노트에서 사라진다.**
     되돌린 사람이 누구인지는 감사로그가 남기고, 그게 정본이다.
 
     ⚠️ `STATUS_ACTOR_FIELD[status]`는 그대로 인덱싱한다(`.get()` 아님) — 정의되지 않은

@@ -1,8 +1,10 @@
 /** 백엔드 응답 타입. 필드명은 backend/main.py의 직렬화 함수와 1:1로 맞춘다. */
 
 /** 이 대시보드는 **PB 1인용**이다 — 'pb'가 이 화면의 주인이고, 'comp'는 같은 화면의
- *  감독 뷰가 아니라 **다른 사람(준법)이 보는 화면**을 데모용으로 미리 보는 모드다.
- *  (관리자 역할은 삭제했다 — 여러 사람이 공유하는 콘솔이라는 전제에서만 의미가 있었다.) */
+ *  감독 뷰가 아니라 **다른 사람(관리자)이 보는 화면**을 데모용으로 미리 보는 모드다.
+ *  ⚠️ 화면 이름은 2026-08-10에 「준법」 → 「관리자」로 바뀌었지만 **id는 `comp` 그대로**다.
+ *     권한 판정이 이 id에 걸려 있어(ReviewModal의 승인 버튼) 함께 바꾸면 이름 정리가
+ *     권한 변경이 된다. 바꿀 거면 그 판정과 같이 볼 것. */
 export type Role = 'pb' | 'comp';
 
 export type FlagReason = { key: string; text: string };
@@ -226,6 +228,17 @@ export type NoteSentence = {
   sources?: NoteSource[];
   is_heading: boolean;
   kind?: SentenceKind;
+  /** 이 문장의 **키워드** — 붙어 있으면 화면은 문장을 접고 이것만 낸다(꺾쇠로 편다).
+   *  `Next Best Action` 패널의 F1 답변에만 온다(`f1.split_labeled`).
+   *
+   *  ⚠️ 갈래 이름이 아니라 **문장에서 그대로 떼어 온 조각**이다(`은퇴`,
+   *     `월 생활비를 배당·이자`). 백엔드가 **부분문자열로 대조해** 통과시킨 것이라,
+   *     여기 있는 말은 반드시 `text` 안에도 있다 — 화면에서 다듬거나 이어 붙이지 말 것.
+   *  ⚠️ **숫자가 들어 있지 않다는 것도 백엔드의 보장이다**(`f1.valid_label`). 접힌 동안
+   *     화면에 보이는 건 이것뿐이라, 수치가 여기 있으면 근거 없이 뜨는 사실 주장이
+   *     된다(가드레일 3).
+   *  ⚠️ 없을 수 있다(형식이 깨진 줄·전역 F1). 그때는 **접지 말고 그냥 문장으로** 낸다. */
+  labels?: string[] | null;
 };
 
 export type AuditRow = {
@@ -259,7 +272,7 @@ export type PrepNoteIndex = {
   created_at: string;
 };
 
-/** 미인용 문장 확인 기록 — 준법이 심의 단계에서 사유를 골라 남긴다.
+/** 미인용 문장 확인 기록 — 관리자가 심의 단계에서 사유를 골라 남긴다.
  *  index는 NoteDetail.sentences의 위치, text는 저장 시점 원문(앞 60자)이다. */
 export type NoteAck = {
   index: number;
@@ -269,7 +282,7 @@ export type NoteAck = {
   text: string;
 };
 
-/** 금지 표현 예외 — 준법이 사유를 적어 그 문장의 투자권유·광고성 표현 위반을 통과시킨 기록.
+/** 금지 표현 예외 — 관리자가 사유를 적어 그 문장의 투자권유·광고성 표현 위반을 통과시킨 기록.
  *  ⚠️ `reason`이 **이 앱에서 유일한 자유 입력 사유**다(반려·보류·확인은 고정값).
  *     통과의 근거가 건마다 달라서인데, 그 대신 사유별 집계는 포기했다(백엔드 WAIVER_MAX_LEN). */
 export type NoteWaiver = {
@@ -296,14 +309,14 @@ export const ACK_REASONS = [
 export function ackReasonLabel(reason: string): string {
   return reason === '제거' ? '제거' : `${reason}으로 확인`;
 }
-/** 문장에 붙는 배지. `제거`만 **`PB 제거`와 짝이 되는 말**로 적는다(`준법 제거`) —
+/** 문장에 붙는 배지. `제거`만 **`PB 제거`와 짝이 되는 말**로 적는다(`관리자 제거`) —
  *  같은 판단을 누가 했는지가 배지에서 바로 갈려 읽혀야 한다. 나머지는 확인 사유를 단다. */
 export function ackBadgeLabel(reason: string): string {
-  return reason === '제거' ? '준법 제거' : `확인함 · ${reason}`;
+  return reason === '제거' ? '관리자 제거' : `확인함 · ${reason}`;
 }
 
 /** PB가 각주 없는 문장(UNSOURCED·해석)에 남기는 판정 — 백엔드 main.py의 PB_MARKS와 1:1.
- *  ⚠️ **게이트를 열지 않는다.** 미인용 문장을 발행 가능하게 만드는 건 준법의 확인(ack)뿐이고,
+ *  ⚠️ **게이트를 열지 않는다.** 미인용 문장을 발행 가능하게 만드는 건 관리자의 확인(ack)뿐이고,
  *     이건 그 전 단계에서 PB가 훑은 흔적이다. `remove`도 문장을 실제로 지우지 않는다 —
  *     본문은 그대로 두고 표시만 남긴다(무엇을 빼기로 했는지도 감사 대상이다). */
 export type PbMark = 'remove' | 'approve';
@@ -342,12 +355,12 @@ export type NoteDetail = {
   content_md: string;
   sentences: NoteSentence[];
   violations: string[];
-  /** 준법이 확인해 미인용 집계에서 뺀 문장들 */
+  /** 관리자가 확인해 미인용 집계에서 뺀 문장들 */
   acks: NoteAck[];
   /** PB가 제거·승인으로 판정한 문장들. acks와 달리 집계·게이트에는 영향이 없다.
    *  (이 필드가 붙기 전에 받은 응답은 없다 — 백엔드가 항상 배열을 준다.) */
   marks: NoteMark[];
-  /** 준법이 **사유를 직접 적어** 통과시킨 금지 표현(2026-08-06). ack과 컬럼이 다른 이유는
+  /** 관리자가 **사유를 직접 적어** 통과시킨 금지 표현(2026-08-06). ack과 컬럼이 다른 이유는
    *  여는 규칙이 달라서다 — ack은 미인용, 이건 투자권유·광고성 표현 하나뿐. */
   waivers: NoteWaiver[];
   /** 금지 표현을 담은 문장 — **백엔드가 찾아 준다.** ⚠️ 금지 표현 목록을 이 파일로
@@ -482,15 +495,19 @@ export type BriefMarket = { indices?: MarketIndex[]; note?: string | null };
  *     분모가 흔들린다(`brief.assemble` 주석).
  *  ⚠️ **불릿당 한 문장이고, 없는 항목은 오지 않는다.** 0건을 나열하지 않는 것이 규칙이라
  *     `kind`로 자리를 비워 두거나 빈 문구를 채우지 말 것. 예외는 `delta` 하나 —
- *     거기서는 "어제 이후 방향이 바뀐 지표가 없다"가 그 자체로 답이다. */
+ *     거기서는 "어제 이후 방향이 바뀐 지표가 없다"가 그 자체로 답이다.
+ *  ⚠️ **같은 `kind`가 여러 줄일 수 있다**(`notable`·`news`). 특히 `news`는 밤사이 사건
+ *     수만큼 서므로(백엔드 `brief.cluster_headlines`, 최대 3줄) 하나로 가정하지 말 것 —
+ *     각주(`sources`)가 **줄마다 다르다**는 것이 이 구조의 요점이다. */
 export type BriefBullet = {
   /** delta=어제 대비 방향 전환 · notable=오늘 움직임이 평소와 다름 ·
+   *  news=밤사이 시장 헤드라인(**LLM이 쓴 유일한 줄** — `ai`·`sources`가 붙는다) ·
    *  caution=유의사항(조회 실패 · 견주지 못한 이유).
    *  ⚠️ `stock`은 **옛 브리프에만 있다**(2026-08-07 이전). 새로 생기지 않지만, 남아 있는
    *     행이 화면에서 클래스 없이 찍히지 않도록 유니온에 남겨 둔다.
    *  ⚠️ 그전에 걷어낸 것 셋(2026-08-06): `lead`·`quiet`는 종목 줄과 같은 말을 했고,
    *     `market`(시장 대비)은 어느 지수와 견줄지를 종목의 시장으로 고르지 않았다. */
-  kind: 'delta' | 'notable' | 'caution' | 'stock';
+  kind: 'delta' | 'notable' | 'news' | 'caution' | 'stock';
   text: string;
   /** 공시 뷰어 링크. 시세 기반 불릿에는 열어 볼 원문이 없어 null(링크를 지어내지 않는다). */
   href: string | null;
@@ -551,16 +568,20 @@ export const RISK = ['안정형', '안정추구형', '위험중립형', '적극�
  *  사용자가 한 명뿐이라 사람 이름이 아니라 역할명을 쓴다(구분할 상대가 없다). */
 export const MY_PB = 'PB';
 
-/** 준법도 사람 이름이 아니라 역할명을 쓴다 — 1 PB · 1 준법 전제라 구분할 상대가 없다.
- *  (예전엔 '정준법'이었다. 그 이름으로 남은 과거 기록은 actorLabel로 역할로 보인다.) */
-export const ACTOR: Record<Role, string> = { pb: MY_PB, comp: '준법' };
+/** 관리자도 사람 이름이 아니라 역할명을 쓴다 — 1 PB · 1 관리자 전제라 구분할 상대가 없다.
+ *  ⚠️ 2026-08-10에 `'준법'` → `'관리자'`로 바꿨다(화면의 역할 이름과 같은 값이어야 한다).
+ *     **이미 쌓인 기록은 손대지 않는다** — 감사로그는 append-only라 소급 수정하지 않고
+ *     (HANDOFF §0-1), 옛 `'준법'`은 아래 `actorLabel`이 화면에서만 지금 이름으로 옮긴다. */
+export const ACTOR: Record<Role, string> = { pb: MY_PB, comp: '관리자' };
 
 /** 감사로그·노트에 남은 actor 문자열을 화면용 역할 라벨로 정규화한다.
  *  DB 기록은 append-only라 손대지 않고(감사 이력 소급 수정 금지, HANDOFF §0-1) 화면에서만
- *  역할로 보여준다. 1 PB · 1 준법 전제라 사람 이름을 역할로 바꿔도 가리키는 대상은 같다.
- *  관리자·김애널 등 지난 체제의 기록은 매핑이 모호하고 화면 밖(최근 12건 밖)이라 원본대로 둔다. */
+ *  역할로 보여준다. 1 PB · 1 관리자 전제라 사람 이름을 역할로 바꿔도 가리키는 대상은 같다.
+ *  ⚠️ `'준법'`은 **같은 자리의 옛 이름**이라 지금 이름으로 옮긴다(2026-08-10 개명) — 원본대로
+ *     두면 한 화면에 `준법`과 `관리자`가 같이 떠서 두 사람이 한 것처럼 읽힌다.
+ *  김애널 등 지난 체제의 기록은 매핑이 모호하고 화면 밖(최근 12건 밖)이라 원본대로 둔다. */
 export function actorLabel(actor: string): string {
-  if (actor === '준법' || actor === '정준법') return '준법';
+  if (actor === '관리자' || actor === '준법' || actor === '정준법') return '관리자';
   if (actor === 'PB' || actor.endsWith('PB')) return 'PB'; // PB · 박PB · 이PB · 최PB
   return actor;
 }

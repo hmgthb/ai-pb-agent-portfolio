@@ -575,7 +575,7 @@ def test_same_basis_date_is_not_a_comparison():
     # 대신 유의사항이 **왜 비교하지 않았는지**를 말한다 — 화면에서 이 줄이 없으면
     # "변화 없음"인지 "비교 안 함"인지 PB가 알 수 없다.
     texts = [b["text"] for b in brief._macro_cautions(None, cmp)]
-    assert texts == ["어제 대비 비교를 하지 않았습니다 — 직전 브리프와 기준일이 같습니다(코스피)."]
+    assert texts == ["어제 대비 비교를 하지 않았습니다. 직전 브리프와 기준일이 같습니다."]
 
 
 def test_indices_are_matched_by_name_not_by_order():
@@ -813,15 +813,87 @@ def test_headline_stands_after_the_rule_written_bullets():
         today,
         compare=brief.compare_macro(today, prev),
         market_note="ECOS 미연결",
-        headline=brief._headline_bullet("하락 보도가 이어졌습니다.", []),
+        headlines=[brief._headline_bullet("하락 보도가 이어졌습니다.", [])],
     )
     assert [b["kind"] for b in bullets] == ["delta", "notable", "news", "caution"]
 
 
 def test_no_headline_means_no_bullet():
     """통과 못 하면 **불릿을 안 낸다** — 지표 불릿과 달리 대신할 규칙 문장이 없다."""
-    bullets = brief.macro_digest([_ix("코스피", "0.42")], compare={}, headline=None)
+    bullets = brief.macro_digest([_ix("코스피", "0.42")], compare={}, headlines=None)
     assert not [b for b in bullets if b["kind"] == "news"]
+
+
+def test_every_headline_keeps_its_own_sources():
+    """줄이 여럿이면 **각주도 줄마다 다르다.** 후보를 다 넘겨 한 문장에 뭉치던 시절에는
+    무관한 기사가 남의 문장 각주로 붙었다(CPI 문장에 태양광 관세 기사)."""
+    cpi = brief.pick_headlines([_art("뉴욕증시, 7월 CPI 주목", 1, "https://n/cpi")], NOW)
+    oil = brief.pick_headlines([_art("이란 호르무즈 통항 제한", 2, "https://n/oil")], NOW)
+    bullets = brief.macro_digest(
+        [],
+        compare={},
+        headlines=[brief._headline_bullet("물가 보도가 이어졌습니다.", cpi),
+                   brief._headline_bullet("중동 소식이 전해졌습니다.", oil)],
+    )
+    news = [b for b in bullets if b["kind"] == "news"]
+    assert [[s["url"] for s in b["sources"]] for b in news] == [
+        ["https://n/cpi"], ["https://n/oil"]
+    ]
+
+
+# ── 사건 가르기(`cluster_headlines`) ───────────────────────────────────────────
+
+
+def test_synonyms_land_in_one_event():
+    """같은 사건을 매체가 다른 말로 적는다 — `CPI`와 `물가지수`는 겹치는 낱말이 없다.
+    낱말 겹침으로 묶던 시제품이 실제로 이 둘을 갈라놨다(2026-08-10 실측)."""
+    rows = [_art("뉴욕증시, 7월 CPI·이란 협상 주목", 1, "a"),
+            _art("[뉴욕증시] 7월 고용지표 부진…물가지수에 쏠린 눈", 2, "b")]
+    groups = brief.cluster_headlines(brief.pick_headlines(rows, NOW))
+    assert len(groups) == 1 and len(groups[0]) == 2
+
+
+def test_a_shared_side_word_does_not_merge_two_events():
+    """`이란`이 곁가지로 나왔다고 CPI 기사와 호르무즈 기사가 한 줄이 되면 안 된다."""
+    rows = [_art("뉴욕증시, 7월 CPI·이란 협상 주목", 1, "a"),
+            _art("이란 호르무즈 통항 제한 검토…브렌트유 급등", 2, "b")]
+    groups = brief.cluster_headlines(brief.pick_headlines(rows, NOW))
+    assert [brief.topic_of(g[0]["title"]) for g in groups] == ["물가", "중동·유가"]
+
+
+def test_unknown_topics_stand_alone_instead_of_joining_a_group():
+    """표에 없는 제목을 남의 묶음에 넣느니 한 줄로 세운다 — 묶기를 못 하는 것과
+    사건이 하나인 것은 다르다."""
+    rows = [_art("연준 5연속 동결", 1, "a"),
+            _art("KB국민은행 예금토큰 검증 성공", 2, "b"),
+            _art("애플 中반도체 시험적용", 3, "c")]
+    groups = brief.cluster_headlines(brief.pick_headlines(rows, NOW))
+    assert [len(g) for g in groups] == [1, 1, 1]
+
+
+def test_the_most_covered_event_leads():
+    """여러 매체가 함께 다룬 사건이 밤사이 시장을 움직인 사건이라, 그것이 첫 줄이어야 한다
+    (예전 프롬프트의 "가장 많이 겹치는 사건 하나"를 규칙으로 옮긴 것)."""
+    rows = [_art("애플 中반도체 시험적용", 1, "a"),
+            _art("연준 5연속 동결", 2, "b"),
+            _art("정부, 美 정책금리 동결에 시장 점검", 3, "c"),
+            _art("한은, 통화정책 불확실성 확대 경계", 4, "d")]
+    groups = brief.cluster_headlines(brief.pick_headlines(rows, NOW))
+    assert len(groups[0]) == 3 and brief.topic_of(groups[0][0]["title"]) == "통화정책"
+
+
+def test_clusters_are_capped_so_the_summary_stays_a_summary():
+    """상한을 넘긴 묶음은 조용히 사라진다 — 요약이 목록이 되는 것을 막는 자리다."""
+    rows = [_art("연준 동결", 1, "a"), _art("7월 CPI 주목", 2, "b"),
+            _art("고용지표 부진", 3, "c"), _art("호르무즈 통항 제한", 4, "d")]
+    picked = brief.pick_headlines(rows, NOW)
+    assert len(brief.cluster_headlines(picked)) == brief.HEADLINE_BULLETS == 3
+    assert len(brief.cluster_headlines(picked, limit=99)) == 4
+
+
+def test_no_articles_means_no_clusters():
+    """사건이 없으면 한 줄도 없다 — 자리를 채우려고 늘리지 않는다."""
+    assert brief.cluster_headlines([]) == []
 
 
 if __name__ == "__main__":
