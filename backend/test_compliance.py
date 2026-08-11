@@ -34,6 +34,23 @@ def test_notice_required():
     assert once.count(WATERMARK) == 1
 
 
+def test_the_f2_notice_never_trips_its_own_gate():
+    """고지문구는 **사실 주장이 아니라 고지**라 각주가 없다 — 그런데 게이트는 각주 없는
+    문장을 미인용으로 센다. 그 사이를 잇는 것이 `citations._BOILERPLATE_RE`이고, 거기
+    걸리지 않으면 **필수 고지가 자기 게이트에 위반으로 뜬다.**
+
+    2026-08-11에 실제로 그럴 뻔했다: 문구에서 `내부 참고용`을 빼면서 서명이 사라졌다.
+    문구를 고칠 때마다 이 테스트를 먼저 볼 것 — 정규식이 아니라 **문구가 계약**이다.
+    """
+    from backend import citations
+
+    sentences = citations.parse_sentences(BRIEF_NOTICE, {}, {})
+    assert sentences, "고지문구가 문장으로 파싱되지 않는다 — 서명 이전의 문제다"
+    assert all(s["kind"] == "boilerplate" for s in sentences), sentences
+    # 본문 없이 고지만 있어도 미인용 위반이 없어야 한다.
+    assert not [v for v in check_note(BRIEF_NOTICE, sentences, "F2") if "출처" in v]
+
+
 def test_notice_is_per_feature():
     """F2 브리프에 F3 워터마크를 요구하면 안 되고, 그 반대도 안 된다."""
     brief = apply_notice("전일 공시 요약입니다.", "F2")

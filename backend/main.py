@@ -1068,7 +1068,11 @@ async def chat_stream(
         yield _sse("progress", {"agent": "f1", "step": "answer", "status": "completed" if answer_texts else "failed"})
 
         # 5. citations + F1 고지 강제 + 게이트
-        raw = "\n".join(answer_texts).strip()
+        # 예고 줄(`…은 아래와 같다.`)을 걷어낸다 — 사실을 말하지 않아 붙일 출처가 없고,
+        # 그대로 두면 화면에 `UNSOURCED` 배지를 달고 뜬다(`f1.strip_lead_ins`).
+        # ⚠️ **게이트가 보는 본문에서도 뺀다.** 화면에서만 숨기면 저장된 답변과 화면이 다른
+        #    말을 하게 된다 — 예고문에는 검사할 사실이 없으므로 잃는 것도 없다.
+        raw = f1.strip_lead_ins("\n".join(answer_texts)).strip()
         quote_source = None
         if data.get("quote"):
             qd = data["quote"]
@@ -2713,6 +2717,10 @@ async def build_brief(pb: str | None = None) -> dict:
         "lead": lead_payload,
         "violations": violations,
         "content_md": content_md,
+        # 화면이 고지를 **문자열로 복사해 들지 않게** 실어 보낸다(2026-08-11) —
+        # `urgent_horizons`를 백엔드가 보내는 것과 같은 규칙이다. 필요해진 자리는 보유
+        # 고객 모달(`WatchHolders`)이고, 거기서는 이름·상황·지연시세가 한 화면에 선다.
+        "notice": compliance.NOTICES["F2"],
     }
 
 
@@ -2734,6 +2742,19 @@ async def get_latest_brief():
     row = await db.latest_brief()
     if row is None:
         raise HTTPException(404, "아직 생성된 브리프가 없습니다.")
+    # 리드·조용한 줄이 붙기 전(2026-08-06 이전) 브리프는 {}다 — 화면은 그때 아무것도
+    # 그리지 않는다(다시 생성하면 붙는다). 없는 걸 지어내지 않는 것이 여기서도 규칙이다.
+    lead = json.loads(row["lead_json"] or "{}")
+    if lead:
+        # ⚠️ 기한 어휘는 **저장값이 아니라 지금의 규칙**으로 덮는다(2026-08-11).
+        #    이 값을 쓰는 화면(보유 고객 창)은 브리프 스냅샷이 아니라 **오늘의**
+        #    `/api/customers`와 종목코드로 조인해 목록을 만든다 — 오늘 데이터를 옛 규칙으로
+        #    가르면 두 시점이 한 화면에서 섞인다. 규칙은 브리프의 데이터가 아니다(고지와 같다).
+        #    ⚠️ `lead_json` 원본은 손대지 않는다(감사 대상은 그때 무엇으로 셌는가이다).
+        #    ⚠️ 같은 이유로 어긋날 수 있는 값이 하나 남아 있다: `bullets[].stock`의
+        #       `short`·`gap`은 **생성 시점에 센 수**다. 지금 화면은 그 둘을 그리지 않지만
+        #       (배지는 보유 인원과 등락만 적는다), 다시 그린다면 여기서 같이 봐야 한다.
+        lead["urgent_horizons"] = list(brief.SHORT_HORIZONS)
     return {
         "id": row["id"],
         "brief_date": row["brief_date"].isoformat(),
@@ -2741,12 +2762,14 @@ async def get_latest_brief():
         "items": json.loads(row["items_json"]),
         # 지수 도입 전에 만들어진 브리프는 {}다 — 화면은 "없음"과 "미연결"을 구분해야 한다.
         "market": json.loads(row["market_json"] or "{}"),
-        # 리드·조용한 줄이 붙기 전(2026-08-06 이전) 브리프는 {}다 — 화면은 그때 아무것도
-        # 그리지 않는다(다시 생성하면 붙는다). 없는 걸 지어내지 않는 것이 여기서도 규칙이다.
-        "lead": json.loads(row["lead_json"] or "{}"),
+        "lead": lead,
         "sentences": json.loads(row["sentences_json"]),
         "violations": json.loads(row["violations_json"]),
         "created_at": row["created_at"].isoformat(),
+        # ⚠️ 저장값이 아니라 **읽는 시점의 상수**다(`compliance.NOTICES`). 브리프 행에
+        #    넣어 두면 옛 브리프만 고지가 없는 상태로 남는데, 고지는 그 브리프의 데이터가
+        #    아니라 이 기능에 늘 붙는 것이라 문구가 바뀌면 옛 브리프도 같이 바뀌어야 한다.
+        "notice": compliance.NOTICES["F2"],
     }
 
 

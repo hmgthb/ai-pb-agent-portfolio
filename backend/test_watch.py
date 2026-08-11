@@ -8,6 +8,9 @@
    판단은 전부 순수 함수로 내려 두었기 때문이다 — 그게 이 설계의 요점이다.
 """
 
+import re
+from pathlib import Path
+
 from backend import brief, redact
 from backend.compliance import egress_guard
 
@@ -73,6 +76,30 @@ def test_order_puts_urgent_holders_first_then_size():
         "000001",
         "000002",
     ]
+
+
+def test_short_horizons_use_the_vocabulary_that_actually_exists():
+    """`SHORT_HORIZONS`는 **seed가 쓰는 표기**의 부분집합이어야 한다(2026-08-11).
+
+    이 목록은 틀려도 아무 데서도 터지지 않는다 — 없는 표기를 적어 두면 그 항목이 조용히
+    죽고, 있는 표기를 빠뜨리면 급한 고객이 조용히 안 세어진다. 실제로 넷이 죽어 있었고
+    (`1년`·`2년`·`2년 이내`·`6개월`) 셋이 빠져 있었다(`수령 직후`·`6개월 이내`·`6개월~1년`).
+    그래서 주석이 아니라 테스트로 막는다 — 어휘의 단일 출처는 seed 스크립트다.
+    """
+    src = (Path(__file__).parent / "scripts" / "seed_scenarios.py").read_text("utf-8")
+    vocab = set(re.findall(r'"horizon":\s*"([^"]+)"', src))
+    assert vocab, "seed에서 horizon 리터럴을 못 찾았다 — 이 테스트가 먼저 낡았다"
+
+    dead = set(brief.SHORT_HORIZONS) - vocab
+    assert not dead, f"실제로 쓰이지 않는 표기: {sorted(dead)}"
+
+    # 6개월~2년 안에 돈이 나가는 표기는 하나도 빠지면 안 된다. `상시`·`매년 정기 지출`은
+    # 판단을 보류한 자리라(brief.SHORT_HORIZONS 주석) 여기서도 강제하지 않는다.
+    for h in ("이미 시작", "수령 직후", "6개월 이내", "6개월~1년", "1년 이내", "1~2년"):
+        assert h in vocab, f"seed가 더는 쓰지 않는 표기: {h}"
+        assert brief._is_short_horizon({"horizon": h}), f"급한데 안 세는 표기: {h}"
+    for h in ("2~3년", "3년 이상"):
+        assert not brief._is_short_horizon({"horizon": h})
 
 
 def test_candidates_are_capped():

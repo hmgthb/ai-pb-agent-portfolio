@@ -197,8 +197,16 @@ def test_recent_move_phrasing():
     `평소 수준`을 적던 것을 걷어냈다(2026-08-06) — 카드 셋에 매일 붙어 정작 다를 때의 문구가
     그 사이에 묻혔다. 꼬리표가 하는 일은 "평소와 다른가" 하나이고, 다르지 않으면 말할 게 없다.
     """
-    assert brief.recent_move_text({"of": 20, "direction": "down", "rank": 1}) == "20거래일 중 가장 큰 하락"
-    assert brief.recent_move_text({"of": 18, "direction": "up", "rank": 3}) == "18거래일 중 3번째로 큰 상승"
+    # ⚠️ **관측 수(`of`)를 문구에 적지 않는다**(2026-08-11). `26거래일 중 …`은 읽는 사람에게
+    #    아무 뜻이 아니었다 — 26이 긴지 짧은지, 왜 하필 26인지가 화면 어디에도 없다. 그건
+    #    기간이 아니라 그 창에서 실제로 잡힌 관측 수라 지표마다 다르게 나온다.
+    #    구간은 **달력으로** 말하고(조회 창 30~40일), 세는 일은 그대로 한다(`of`는 저장된다).
+    assert brief.recent_move_text({"of": 20, "direction": "down", "rank": 1}) == "최근 한 달 남짓 사이 가장 큰 하락"
+    assert brief.recent_move_text({"of": 18, "direction": "up", "rank": 3}) == "최근 한 달 남짓 사이 세 번째로 큰 상승"
+    # 같은 판정이면 관측 수가 달라도 **같은 문구**다 — 문구가 창 크기를 나르지 않는다.
+    assert brief.recent_move_text({"of": 9, "direction": "up", "rank": 3}) == brief.recent_move_text(
+        {"of": 28, "direction": "up", "rank": 3}
+    )
     assert brief.recent_move_text({"of": 20, "direction": "up", "rank": None}) is None
     # 창이 짧거나 보합이면 꼬리표 자체를 안 단다 — 근거가 얇은 자리를 말로 채우지 않는다.
     assert brief.recent_move_text(None) is None
@@ -210,7 +218,7 @@ def test_quote_line_carries_the_comparison_and_stays_sourced():
     md, sentences = brief.assemble(
         [{"stock_code": "005930", "corp_name": "삼성전자", "quote": q, "disclosures": [], "news": []}]
     )
-    assert "20거래일 중 가장 큰 하락" in md
+    assert "최근 한 달 남짓 사이 가장 큰 하락" in md
     assert brief.check(md, sentences) == []
 
 
@@ -249,7 +257,7 @@ def test_lead_falls_back_to_the_biggest_move():
     ]
     lead = brief.pick_lead(items)
     assert lead["reason"] == "move" and lead["stock_code"] == "005930"
-    assert lead["text"] == "20거래일 중 가장 큰 하락"
+    assert lead["text"] == "최근 한 달 남짓 사이 가장 큰 하락"
     # 시세에는 열어 볼 원문이 없다 — 링크를 지어내지 않는다.
     assert lead["href"] is None
 
@@ -585,7 +593,7 @@ def test_notable_bullet_uses_the_shared_phrasing():
     """판정·문구를 만드는 곳은 `recent_move_text` 하나다 — 지수와 종목이 같은 말을 써야 한다."""
     idx = _ix("코스피", "-2.10", recent={"of": 20, "direction": "down", "rank": 2})
     assert [b["text"] for b in brief._notable_bullets([idx])] == [
-        "코스피는 20거래일 중 2번째로 큰 하락입니다."
+        "코스피는 최근 한 달 남짓 사이 두 번째로 큰 하락입니다."
     ]
 
 

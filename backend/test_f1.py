@@ -648,9 +648,36 @@ def test_a_category_name_is_not_a_keyword():
     것이 바로 그것이다."""
     assert not f1.valid_label("상황 요약", "은퇴 후 근로소득이 끝났다.")
     assert f1.valid_label("은퇴", "은퇴 후 근로소득이 끝났다.")
+    # 통과 못 한 이름표는 **떼고 문장만 남긴다**(2026-08-11). 줄째로 두면 화면에
+    # `상황 요약 :: …`라는 기계 문법이 그대로 뜨고, 옆 줄들은 키워드로 접혀 있어서
+    # 한 줄만 형식이 다르다. 금지 표현·MNPI 검사는 원문을 보는 게이트가 그대로 한다.
     assert f1.split_labeled("상황 요약 :: 은퇴 후 근로소득이 끝났다.[^hold]") == [
-        (None, "상황 요약 :: 은퇴 후 근로소득이 끝났다.[^hold]")
+        (None, "은퇴 후 근로소득이 끝났다.[^hold]")
     ]
+
+
+def test_a_rejected_label_is_stripped_not_shown_as_syntax():
+    """실측 예(2026-08-11): 두 조각 다 문장에 없어 통째로 탈락한 줄.
+
+    화면에 `목표 | 서초 주택 마련 :: …`가 그대로 떴다 — 접히지도, 문장으로 서지도 못한
+    중간 상태였다. 이름표만 떼고 문장은 그대로 둔다.
+    """
+    line = (
+        "목표 | 서초 주택 마련 :: 다주택을 정리해 서초로 상급지 이동을 "
+        "준비 중이며, 자금이 필요한 시점은 1~2년이다.[^hold]"
+    )
+    (labels, text), = f1.split_labeled(line)
+    assert labels is None
+    assert text.startswith("다주택을 정리해") and "::" not in text
+
+
+def test_prose_with_a_colon_pair_is_left_alone():
+    """`::`가 들어간 산문까지 자르지 않는다 — 못 알아본 줄은 **내용째 버리는 것보다**
+    형식이 어긋난 채 보이는 편이 낫다. 머리가 길거나 문장부호로 끝나면 이름표가 아니다."""
+    long_head = "가" * (f1._LABEL_HEAD_MAX + 1) + " :: 뒤 문장이다.[^hold]"
+    assert f1.split_labeled(long_head) == [(None, long_head)]
+    dotted = "앞 문장이다. :: 뒤 문장이다.[^hold]"
+    assert f1.split_labeled(dotted) == [(None, dotted)]
 
 
 def test_a_reworded_keyword_is_dropped_not_repaired():
@@ -766,6 +793,35 @@ def test_signals_carry_facts_not_verdicts():
         assert verdict not in text, verdict  # 무엇을 하라는 말은 없다
 
 
+def test_product_vocabulary_is_closed_and_carries_no_mapping():
+    """권할 수 있는 갈래는 **넷**(첫 갈래만 원금보장 여부로 두 극)이고, 블록은 그 이름만
+    싣는다 — 어느 성향·기한에 어느 갈래인지는 **적어 두지 않는다.**
+
+    적어 두면 이 저장소에 근거가 없는 **적합성 판정**을 코드가 단정하는 셈이다. 코드가
+    하는 일은 고를 수 있는 것을 닫는 것까지이고, 고르는 일은 모델이 신호를 읽고 한다.
+    """
+    assert f1.PRODUCT_CLASSES == (
+        "원금보장형", "원금비보장형", "펀드(주식형)", "채권", "랩",
+    )
+    text = f1._next_action_block(f1.next_action_signals(
+        {"history": _HIST, "scenario": _SC}, TODAY))
+    for label in f1.PRODUCT_CLASSES:
+        assert label in text, label
+    # 성향·기한과 갈래를 잇는 말이 블록에 있으면 모델이 그걸 베껴 쓴다.
+    for mapping in ("이면 원금보장", "일 때 채권", "→ 원금보장", "권장", "적합"):
+        assert mapping not in text, mapping
+
+
+def test_the_product_rule_lives_in_the_keyword_prompt_not_in_code():
+    """프롬프트가 목록을 **따로 적어 두지 않는다** — 어휘의 단일 출처는 `PRODUCT_CLASSES`다.
+    프롬프트에 같은 목록을 베껴 두면 늘릴 때 한쪽만 고쳐지고 조용히 갈린다."""
+    prompt = f1.answer_system_prompt(keyword_format=True)
+    assert "권할 수 있는 상품 갈래" in prompt  # 블록을 가리키는 규칙은 있고
+    # 갈래 이름 자체는 예시로 든 하나(`원금보장형`)를 빼면 프롬프트에 없다.
+    for label in ("원금비보장형", "펀드(주식형)", "랩"):
+        assert label not in prompt, label
+
+
 def test_risk_gap_appears_only_when_the_two_differ():
     same = {**_SC, "effective_risk_label": "공격투자형"}
     assert "risk_gap" not in f1.next_action_signals({"scenario": same}, TODAY)
@@ -794,6 +850,44 @@ def test_the_heading_is_excluded_from_the_unsourced_count():
                                       None, f1.portfolio_source())
     assert sents[0]["is_heading"] is True and sents[0]["kind"] == "heading"
     assert sents[1]["sources"], "행동 문장에는 각주가 붙어야 한다"
+
+
+# ── 머리말(예고) 줄 걷어내기 (2026-08-10) ──────────────────────────────────────
+
+
+def test_a_pure_lead_in_is_dropped():
+    """`…은 아래와 같다.`는 사실을 하나도 말하지 않아 붙일 출처가 없다 — 그대로 두면
+    화면에 `UNSOURCED` 배지를 달고 뜬다(규칙이 제 일을 한 것이지만 PB가 보는 건 경고뿐)."""
+    for s in ("히스토리 기반 성향 분석은 아래와 같다.", "정리하면 다음과 같습니다.",
+              "성향 격차는 아래와 같다"):
+        assert f1.is_lead_in(s), s
+
+
+def test_a_line_that_also_states_a_fact_survives():
+    """**넓은 규칙은 엄격이 아니라 조용한 고장이다.** 앞절이 있으면 사실이 섞인 줄이라
+    통째로 버리면 근거가 사라진다 — 실측으로 잡은 경계다."""
+    for s in ("자금성향은 안정형이며 이유는 다음과 같다.",
+              "상담 이력은 다음과 같이 세 건이다.",
+              "삼성전자 비중이 42%로 가장 크다."):
+        assert not f1.is_lead_in(s), s
+
+
+def test_a_sourced_line_is_never_a_lead_in():
+    """각주가 붙었으면 모델이 근거를 댄 문장이다 — 손대지 않는다."""
+    assert not f1.is_lead_in("아래와 같다고 보도됐다.[^hold]")
+
+
+def test_strip_keeps_every_other_line_in_order():
+    raw = "히스토리 기반 성향 분석은 아래와 같다.\n자금성향은 안정형이다.[^hold]\n비중은 42%다.[^hold]"
+    assert f1.strip_lead_ins(raw) == "자금성향은 안정형이다.[^hold]\n비중은 42%다.[^hold]"
+
+
+def test_the_prompt_forbids_lead_ins_and_the_word_contact():
+    """프롬프트로도 막고 코드로도 버린다 — 형식 규칙은 지켜지지 않을 때가 있고, 그때
+    화면에 남는 것이 하필 경고 배지다."""
+    p = f1.answer_system_prompt()
+    assert "머리말을 쓰지 마라" in p
+    assert "`접촉`이라고 쓰지 마라" in p
 
 
 if __name__ == "__main__":

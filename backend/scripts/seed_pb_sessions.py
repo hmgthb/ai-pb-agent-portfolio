@@ -44,11 +44,17 @@ PB_NAME = os.environ.get("PB_NAME", "PB")
 
 # 종목이 걸린 문의. `{stock}`에 **그 고객이 실제로 들고 있는 종목**이 들어간다.
 # 질문은 고객이 쓴 말이다 — PB가 답할 거리를 주되, 답 자체를 담지 않는다.
+# ⚠️ **큐에 세울 수보다 주제가 많아야 한다.** 주제는 `(i // 2) % len(...)`으로 도는데,
+#    목록이 짧으면 한 큐 안에 **같은 제목이 두 번** 선다(일반 문의는 종목명으로 갈리지도
+#    않아 글자까지 똑같다). pending N건이면 각 목록에 최소 `ceil(N / 2)`개가 필요하다 —
+#    2026-08-11에 10건으로 늘리면서 넷씩이던 것을 다섯씩으로 채웠다.
 STOCK_TOPICS: list[tuple[str, str]] = [
     ("{stock} 실적 관련 문의", "{stock} 이번 실적이 좋았다던데, 지금이라도 더 담아도 될까요?"),
     ("{stock} 비중 조정 문의", "{stock} 비중이 좀 큰 것 같은데 줄이는 게 나을까요?"),
     ("{stock} 공시 관련 문의", "{stock} 공시가 났다고 들었는데 제 계좌에 영향이 있나요?"),
-    ("{stock} 주가 급락 문의", "{stock}이 어제 많이 빠졌던데 무슨 일이 있었나요?"),
+    ("{stock} 주가 급락 문의", "{stock}{i_ga} 어제 많이 빠졌던데 무슨 일이 있었나요?"),
+    ("{stock} 배당 문의", "{stock} 배당이 언제 얼마나 나오는지 알 수 있을까요?"),
+    ("{stock} 매도 시점 문의", "{stock}{eul_reul} 언제쯤 정리하는 게 좋을지 같이 봐주실 수 있나요?"),
 ]
 
 # 종목과 무관한 문의. 계좌·상품 이야기라 보유 종목을 안 본다.
@@ -57,7 +63,22 @@ GENERAL_TOPICS: list[tuple[str, str]] = [
     ("퇴직연금 운용 상담", "퇴직연금 계좌를 좀 더 적극적으로 운용하고 싶은데 방법이 있을까요?"),
     ("채권 비중 확대 상담", "금리가 내려간다는데 채권 비중을 늘리는 게 맞을까요?"),
     ("ISA 계좌 활용 문의", "ISA 계좌를 아직 안 만들었는데 지금이라도 여는 게 나을까요?"),
+    ("환헤지 상품 문의", "달러가 계속 흔들리는데 환헤지가 되는 상품도 있는지 궁금합니다."),
+    ("현금 인출 일정 상담", "몇 달 안에 목돈이 필요한데 어디서 빼는 게 나을지 봐주실 수 있나요?"),
 ]
+
+
+def particle(word: str, has_batchim: str, no_batchim: str) -> str:
+    """받침에 따라 조사를 고른다(`현대차가` · `삼성전자가` · `두산에너빌리티가`).
+
+    **이 문장은 고객이 쓴 말이다.** 조사가 틀리면(`현대차이 어제 많이 빠졌던데`) 사람이 쓴
+    글로 안 읽힌다 — 종목명이 데이터에서 오므로 템플릿 하나로는 맞출 수 없어서 여기서 고른다.
+    한글이 아닌 글자로 끝나면(영문·숫자) 받침 있는 쪽을 쓴다(`brief._particle`과 같은 규약).
+    """
+    last = (word or "").strip()[-1:]
+    if not ("가" <= last <= "힣"):
+        return has_batchim
+    return no_batchim if (ord(last) - 0xAC00) % 28 == 0 else has_batchim
 
 
 def build(rows: list[dict], n_pending: int, n_done: int) -> list[dict]:
@@ -84,7 +105,12 @@ def build(rows: list[dict], n_pending: int, n_done: int) -> list[dict]:
             topic, question = STOCK_TOPICS[(i // 2) % len(STOCK_TOPICS)]
             # 금액이 큰 종목을 고른다 — 고객이 실제로 신경 쓸 자리다.
             stock = max(holdings, key=lambda h: h["amt"])["name"]
-            topic, question = topic.format(stock=stock), question.format(stock=stock)
+            fields = {
+                "stock": stock,
+                "i_ga": particle(stock, "이", "가"),
+                "eul_reul": particle(stock, "을", "를"),
+            }
+            topic, question = topic.format(**fields), question.format(**fields)
         else:
             topic, question = GENERAL_TOPICS[(i // 2) % len(GENERAL_TOPICS)]
 

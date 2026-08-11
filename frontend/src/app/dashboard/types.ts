@@ -93,9 +93,14 @@ export type QueueChat = {
 export type QueueItem = QueueNote | QueueChat;
 
 export type NoteSource =
-  | { type: 'dart'; rcept_no: string; viewer_url: string; rcept_dt: string | null }
+  | {
+      type: 'dart';
+      rcept_no: string;
+      viewer_url: string;
+      rcept_dt: string | null;
+    }
   | { type: 'news'; url: string; title: string; pub_date: string }
-  | { type: 'krx'; as_of: string; close: string; label: string }  // F1 시세 [^krx]
+  | { type: 'krx'; as_of: string; close: string; label: string } // F1 시세 [^krx]
   /** F1 포트폴리오 [^hold] — **유일하게 공개데이터가 아닌 출처**다(내부 계좌 보유데이터).
    *  as_of가 null인 건 pb_customers에 스냅샷 시각 컬럼이 없어서다. 지어내지 않는다. */
   | { type: 'holdings'; label: string; as_of: string | null };
@@ -163,9 +168,14 @@ export type ChatRouting = {
   /** ⚠️ 화면에서 이 값으로 **이름표를 찾지 말 것** — 그러다 라우트가 늘 때마다 빠졌다.
    *  배지에 적을 말은 아래 `label`로 온다. 이 필드는 라우트 자체를 가리키는 식별자다. */
   agent:
-    | 'a1' | 'a2' | 'a4' | 'krx'
-    | 'portfolio' | 'portfolio_advice'
-    | 'situation' | 'risk_review'
+    | 'a1'
+    | 'a2'
+    | 'a4'
+    | 'krx'
+    | 'portfolio'
+    | 'portfolio_advice'
+    | 'situation'
+    | 'risk_review'
     | null;
   intent: string | null;
   /** 라우팅 배지에 적는 이름 — **백엔드가 정한다**(`f1.ROUTE_LABEL`). 되묻기이거나 표에
@@ -175,13 +185,13 @@ export type ChatRouting = {
   /** 되묻는 사유. 'entity'=종목을 모른다 / 'intent'=종목은 아는데 무엇을 물었는지 모른다.
    *  되물을 **문구는 백엔드가 만든다**(f1.clarify_text) — 여기서 다시 판단하면 갈라진다. */
   clarify?: 'entity' | 'intent' | null;
-  inherited: boolean;  // 멀티턴: 이전 턴 종목을 이어받았는가
+  inherited: boolean; // 멀티턴: 이전 턴 종목을 이어받았는가
   reason: string;
 };
 export type ChatAnswer = {
   clarify: boolean;
   notice?: string;
-  text?: string;  // clarify일 때만
+  text?: string; // clarify일 때만
   sentences: NoteSentence[];
   violations: string[];
 };
@@ -205,7 +215,12 @@ export type ChatOption = {
  *    sentence = AI가 쓴 답변 문장(출처 배지째 간다) · option = 코드가 뽑은 선택지 ·
  *    memo = PB가 손으로 쓴 줄(문서에서 `PB 메모` 구역으로 갈려 뜬다). */
 export type PrepItem =
-  | { kind: 'sentence'; text: string; sentence_kind?: SentenceKind; sources: NoteSource[] }
+  | {
+      kind: 'sentence';
+      text: string;
+      sentence_kind?: SentenceKind;
+      sources: NoteSource[];
+    }
   | {
       kind: 'option';
       label: string;
@@ -218,7 +233,11 @@ export type PrepItem =
 /** 백엔드 citations.py의 문장 범주.
  *  heading=소제목 · boilerplate=고지문구·구분선 · claim=사실 주장 · interpretation=해석·전망.
  *  출처 부착률의 분모는 claim뿐이다 — 해석 문장은 규칙상 각주를 붙이지 않는다. */
-export type SentenceKind = 'heading' | 'boilerplate' | 'claim' | 'interpretation';
+export type SentenceKind =
+  | 'heading'
+  | 'boilerplate'
+  | 'claim'
+  | 'interpretation';
 
 export type NoteSentence = {
   text: string;
@@ -526,10 +545,11 @@ export type BriefBullet = {
    *  ⚠️ `text` 안에서 못 찾으면 **링크 없이 문장 전체를 그대로 찍는다** — 문장을 자르거나
    *     버리지 않는다(`page.tsx`의 `DigestText`). */
   link_text?: string | null;
-  /** 이 문장을 **LLM이 썼는가**. 화면이 그렇게 표시한다(`AI 요약`).
-   *  ⚠️ 켜지는 건 `news`(밤사이 헤드라인) 하나뿐이다 — 나머지는 규칙이 쓴다.
-   *  ⚠️ 표시를 빼지 말 것 — 이 불릿은 게이트를 안 타므로(본문이 아니라 `lead_json`),
-   *     "규칙이 만든 문장"과 구분되는 자리가 화면의 이 배지뿐이다. */
+  /** 이 문장을 **LLM이 썼는가**. 백엔드는 그대로 보내지만 **화면은 더는 표시하지 않는다**
+   *  (2026-08-11에 `AI 요약` 배지를 걷어냈다 · `page.tsx`의 그 자리 주석).
+   *  ⚠️ 켜지는 건 3개월 추세(`trend`)와 고객 관련 종목(`watch`)이다 — 나머지는 규칙이 쓴다.
+   *  ⚠️ 이 불릿들은 게이트를 안 탄다(본문이 아니라 `lead_json`). 그 사실과 화면을 잇던
+   *     자리가 그 배지였고, 지금은 없다 — 값은 살아 있으니 되살리려면 이걸로 조건을 건다. */
   ai?: boolean;
   /** 이 문장의 **근거 기사**. `news` 불릿에만 붙는다.
    *  ⚠️ `href`(단일 링크)를 쓰지 않는 이유: 이 문장은 여러 제목을 뭉친 것이라 한 링크가
@@ -571,6 +591,11 @@ export type Brief = {
   lead?: BriefLeadPayload;
   violations: string[];
   created_at: string;
+  /** F2 필수 고지(`compliance.NOTICES['F2']`) — **저장값이 아니라 읽는 시점의 상수**라
+   *  옛 브리프에도 붙는다. 화면이 같은 문자열을 따로 들지 않게 백엔드가 실어 보낸다
+   *  (`urgent_horizons`와 같은 규칙). 지금 쓰는 자리는 보유 고객 창(`WatchHoldersModal`)이다.
+   *  ⚠️ optional인 건 옛 프런트/백 조합을 위한 것이지 "없어도 되는 고지"라는 뜻이 아니다. */
+  notice?: string;
 };
 
 /** 노트 상태(백엔드) → 시안 PILL 키 */
@@ -591,7 +616,13 @@ export const PILL: Record<string, [label: string, cls: string]> = {
   rejected: ['보류됨', ''],
 };
 
-export const RISK = ['안정형', '안정추구형', '위험중립형', '적극투자형', '공격투자형'];
+export const RISK = [
+  '안정형',
+  '안정추구형',
+  '위험중립형',
+  '적극투자형',
+  '공격투자형',
+];
 
 /** 이 대시보드의 주인 (목 로그인). 백엔드 `main.PB_NAME`과 같아야 한다 —
  *  어긋나면 화면은 "내 고객"이라 적는데 서버는 다른 사람의 고객을 보낸다.
@@ -611,7 +642,8 @@ export const ACTOR: Record<Role, string> = { pb: MY_PB, comp: '관리자' };
  *     두면 한 화면에 `준법`과 `관리자`가 같이 떠서 두 사람이 한 것처럼 읽힌다.
  *  김애널 등 지난 체제의 기록은 매핑이 모호하고 화면 밖(최근 12건 밖)이라 원본대로 둔다. */
 export function actorLabel(actor: string): string {
-  if (actor === '관리자' || actor === '준법' || actor === '정준법') return '관리자';
+  if (actor === '관리자' || actor === '준법' || actor === '정준법')
+    return '관리자';
   if (actor === 'PB' || actor.endsWith('PB')) return 'PB'; // PB · 박PB · 이PB · 최PB
   return actor;
 }
@@ -637,6 +669,6 @@ export const WATERMARK =
  *  page.tsx(고객 카드)와 ReviewModal.tsx(고객 문의 모달)가 **같은 칩을 쓴다** — 두 곳의
  *  인라인 채팅이 같은 라우트를 태우므로 목록도 한 곳에서만 정의한다. */
 export const NBA_CHIPS: { label: string; q: string }[] = [
-  { label: '상황 요약', q: '이 고객 상황 요약해줘' },
-  { label: '성향 점검', q: '히스토리 기반으로 투자성향 분석해줘' },
+  { label: '성향 점검', q: '히스토리 기반으로 투자성향 분석해줘.' },
+  { label: '상황 요약', q: '이 고객의 현재 상황 요약해줘.' },
 ];

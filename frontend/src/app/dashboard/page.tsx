@@ -55,7 +55,7 @@ import F1Chat, { prepKey, type ChatKeep, type ChatPrefill } from './F1Chat';
 // 고객 카드는 준비 줄만 보유 표 안에서 쓴다 — `PrepMemo`(이름 줄까지 그리는 쪽)는
 // 이제 고객 문의 모달 전용이다(ReviewModal).
 import ResearchCard from './ResearchCard';
-import WatchHolders from './WatchHolders';
+import WatchHolders, { WatchHoldersModal } from './WatchHolders';
 import { ChatModal, NoteModal } from './ReviewModal';
 import {
   ACTOR,
@@ -395,6 +395,23 @@ function CustomerRow({
  *     누르면 어디로 가는지가 밑줄 범위와 맞아야 한다.
  *  ⚠️ `link_text`를 못 찾으면 **링크 없이 문장 전체를 그대로 찍는다.** 문장을 자르거나
  *     버리는 쪽으로 틀리면 안 된다 — 링크가 없는 것보다 문장이 사라지는 게 훨씬 나쁘다. */
+/** 문장 맨 앞의 **종목명 되풀이**를 뗀다(2026-08-11).
+ *
+ *  종목명은 화면이 문장 앞에 굵게 적으므로(아래 `.digest-stock`) 문장이 또 쓰면
+ *  `SK하이닉스 SK하이닉스는 …`이 된다. 프롬프트도 쓰지 말라고 하지만, **이미 저장된
+ *  브리프**는 쓴 채로 남아 있다 — 다시 생성하지 않아도 읽히게 하는 자리다.
+ *
+ *  ⚠️ **맨 앞의 그 이름 하나만** 뗀다. 문장 중간의 언급(`… 대비 SK하이닉스가 …`)은
+ *     손대지 않는다 — 거기서부터는 화면이 문장을 다시 쓰는 일이 된다.
+ *  ⚠️ 조사까지만 붙여 본다. 못 찾으면 그대로 둔다(조용히 잘라 내지 않는다). */
+function stripLeadStockName(text: string, name: string): string {
+  for (const particle of ['는', '은', '이', '가', '의', '도', '']) {
+    const head = `${name}${particle} `;
+    if (text.startsWith(head)) return text.slice(head.length);
+  }
+  return text;
+}
+
 function DigestText({ b }: { b: BriefBullet }) {
   const at = b.href && b.link_text ? b.text.indexOf(b.link_text) : -1;
   if (at < 0 || !b.link_text || !b.href) return <>{b.text}</>;
@@ -438,6 +455,11 @@ export default function DashboardPage() {
        id 공간이 다르고(노트 #12와 메모 #12는 남남), 문서 종류도 다르다. */
     | { kind: 'prepdf'; id: number }
     | { kind: 'chat'; id: number }
+    /* 브리핑 「고객 관련 종목」 줄의 **보유 고객 창**(2026-08-11). 노트·메모와 달리 id가
+       아니라 **종목코드**로 여는 이유: 이 창이 그리는 것은 저장된 행이 아니라 지금 화면에
+       떠 있는 브리프의 한 줄이고, 그 줄을 가리키는 값이 종목코드뿐이다. 브리프가 다시
+       생성돼 그 종목이 빠지면 창은 조용히 닫힌다(아래 렌더에서 못 찾으면 안 그린다). */
+    | { kind: 'watch'; code: string }
     /* `f1`은 여는 신호일 뿐 질문을 실어 오지 않는다(예전 `q`는 걷어냈다) — 이 모달은
        닫아도 언마운트되지 않으므로(아래 오버레이 주석) 마운트 시점에만 읽는 prop은
        두 번째 열기부터 조용히 무시된다. 채워 열어야 하면 고객 카드처럼 `prefill`로 넘길 것. */
@@ -1757,22 +1779,52 @@ export default function DashboardPage() {
                 <ul className="digest">
                   {briefBullets.map((b, i) => (
                     <li className={`digest-${b.kind}`} key={i}>
-                      <DigestText b={b} />
-                      {/* **규칙이 쓴 문장과 구분한다.** 이 불릿들은 본문이 아니라
-                          `lead_json`에 살아 컴플라이언스 게이트를 안 탄다 — 나머지는
-                          "데이터에 없는 말을 못 한다"는 보장이 있고 이것만 없다.
-                          그 사실을 말하는 자리가 화면에서 이 배지뿐이라 **빼지 말 것**.
-                          ⚠️ 켜지는 건 고객 관련 종목(`watch`) 하나뿐이다. `b.ai`로
-                             판정하지 kind로 판정하지 말 것 — 줄 종류가 늘 때마다
-                             여기가 조용히 빠진다. */}
-                      {b.ai && (
-                        <span
-                          className="digest-ai"
-                          title="이 한 줄은 AI가 뉴스 제목만 보고 쓴 요약입니다. 나머지 불릿은 규칙이 씁니다."
+                      {/* 고객 관련 종목 줄은 **문장 자체가 여는 자리**다(2026-08-11).
+                          그전에는 아래 배지가 그 일을 했는데, PB가 읽고 반응하는 것은
+                          문장이지 수치 배지가 아니었다 — 누를 곳과 읽을 곳이 갈려 있었다.
+                          ⚠️ 문장 안에 링크가 있는 줄은 감싸지 않는다. 지금은 `stock`이
+                             붙는 줄에 `href`가 없어서(backend `stock_headline_bullet`)
+                             생기지 않지만, 생기면 버튼 안에 링크가 들어가 둘 다 망가진다.
+                          ⚠️ 각주는 **버튼 밖**이다. 눌리는 것은 문장이고, 각주는 눌렀을 때
+                             기사로 가야 한다(같은 클릭이 아니다). */}
+                      {b.stock && !b.href ? (
+                        <button
+                          className="digest-open"
+                          onClick={() =>
+                            setModal({ kind: 'watch', code: b.stock!.code })
+                          }
+                          title={`${b.stock.name}를 보유한 담당 고객을 봅니다`}
                         >
-                          AI 요약
-                        </span>
+                          {/* **어느 종목 이야기인지는 화면이 적는다**(2026-08-11).
+                              모델이 쓰는 문장의 주어가 그 종목이 아닐 때가 있다 — 실측에서
+                              `미래에셋증권이 목표주가 37만원과 … 보도가 전해졌습니다.`가
+                              삼성전자 줄로 떴다. 눌러야 삼성전자였고, 줄만 봐서는 어느
+                              종목인지 알 방법이 없었다(배지도 등락률·인원뿐이다).
+                              등락률·보유 인원과 같은 처방이다: 규칙이 아는 값은 규칙이 적고,
+                              모델은 문장만 쓴다 — **줄마다 늘 선다**(조건부로 켜지 않는다.
+                              조건이 생기는 순간 "안 붙은 경우"가 버그로 숨는다).
+                              ⚠️ 되풀이는 `stripLeadStockName`이 뗀다. 프롬프트도 이름을
+                                 쓰지 말라고 하지만(`brief.STOCK_HEADLINE_SYSTEM_PROMPT`)
+                                 이미 저장된 브리프는 쓴 채로 남아 있다. */}
+                          <b className="digest-stock">{b.stock.name}</b>
+                          <DigestText
+                            b={{
+                              ...b,
+                              text: stripLeadStockName(b.text, b.stock.name),
+                            }}
+                          />
+                        </button>
+                      ) : (
+                        <DigestText b={b} />
                       )}
+                      {/* ⚠️ **`AI 요약` 배지를 걷어냈다**(2026-08-11 · 제품 결정).
+                          이 자리에 `b.ai`가 참인 줄마다 배지가 떴다. **딸려 나간 것이 있다**:
+                          이 불릿들은 본문이 아니라 `lead_json`에 살아 컴플라이언스 게이트를
+                          안 탄다 — 나머지 산출물은 "데이터에 없는 말을 못 한다"는 보장이
+                          있고 이것만 없는데, 그 사실을 말하는 자리가 화면에서 이 배지뿐이었다.
+                          지금은 규칙이 쓴 줄과 모델이 쓴 줄이 화면에서 구분되지 않는다.
+                          되살리려면 `b.ai`(백엔드가 그대로 보낸다)로 조건을 걸어 `.digest-ai`
+                          배지를 여기 다시 놓으면 된다 — 판정을 `kind`로 하지 말 것. */}
                       {/* 근거 기사 — **각주 번호로 전부 건다.** 한 링크가 대표하지 못하는
                           문장이라(여러 제목을 뭉친 것) 대표를 고르지 않는다.
                           ⚠️ **빼지 말 것.** 종목 카드가 없어지면서 이 문장의 출처를 확인할
@@ -1791,24 +1843,13 @@ export default function DashboardPage() {
                           [{n + 1}]
                         </a>
                       ))}
-                      {/* 보유 고객 — 접으면 종목의 사실만, 펴면 **누가 왜 걸리는지**를
-                          이름과 함께 낸다(`WatchHolders`).
-                          ⚠️ **이름은 백엔드가 보내지 않는다.** 여기서 `/api/customers`와
-                             종목코드로 조인해 붙인다 — `briefs`에도 프롬프트에도 고객
-                             식별정보가 안 남는다(types.ts `stock` 주석 · 가드레일 1).
-                          ⚠️ `AI 요약` 배지 **밖**이다. 모델이 쓴 것은 문장 하나뿐이고
-                             이 목록은 전부 규칙과 계좌데이터에서 온다. */}
-                      {b.stock && (
-                        <WatchHolders
-                          stock={b.stock}
-                          customers={data.customers}
-                          urgentHorizons={
-                            data.brief?.lead?.urgent_horizons ?? []
-                          }
-                          risks={RISK}
-                          onOpenCustomer={setSelectedId}
-                        />
-                      )}
+                      {/* 종목의 사실(보유 인원 · 등락) — **읽는 줄이지 누르는 줄이 아니다**
+                          (2026-08-11에 버튼을 문장으로 옮겼다).
+                          ⚠️ **빼지 말 것.** 이 수치가 화면에 있는 자리가 여기뿐이다 —
+                             프롬프트가 모델에게 등락률·보유 인원을 문장에 쓰지 말라고
+                             금지하므로(backend `STOCK_HEADLINE_SYSTEM_PROMPT`) 위 문장에는
+                             절대 안 나온다. 지우면 카드에서 수치가 통째로 사라진다. */}
+                      {b.stock && <WatchHolders stock={b.stock} />}
                     </li>
                   ))}
                 </ul>
@@ -2865,7 +2906,9 @@ export default function DashboardPage() {
                 ? '종목 노트'
                 : modal.kind === 'prepdf'
                   ? '상담 준비 메모'
-                  : '검토 화면'
+                  : modal.kind === 'watch'
+                    ? '보유 고객'
+                    : '검토 화면'
             }
           >
             {/* 발행분 최종본 — **문서를 그대로 띄운다.** 상담 직전에 필요한 건 문장별 판정
@@ -2954,6 +2997,28 @@ export default function DashboardPage() {
                       title={`상담 준비 메모 PDF${who ? ` (${who})` : ''}`}
                     />
                   </>
+                );
+              })()}
+            {/* 보유 고객 창 — 브리핑 「고객 관련 종목」 배지에서 연다.
+                ⚠️ 지금 화면의 브리프에서 **그 종목 줄을 다시 찾아** 그린다. 못 찾으면
+                   아무것도 안 그린다(브리프를 다시 생성해 그 종목이 빠진 경우) — 지난
+                   집계를 창에 남겨 두면 화면이 서로 다른 두 브리프를 동시에 말한다. */}
+            {modal.kind === 'watch' &&
+              (() => {
+                const b = (data.brief?.lead?.bullets ?? []).find(
+                  (x) => x.stock?.code === modal.code,
+                );
+                if (!b?.stock) return null;
+                return (
+                  <WatchHoldersModal
+                    stock={b.stock}
+                    text={b.text}
+                    customers={data.customers}
+                    urgentHorizons={data.brief?.lead?.urgent_horizons ?? []}
+                    risks={RISK}
+                    notice={data.brief?.notice}
+                    onClose={() => setModal(null)}
+                  />
                 );
               })()}
             {modal.kind === 'note' && data.notesById[modal.id] && (
