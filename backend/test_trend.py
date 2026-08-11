@@ -207,3 +207,46 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
     print("ok")
+
+
+# ── 지표별 기사 필터 (2026-08-11) ─────────────────────────────────────────────
+#
+# 실측한 사고: `미국 국채 금리`로 찾은 결과에 **한국 국고채 기사**가 섞였고, 모델이 그
+# 제목의 사유(`중동리스크·환율상승`)를 미국 30년물 문장에 붙였다. 두 나라 채권시장이
+# 한 문장에서 섞인 것이라, 각주가 형식만 지켜지고 뜻은 깨졌다.
+_US = [
+    {"title": "‘국채 금리와 전쟁 선언’...베선트의 3가지 카드는"},
+    {"title": "장기국채 금리 19년 만에 최고…중간선거 앞 美 ‘금리와의 전쟁’"},
+    {"title": "중동리스크·환율상승…7월 국고채 금리 전반적으로 상승"},  # 한국 기사
+]
+
+
+def test_a_korean_bond_article_never_backs_the_us_line():
+    kept = [r["title"] for r in brief.trend_news_filter("미국채30년", _US)]
+    assert len(kept) == 2
+    assert not any("국고채" in t for t in kept)
+
+
+def test_the_filter_is_symmetric():
+    """반대 방향도 막는다 — 미국 기사가 국고채 줄의 근거로 서면 같은 사고다."""
+    kept = [r["title"] for r in brief.trend_news_filter("국고채10년", _US)]
+    assert kept == ["중동리스크·환율상승…7월 국고채 금리 전반적으로 상승"]
+
+
+def test_every_trend_index_has_a_filter():
+    """표에 없는 지표는 **아무것도 안 걸러진다** — 지표를 늘리면서 여기를 빠뜨리면
+    그 줄만 조용히 옛 상태로 돌아간다(주석이 아니라 테스트가 막는다)."""
+    missing = sorted(set(brief.TREND_QUERIES) - set(brief.TREND_NEWS_FILTERS))
+    assert not missing, f"기사 필터가 없는 지표: {missing}"
+
+
+def test_an_unknown_index_passes_through_unchanged():
+    """모르는 지표를 통째로 버리지 않는다 — 거르는 규칙이 없는 것과 기사가 없는 것은 다르다."""
+    rows = [{"title": "무엇이든"}]
+    assert brief.trend_news_filter("새 지표", rows) == rows
+
+
+def test_filtering_may_leave_nothing_and_that_is_allowed():
+    """다 걸러지면 줄은 **움직임만** 말하고 각주 없이 선다 — 관련 기사를 몇 건 놓치는 것이
+    다른 시장 기사를 근거로 삼는 것보다 낫다(놓치는 쪽으로 기운 설계)."""
+    assert brief.trend_news_filter("나스닥", [{"title": "코스닥 급등"}]) == []

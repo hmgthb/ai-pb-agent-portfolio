@@ -71,7 +71,9 @@ function EgressTwin({ p }: { p: EgressPortfolio }) {
         </div>
         <div className="kv">
           <div className="k">수익률 (연초 대비)</div>
-          <div className={`v delta ${(p.return_pct ?? 0) >= 0 ? 'up' : 'down'}`}>
+          <div
+            className={`v delta ${(p.return_pct ?? 0) >= 0 ? 'up' : 'down'}`}
+          >
             {p.return_pct == null
               ? '—'
               : `${p.return_pct >= 0 ? '+' : ''}${p.return_pct.toFixed(1)}%`}
@@ -155,9 +157,14 @@ function EgressTwin({ p }: { p: EgressPortfolio }) {
           ⚠️ 금액을 그리지 않는다 — 계좌 밖 자산도 구간 라벨뿐이다. */}
       {(p.scenario || (p.history?.length ?? 0) > 0) && (
         <div className="egress-extra">
+          {/* ⚠️ **접어 둔다**(2026-08-11). 이 둘이 붙으면서 패널이 열 줄 넘게 길어져,
+              위쪽 표(무엇이 가려졌나)를 보려면 매번 스크롤을 지나야 했다. 바깥 상자
+              (`.redact`)와 **같은 접이식 어휘**를 쓴다 — 꺾쇠 + 굵은 한 줄.
+              ⚠️ 제목은 접혀도 남는다. 나가는 항목이 무엇인지는 접힌 채로도 보여야 한다 —
+                 감춰 버리면 이 패널이 나가는 양을 축소해 말하는 셈이다(위 주석). */}
           {p.scenario && (
-            <>
-              <div className="k">상황 (상담 기록 기반)</div>
+            <details className="egress-fold">
+              <summary>고객 상황</summary>
               <div className="v">{p.scenario.summary ?? '—'}</div>
               <ul>
                 {p.scenario.horizon && <li>자금 시점: {p.scenario.horizon}</li>}
@@ -172,7 +179,9 @@ function EgressTwin({ p }: { p: EgressPortfolio }) {
                   <li key={`c${i}`}>제약: {c}</li>
                 ))}
                 {(p.scenario.plan ?? []).map((q, i) => (
-                  <li key={`p${i}`}>계획 {i + 1}: {q}</li>
+                  <li key={`p${i}`}>
+                    계획 {i + 1}: {q}
+                  </li>
                 ))}
                 {p.scenario.effective_risk_label && (
                   <li>
@@ -184,11 +193,11 @@ function EgressTwin({ p }: { p: EgressPortfolio }) {
                   </li>
                 )}
               </ul>
-            </>
+            </details>
           )}
           {(p.history?.length ?? 0) > 0 && (
-            <>
-              <div className="k">상담 이력</div>
+            <details className="egress-fold">
+              <summary>상담 이력</summary>
               <ul>
                 {p.history!.map((h, i) => (
                   <li key={i}>
@@ -196,7 +205,7 @@ function EgressTwin({ p }: { p: EgressPortfolio }) {
                   </li>
                 ))}
               </ul>
-            </>
+            </details>
           )}
         </div>
       )}

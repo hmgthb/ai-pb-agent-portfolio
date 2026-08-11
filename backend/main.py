@@ -1120,6 +1120,14 @@ async def chat_stream(
             "agent": routing["agent"], "intent": routing["intent"],
             "entity": routing["entity_code"], "customer_id": customer_id,
             "violations": violations,
+            # 키워드가 안 붙은 줄과 사유(2026-08-11). 그런 줄은 화면에서 **홀로 펴진 채**
+            # 서는데, 모델이 형식을 안 지킨 건지 조각이 문장에 없어 떨어진 건지가
+            # 화면에서는 구분되지 않는다 — 고치려면 어느 쪽인지 알아야 한다.
+            # ⚠️ 키워드 형식일 때만 담는다. 전역 F1은 산문이 정상이라 전부 "미준수"로
+            #    세어져, 진짜 실패가 그 사이에 묻힌다.
+            # ⚠️ 답변 문장이 그대로 로그에 들어간다 — 이 텍스트는 이미 비식별화 경계를
+            #    지나온 것이고(이름·계좌가 없다) 게이트도 통과했다. 40자로 자른다.
+            **({"label_gaps": f1.label_gaps(raw)} if keyword_format else {}),
         })
         yield _sse("answer", {
             "clarify": False,
@@ -2292,6 +2300,14 @@ async def _trend_bullet(t: dict) -> dict | None:
     except Exception:
         logger.warning("거시 추세 뉴스 조회 실패: %s", name)
         rows = []
+    # **다른 시장 기사를 먼저 버린다**(2026-08-11 · `brief.TREND_NEWS_FILTERS`). 검색어만으로는
+    # `미국 국채 금리`에 한국 국고채 기사가 섞여 들어왔고, 모델이 그 제목에서 사유를 가져다
+    # 미국 30년물 문장에 붙였다. 신선도·중복 판정(`pick_headlines`)보다 **앞**이어야 상한
+    # 3건이 살아남은 기사로 채워진다 — 뒤에 두면 걸러진 자리가 그냥 빈다.
+    before = len(rows)
+    rows = brief.trend_news_filter(name, rows)
+    if before != len(rows):
+        logger.info("거시 추세 뉴스 필터: %s %d건 → %d건", name, before, len(rows))
     # 신선도 창이 종목 줄보다 넓다 — 석 달 추세를 설명하는 자리라 어제 기사만으로는 모자란다.
     rows = brief.pick_headlines(
         rows, datetime.now(timezone.utc),

@@ -4185,18 +4185,53 @@ a.fn-title:hover {
   border-top: 1px solid var(--border);
   font-size: 12px;
 }
-.egress-twin .egress-extra .k {
+/* `고객 상황`·`상담 이력` 접이식(2026-08-11). 바깥 상자(`.redact > summary`)와 **같은
+   어휘**를 쓴다 — 테두리·면 없이 꺾쇠 + 굵은 한 줄. 이 화면에서 접이식은 꺾쇠이고
+   칩은 알약이다(그 규약을 여기서도 지킨다).
+   ⚠️ 제목 자체는 접혀도 남는다 — 무엇이 나가는지는 접힌 채로도 보여야 한다. */
+.egress-twin .egress-fold {
+  margin-top: 8px;
+}
+.egress-twin .egress-fold:first-child {
+  margin-top: 0;
+}
+.egress-twin .egress-fold > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  cursor: pointer;
   font-size: 11px;
   font-weight: 700;
   color: var(--muted);
-  margin-top: 8px;
+  list-style: none; /* Firefox 기본 삼각형 제거 */
 }
-.egress-twin .egress-extra .k:first-child {
-  margin-top: 0;
+.egress-twin .egress-fold > summary::-webkit-details-marker {
+  display: none; /* Safari 기본 삼각형 제거 */
 }
-.egress-twin .egress-extra .v {
+/* 삼각형은 직접 그린다 — 기본 마커는 위치·색을 못 맞춘다(`.redact`와 같은 방법). */
+.egress-twin .egress-fold > summary::before {
+  content: '▸';
+  display: inline-block;
+  font-size: 9px;
+  transition: transform 0.12s ease;
+}
+.egress-twin .egress-fold[open] > summary::before {
+  transform: rotate(90deg);
+}
+.egress-twin .egress-fold > summary:hover {
   color: var(--ink-2);
-  margin: 2px 0 4px;
+}
+.egress-twin .egress-fold > summary:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+/* 상황 한 줄(`scenario.summary`) — **아래 불릿과 같은 톤**이다(2026-08-11에 내렸다).
+   저장된 값을 나열하는 자리인데 이 줄만 진하면 요약이 결론처럼 읽힌다. */
+.egress-twin .egress-extra .v {
+  color: var(--muted);
+  margin: 4px 0 4px;
 }
 .egress-twin .egress-extra ul {
   margin: 0;

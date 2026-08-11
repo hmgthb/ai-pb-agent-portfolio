@@ -895,3 +895,89 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
     print("ok")
+
+
+def test_label_gaps_tells_the_two_failures_apart():
+    """안 접힌 줄은 화면에서 다 똑같이 보인다 — 어느 쪽인지는 **감사로그가 답한다.**
+
+    ⚠️ 통과한 줄은 담지 않는다(로그가 정상 줄로 차면 실패가 묻힌다).
+    """
+    raw = "\n".join([
+        "은퇴 :: 은퇴 후 근로소득이 끝났다.[^hold]",          # 통과
+        "서초 주택 마련을 최종 목표로 정리하는 국면이다.[^hold]",  # `::` 없음
+        "목표|상급지 :: 다주택을 정리해 옮기려는 국면이다.[^hold]",  # 조각이 문장에 없음
+    ])
+    gaps = f1.label_gaps(raw)
+    assert [g["reason"] for g in gaps] == ["형식 미준수", "검증 탈락"]
+    # 탈락한 줄은 이름표가 떼인 **문장**이 담긴다(기계 문법이 로그에 남지 않는다).
+    assert "::" not in gaps[1]["text"] and gaps[1]["text"].startswith("다주택을")
+    assert f1.label_gaps("은퇴 :: 은퇴 후 근로소득이 끝났다.[^hold]") == []
+
+
+def test_the_keyword_prompt_forbids_an_unlabeled_lead_sentence():
+    """첫 줄만 형식을 안 지키는 실패가 반복돼(실측) 프롬프트에 못 박았다 — 그 규칙이 살아
+    있는지 본다. 문구가 아니라 **규칙의 존재**를 지키는 테스트다."""
+    prompt = f1.answer_system_prompt(keyword_format=True)
+    assert "첫 줄도 예외가 아니다" in prompt
+
+
+# ── 명사구 키워드 (2026-08-11) ─────────────────────────────────────────────
+_SENT = "수원 주택을 우선 정리하고 이후 은평 주택을 정리하는 계획이며, 자금이 필요한 시점은 1~2년이다."
+
+
+def test_a_keyword_may_shed_particles_and_endings():
+    """조사·어미를 떼어 **명사구로 다듬는 것**까지가 허용 범위다(부분문자열 검사에서 넓혔다).
+    접힌 줄에 서는 말이라 `현금을 함부로 쓸 수 없`처럼 잘린 채로 두면 읽히지 않는다."""
+    assert f1.valid_label("수원 주택 우선 정리", _SENT)   # 주택을→주택 · 정리하고→정리
+    assert f1.valid_label("이후 은평 주택 정리", _SENT)
+    assert f1.valid_label("자금 필요 시점", _SENT)        # 자금이→자금 · 필요한→필요
+
+
+def test_a_keyword_still_cannot_add_a_word():
+    """**뗄 수는 있어도 더할 수는 없다** — 이 형식의 보장이 거기 걸려 있다.
+    낱말이 새로 들면 '문장에 없는 말은 키워드가 될 수 없다'가 검사가 아니라 부탁이 된다."""
+    assert not f1.valid_label("수원 주택 매각", _SENT)      # `매각`이 문장에 없다
+    assert not f1.valid_label("주택 정리 계획 수립", _SENT)  # `수립`이 없다
+    assert not f1.valid_label("정리 수원 주택", _SENT)       # 어절 순서를 바꿨다
+    assert not f1.valid_label("수원 은평", _SENT)            # 띄엄띄엄 주웠다(연속이 아니다)
+    assert not f1.valid_label("은퇴가", "은퇴 후 근로소득이 끝났다.")  # 조사를 **붙였다**
+
+
+def test_rejection_reasons_are_specific_enough_to_act_on():
+    """감사로그가 '왜 떨어졌나'를 답해야 다음에 무엇을 고칠지 정할 수 있다."""
+    assert f1.label_reject_reason("1~2년", _SENT) == "숫자"
+    assert f1.label_reject_reason("수원 주택 매각", _SENT) == "문장에 없음"
+    assert f1.label_reject_reason("가" * (f1.LABEL_MAX_LEN + 1), _SENT).startswith("길이 초과")
+    assert f1.label_reject_reason("", _SENT) == "빈 값"
+    assert f1.valid_label("수원 주택 우선 정리", _SENT)
+
+
+def test_a_footnote_tag_cannot_ride_along_in_a_keyword():
+    """어절 단위로 넓히면서 **부분문자열 검사가 걸러 주던 성질이 사라졌다** — 어절을 통째로
+    베끼면 각주가 딸려 온다. 명시적으로 막는다(키워드는 접힌 채 뜨는데 각주는 문장 쪽에 있다)."""
+    s = "인출은 이미 시작됐다.[^hold]"
+    assert f1.label_reject_reason("시작됐다.[^hold]", s) == "각주 태그"
+    assert f1.valid_label("인출 이미 시작", s)
+
+
+def test_next_action_block_is_not_counted_as_a_format_failure():
+    """「Next Action」 절은 프롬프트가 **평문으로 시킨 것**이다. 실패로 세면 진짜 실패가
+    그 사이에 묻힌다(2026-08-11 실측: 거짓 양성 4건)."""
+    raw = "\n".join([
+        "은퇴 :: 은퇴 후 근로소득이 끝났다.[^hold]",
+        f1.NEXT_ACTION_HEADING,
+        "연락해 정리 일정을 확인한다.[^hold]",
+        "원금보장형을 중심으로 제안한다.[^hold]",
+    ])
+    assert f1.label_gaps(raw) == []
+
+
+def test_gaps_carry_the_rejected_fragments():
+    """무엇을 시도해서 왜 떨어졌는지까지 남는다 — 사유 없이는 프롬프트를 고칠 수 없다."""
+    raw = f"수원 주택 정리|1~2년 :: {_SENT}[^hold]"
+    (gap,) = f1.label_gaps(raw)
+    assert gap["reason"] == "검증 탈락"
+    assert [(t["label"], t["why"]) for t in gap["tried"]] == [
+        ("수원 주택 정리", "문장에 없음"),  # `주택 정리`가 한 어절로 붙지 않는다
+        ("1~2년", "숫자"),
+    ]

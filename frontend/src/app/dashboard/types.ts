@@ -669,6 +669,6 @@ export const WATERMARK =
  *  page.tsx(고객 카드)와 ReviewModal.tsx(고객 문의 모달)가 **같은 칩을 쓴다** — 두 곳의
  *  인라인 채팅이 같은 라우트를 태우므로 목록도 한 곳에서만 정의한다. */
 export const NBA_CHIPS: { label: string; q: string }[] = [
-  { label: '성향 점검', q: '히스토리 기반으로 투자성향 분석해줘.' },
   { label: '상황 요약', q: '이 고객의 현재 상황 요약해줘.' },
+  { label: '성향 점검', q: '히스토리 기반으로 투자성향 분석해줘.' },
 ];

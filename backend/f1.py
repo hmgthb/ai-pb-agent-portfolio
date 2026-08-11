@@ -1320,25 +1320,76 @@ LABEL_SEP = "|"
 _LABEL_RE = re.compile(r"^(?P<label>[^:]+?)\s*::\s*(?P<text>\S.*)$")
 
 
-def valid_label(label: str, sentence: str) -> bool:
-    """이 키워드를 그 문장에 붙일 수 있는가.
+# 어절 끝에 붙는 문장부호. 조각을 견줄 때 **양끝에서만** 떼고 낱말은 손대지 않는다.
+_EDGE_PUNCT = ".,!?…·:;\"'()[]{}「」『』“”‘’"
 
-    막는 다섯: 빈 값 · 길이 초과 · **숫자**(접힌 채로 근거 없이 보이는 수치) ·
-    금지 표현(단정) · **문장에 없는 말**.
 
-    마지막이 이 형식의 핵심이다 — 키워드는 문장의 조각이지 새 정보가 아니다. 각주 태그는
-    문장 쪽에 있고 키워드에 `[^`가 들어오면 부분문자열 검사에서 자연히 걸린다.
+def _eojeol(text: str) -> list[str]:
+    """공백으로 가른 어절 목록(양끝 문장부호 제거). 빈 어절은 담지 않는다."""
+    return [t for t in (w.strip(_EDGE_PUNCT) for w in str(text or "").split()) if t]
+
+
+def is_fragment_of(label: str, sentence: str) -> bool:
+    """키워드가 그 문장에서 **떼어 온 조각**인가 (순수).
+
+    **어절 단위로 견주고, 각 어절은 문장 어절의 앞부분이면 통과한다** — 조사·어미를 떼고
+    명사구로 다듬는 것까지만 허용한다는 뜻이다(2026-08-11에 부분문자열 검사에서 넓혔다).
+        문장: `수원 주택을 우선 정리하고 이후 은평 주택을 …`
+        ✓ `수원 주택 우선 정리`  (`주택을`→`주택` · `정리하고`→`정리`)
+        ✗ `수원 주택 매각`       (`매각`은 문장에 없는 낱말이다)
+        ✗ `수원 주택을 우선 정리해서`  (붙이는 것은 안 된다 — 없는 말이 는다)
+
+    **보장은 그대로다.** 넓힌 것은 어절의 **꼬리**뿐이고 낱말 자체는 여전히 문장에서만
+    온다 — "문장에 없는 말은 키워드가 될 수 없다"가 부탁이 아니라 검사인 이유가 이것이다.
+    ⚠️ 어절이 **연속**이어야 한다. 띄엄띄엄 주워 붙이면 문장에 없는 관계가 생긴다
+       (`수원 … 은평` → `수원 은평`은 두 집을 한 덩어리로 만든다).
+    """
+    k, sent = _eojeol(label), _eojeol(sentence)
+    if not k or len(k) > len(sent):
+        return False
+    return any(
+        all(sent[i + j].startswith(k[j]) for j in range(len(k)))
+        for i in range(len(sent) - len(k) + 1)
+    )
+
+
+def label_reject_reason(label: str, sentence: str) -> str | None:
+    """이 키워드가 **왜** 그 문장에 못 붙는가(통과하면 None · 순수).
+
+    막는 여섯: 빈 값 · 길이 초과 · **숫자**(접힌 채로 근거 없이 보이는 수치) ·
+    금지 표현(단정) · 각주 태그 · **문장에서 떼어 온 조각이 아님**(`is_fragment_of`).
+
+    마지막이 이 형식의 핵심이다 — 키워드는 문장의 조각이지 새 정보가 아니다.
+
+    ⚠️ 사유를 따로 돌려주는 이유는 `stock_headline_reject`와 같다 — 떨어진 키워드는 화면에서
+       **아예 안 보이므로**, 사유가 어디에도 안 남으면 "모델이 형식을 안 지켰다"와 "썼는데
+       떨어졌다"를 구별할 수 없고 무엇을 고쳐야 하는지도 알 수 없다(`label_gaps`가 쓴다).
     """
     from backend import compliance
 
     text = (label or "").strip()
-    if not text or len(text) > LABEL_MAX_LEN:
-        return False
+    if not text:
+        return "빈 값"
+    if len(text) > LABEL_MAX_LEN:
+        return f"길이 초과({len(text)}자)"
     if any(c.isdigit() for c in text):
-        return False
-    if any(p in text for p in compliance.FORBIDDEN_PHRASES):
-        return False
-    return text in (sentence or "")
+        return "숫자"
+    hit = next((p for p in compliance.FORBIDDEN_PHRASES if p in text), None)
+    if hit:
+        return f"금지 표현: {hit}"
+    # 예전에는 부분문자열 검사가 각주 태그를 자연히 걸렀다. 어절 검사로 넓히면서 그 성질이
+    # 사라졌으므로(어절을 통째로 베끼면 태그가 딸려 온다) **여기서 명시적으로 막는다.**
+    if "[^" in text:
+        return "각주 태그"
+    if not is_fragment_of(text, sentence):
+        return "문장에 없음"
+    return None
+
+
+def valid_label(label: str, sentence: str) -> bool:
+    """이 키워드를 그 문장에 붙일 수 있는가. 판정은 `label_reject_reason` 하나가 한다 —
+    규칙이 두 벌이면 반드시 갈린다."""
+    return label_reject_reason(label, sentence) is None
 
 
 # ── 머리말(예고) 문장 걷어내기 (2026-08-10) ──────────────────────────────────
@@ -1404,29 +1455,66 @@ def split_labeled(raw: str) -> list[tuple[list[str] | None, str]]:
        너무 길거나 문장부호로 끝나면 이름표로 치지 않고 줄째로 둔다 — 못 알아본 줄을
        내용째 버리는 것보다 형식이 어긋난 채 보이는 편이 낫다.
     """
-    out: list[tuple[list[str] | None, str]] = []
+    return [(labels, text) for labels, text, _ in _split_lines(raw)]
+
+
+def _split_lines(raw: str) -> list[tuple[list[str] | None, str, dict | None]]:
+    """`split_labeled`와 `label_gaps`가 **같은 판정을 두 번 구현하지 않게** 하는 자리.
+
+    반환 원소: `(키워드|None, 그 줄, 이름표가 없다면 그 사정)`.
+    사정은 `{"reason", "tried"}` — 사유는 둘뿐이다: `형식 미준수`(`::`를 안 썼거나 이름표
+    자리로 볼 수 없다) · `검증 탈락`(썼는데 조각이 전부 떨어졌다). 화면에서는 두 경우가
+    똑같이 보이므로 **여기서만 갈린다.** `tried`는 떨어진 조각과 그 사유다(고칠 실마리).
+    """
+    out: list[tuple[list[str] | None, str, dict | None]] = []
     for raw_line in (raw or "").split("\n"):
         line = raw_line.strip()
         if not line:
             continue
         m = _LABEL_RE.match(line)
         if not m:
-            out.append((None, line))
+            out.append((None, line, {"reason": "형식 미준수", "tried": []}))
             continue
         text = m.group("text").strip()
         head = m.group("label").strip()
-        labels = [
-            part
-            for raw_part in head.split(LABEL_SEP)
-            if valid_label(part := raw_part.strip(), text)
-        ][:LABEL_MAX_COUNT]
+        parts = [p.strip() for p in head.split(LABEL_SEP)]
+        labels = [p for p in parts if valid_label(p, text)][:LABEL_MAX_COUNT]
         if labels:
-            out.append((labels, text))
+            out.append((labels, text, None))
         elif len(head) > _LABEL_HEAD_MAX or any(c in head for c in ".!?"):
-            out.append((None, line))  # 이름표 자리가 아니라 산문이다 — 손대지 않는다
+            # 이름표 자리가 아니라 산문이다 — 손대지 않는다.
+            out.append((None, line, {"reason": "형식 미준수", "tried": []}))
         else:
-            out.append((None, text))  # 규칙을 어긴 이름표만 뗀다
+            # 규칙을 어긴 이름표만 뗀다. **무엇을 어떻게 어겼는지는 들고 나간다.**
+            tried = [{"label": p, "why": label_reject_reason(p, text)} for p in parts if p]
+            out.append((None, text, {"reason": "검증 탈락", "tried": tried}))
     return out
+
+
+# 「Next Action」 절의 제목. **이 줄부터 아래는 키워드 형식이 아니다** — 프롬프트가 그렇게
+# 시킨다(`## Next Action` + 각주 붙은 평문 2~3줄). `label_gaps`가 이걸 모르면 정상 동작을
+# 실패로 세어, 진짜 실패가 그 사이에 묻힌다(2026-08-11 실측: 거짓 양성 4건).
+NEXT_ACTION_HEADING = "## Next Action"
+
+
+def label_gaps(raw: str) -> list[dict]:
+    """키워드가 **안 붙은 줄**과 그 사정(순수). 통과한 줄과 「Next Action」 절은 담지 않는다.
+
+    **왜 필요한가**(2026-08-11). 검증에 떨어진 이름표를 떼고 문장만 남기게 바꾸면서
+    (`split_labeled`) 화면에서 두 경우가 똑같아졌다: 모델이 `::`를 아예 안 썼는지,
+    썼는데 조각이 문장에 없어 전부 탈락했는지 — 둘 다 "안 접히는 평범한 문장"으로 보인다.
+    고치려면 어느 쪽인지 알아야 하는데 화면은 말하지 않는다. `stock_headline_reject`가
+    버린 사유를 남기는 것과 같은 이유로, **감사로그가 그 답을 들고 있게** 한다.
+
+    ⚠️ 판정하지 않는다 — 세고 사유만 붙인다. 여기서 "고쳐서 통과"시키면 무엇이 검사된
+       값인지가 흐려진다(`label_reject_reason` 주석의 같은 규약).
+    """
+    head = (raw or "").split(NEXT_ACTION_HEADING)[0]  # 그 절부터는 형식이 다르다
+    return [
+        {"reason": info["reason"], "text": text[:40], "tried": info["tried"]}
+        for labels, text, info in _split_lines(head)
+        if not labels
+    ]
 
 
 KEYWORD_FORMAT_PROMPT = f"""
@@ -1437,16 +1525,25 @@ KEYWORD_FORMAT_PROMPT = f"""
 각 줄을 `키워드 :: 문장` 꼴로 쓴다. 2~4줄이고, **한 줄에 한 문장**이다.
 키워드가 여러 개면 `{LABEL_SEP}`로 나눈다(최대 {LABEL_MAX_COUNT}개).
 
-- 키워드는 **그 문장에서 그대로 떼어 온 말**이다. 갈래 이름(`상황 요약`, `성향 대비`,
-  `목표`, `제약`, `계획`)을 붙이지 마라 — 그건 문장에 없는 말이다.
+- **첫 줄도 예외가 아니다.** 전체를 요약하는 머리 문장을 형식 없이 먼저 쓰지 마라 —
+  그 줄만 접히지 않아서 화면에서 홀로 펴진 채 선다(실측으로 반복해서 나온 실패다).
+  줄이 셋이면 `::`도 셋이다.
+  ✗ `서초 주택 마련을 최종 목표로 다주택을 정리해 상급지로 옮기려는 국면이다.`
+  ✓ `서초 주택 마련{LABEL_SEP}다주택을 정리 :: 서초 주택 마련을 최종 목표로 다주택을 정리해 상급지로 옮기려는 국면이다.`
+- 키워드는 **그 문장의 낱말로 만든 명사구**다. 문장을 그대로 잘라 붙이지 말고 조사·어미를
+  떼어 다듬어라 — 접힌 줄에 서는 말이라 `현금을 함부로 쓸 수 없`처럼 잘린 채로 두면
+  읽히지 않는다.
+  예) 문장이 `수원 주택을 우선 정리하고 이후 은평 주택을 정리하는 계획이며, 자금이 필요한
+  시점은 1~2년이다.`이면 → `수원 주택 우선 정리{LABEL_SEP}이후 은평 주택 정리`
+- **낱말은 그 문장에 있는 것만 쓴다.** 뗄 수는 있어도 **더할 수는 없다** — `수원 주택 매각`은
+  `매각`이 문장에 없어 떨어지고, 어절 순서를 바꾸거나 띄엄띄엄 주워 붙여도 떨어진다.
+  갈래 이름(`상황 요약`, `성향 대비`, `목표`, `제약`, `계획`)도 마찬가지다.
 - **입력 데이터에서 베껴 오지 마라.** 주어진 목표·제약 항목의 문구를 그대로 키워드로 쓰면
   네가 쓴 문장에는 없는 말이라 검사에서 떨어진다. 떼어 올 곳은 **그 줄에 네가 쓴 문장**뿐이다.
-  예) 문장이 `은퇴 후 근로소득이 끝나고 월 생활비를 배당·이자로 충당하는 현금흐름 전환
-  국면이며, 인출은 이미 시작됐다.`이면 → `은퇴{LABEL_SEP}월 생활비를 배당·이자{LABEL_SEP}인출은 이미 시작`
-- **문장에 글자 그대로 들어 있어야 한다.** 조사를 바꾸거나 말을 다듬으면 검사에서 떨어져
-  키워드 없이 나간다. 잘라 온 그대로 붙여라({LABEL_MAX_LEN}자 이내).
+- 한 조각은 {LABEL_MAX_LEN}자 이내다.
 - **키워드에 숫자를 쓰지 마라.** 수치는 사실 주장인데 키워드는 접힌 채로 보이므로 근거가
-  화면에 없다. 숫자는 문장 안에 쓰고 각주를 붙여라.
+  화면에 없다. 숫자는 문장 안에 쓰고 각주를 붙여라 — 기간·비율도 마찬가지다(`1~2년`은
+  떨어진다). 그 자리에는 **옆의 말**을 골라라(`자금 필요 시점`).
 - 각주 `[^태그]`는 지금까지처럼 **문장 끝**에 붙인다. 키워드에는 붙이지 마라.
 - 키워드는 **문장에서 떼어 온 조각**이다. 권유든 관찰이든 문장에 있는 말만 쓴다.
 """
