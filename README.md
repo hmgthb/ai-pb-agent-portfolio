@@ -4,16 +4,17 @@
 > 조사해 **모든 문장에 출처를 붙여** 내놓는 상담 준비 워크벤치.
 > **AI는 PB를 대신하지 않는다** — 초안까지 만들고, 판단과 발행은 사람이 한다.
 
-![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-SSE-009688?logo=fastapi&logoColor=white)
-![Next.js](https://img.shields.io/badge/Next.js-15-000000?logo=nextdotjs&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
 ![Claude Agent SDK](https://img.shields.io/badge/Claude%20Agent%20SDK-0.2.110-D97757)
 ![MCP](https://img.shields.io/badge/MCP-자체%20서버%203종-6E56CF)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker%20Compose-4대%20서비스-2496ED?logo=docker&logoColor=white)
 
-**1인 개발 · 7주** — 백엔드 11.8k줄 · 프론트엔드 12.1k줄 · **테스트 280건** · 에이전트 5종 · MCP 서버 3종 자체 구현
+**1인 개발 · 7주** — 백엔드 11.8k줄 · 프론트엔드 12.1k줄 · **테스트 346건(1초 미만, 네트워크·크레딧 불필요)** · 에이전트 5종 · MCP 서버 3종 자체 구현
 
 ---
 
@@ -22,7 +23,7 @@
 | PB 화면 — 상담 전 브리핑 | 고객 카드 — Next Best Action |
 | --- | --- |
 | ![브리핑](docs/screenshots/01-brief.png) | ![Next Best Action](docs/screenshots/02-nba.png) |
-| 거시 지표 · **3개월 추세** · **내 고객 보유 종목** 순으로 한 화면. 문장마다 출처 배지가 붙는다. | 상담 이력·계좌 데이터를 근거로 답하고 **「다음 행동」**까지 쓴다. 근거 없는 문장은 나가지 않는다. |
+| 거시 지표 · **3개월 추세** · **내 고객 보유 종목** 순으로 한 화면. 문장마다 출처 배지가 붙는다. | 상담 이력·계좌 데이터를 근거로 답하고 **「다음 행동」**까지 쓴다. 출처가 확인 안 된 문장은 `[UNSOURCED]`로 표시되고 게이트 위반이 감사로그에 남는다. |
 
 | 종목 팩트 노트 (F3) | 관리자 — 검토·심의·발행 |
 | --- | --- |
@@ -405,7 +406,7 @@ curl -sN "http://localhost:8000/api/chat/stream?q=주가는 어때&session=<위 
 ### 자체 점검 (크레딧·네트워크 불필요)
 
 ```bash
-docker compose exec -T backend python -m pytest backend -q        # 280건, 1초 미만
+docker compose exec -T backend python -m pytest backend -q        # 346건, 1초 미만
 cd frontend && npx tsc --noEmit && npx eslint src                  # CSS는 이 둘이 검사하지 않는다
 ```
 
@@ -440,7 +441,7 @@ ai-pb-agent/
 │   ├── db.py                    # 멱등 DDL · 상태 · 감사로그(append-only)
 │   ├── market.py fred.py ecos.py  # 거시 지표 — 공급자 셋, 합류는 main.build_brief 하나
 │   ├── redact.py                # 비식별화 경계 (실배치의 망분리 GPU 자리)
-│   └── test_*.py                # 자체 점검 15종 (pytest)
+│   └── test_*.py                # 자체 점검 17종 · 346건 (pytest)
 ├── frontend/src/app/dashboard/  # 대시보드 (실화면)
 │   ├── page.tsx                 #   셸 · 화면 전환 · 브리핑 · 고객 카드 · 큐 · 감시
 │   ├── F1Chat.tsx               #   F1 채팅 — 키워드 접기 · 스트리밍
