@@ -576,11 +576,11 @@ MCP `mcp_servers/{dart,news,krx}_server.py` / a5 작문 지침 `.claude/agents/a
   노출하면 비밀번호가 우회된다) · **개발 모드로 되돌리기 전에 터널부터 닫는다**(dev에는 비밀번호가
   없다) · Next 16에서 `middleware.ts`가 **`proxy.ts`로 이름이 바뀌었다**(옛 이름은 조용히 무시된다
   = 무인증 공개) · `DEMO_PASSWORD`가 없으면 프론트 컨테이너가 아예 안 뜬다(의도).
-- **발표 슬라이드**: `docs/presentation/`이 **1차/최종으로 갈렸다**(2026-08-10).
-  `first-presentation/`에 1차 자료(Marp `.md` + 손편집된 `.html`)가 들어가 있고,
-  `final presentation/`에는 `slides-v2.pptx` 하나다. `build.sh`(Marp)는 루트에 남아 있지만
-  **가리키던 `slides-final.md`가 그 폴더로 옮겨졌다** — 돌리기 전에 경로부터 볼 것.
-  🚩 1차의 `slides-final.html`에는 `.md`에 없는 손편집이 있다(빌드하면 사라진다).
+- **발표 슬라이드는 이 저장소에 없다**(2026-08-14). 공개 저장소로 내면서 `docs/presentation/`을
+  통째로 뺐다 — 표지와 발표 스크립트에 **소속사 실명과 발표자 실명**이 박혀 있어서다.
+  자료 자체는 비공개 원본 저장소(`ai-pb-agent-private`)의 히스토리에 그대로 있다.
+  🚩 1차의 `slides-final.html`에는 `.md`에 없는 손편집이 있었다(빌드하면 사라진다) — 되살릴
+  일이 있으면 `.md`가 아니라 `.html`을 원본으로 볼 것.
 - git: main → **personal**(hmgthb/ai-pb-agent). origin(kwangtekNa/intern)에는 푸시하지 않는다.
   **커밋·푸시 둘 다 사용자 확인 후에만**(§2).
 

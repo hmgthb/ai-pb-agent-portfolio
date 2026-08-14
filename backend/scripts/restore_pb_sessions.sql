@@ -1,6 +1,9 @@
 -- 복원용 데이터 덤프 (2026-07-28) — pb_sessions
 --
--- 이 테이블들은 **시드 소스가 유실돼 이 파일이 유일한 원본**이다(HANDOFF §2).
+-- ⚠️ 여기 담긴 고객 문의는 **전부 가상의 합성 데이터**다(고객 원본은 restore_pb_customers.sql).
+--    실존 인물의 문의도, 실제 상담 기록도 아니다.
+--
+-- 이 테이블들은 **시드 소스가 유실돼 이 파일이 유일한 원본**이다.
 -- 앱에는 pb_sessions를 만드는 코드가 아예 없다 — 지우면 이 파일 없이는 못 되살린다.
 --
 -- 복원:  docker exec -i ai-pb-agent-postgres-1 psql -U app -d app -c "TRUNCATE pb_sessions;" \
